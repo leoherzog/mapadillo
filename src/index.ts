@@ -24,6 +24,12 @@ setKitCode('781a3c6be3');
 // Default icon family: Jelly — the playful, rounded icon style
 setDefaultIconFamily('jelly');
 
+// ── Auth ──────────────────────────────────────────────────────────────────
+// Start session check immediately so the auth guard doesn't delay the
+// first protected navigation. Non-blocking — components await via initAuth().
+import { initAuth } from './auth/auth-state.js';
+initAuth();
+
 // ── App Shell ──────────────────────────────────────────────────────────────
 // Importing the app-shell module registers the <app-shell> custom element.
 // The element is already in index.html, so it upgrades as soon as the

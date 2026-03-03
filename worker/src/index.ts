@@ -1,81 +1,73 @@
 /**
- * Kids Roadtrip Map — Cloudflare Worker
+ * kids-map — Cloudflare Worker
  *
  * Hono router serving:
- * - /api/*  → API routes (auth, maps, stops, sharing, proxy, print)
+ * - /api/auth/*  → Better Auth (OAuth, Passkey, sessions)
+ * - /api/*       → API routes (maps, stops, sharing, proxy, print)
  * - Everything else → Static assets (Vite-built SPA) via the ASSETS binding,
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 1: scaffold only — health check route + 501 stubs.
- * Full routes added in Milestones 2–8.
+ * Milestone 2: authentication via Better Auth + stub routes for M3–8.
  */
 
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
+import { getAuth } from './auth.js';
+import { requireAuth } from './middleware/require-auth.js';
+import type { AppEnv } from './types.js';
 
-// ── Env bindings (generated via `wrangler types`) ─────────────────────────
-// Until `wrangler types` is run after provisioning real resources, we declare
-// the interface manually. Run `npm run types` in /worker after provisioning.
-interface Env {
-  // Static assets (Workers Static Assets)
-  ASSETS: Fetcher;
-  // D1 relational database
-  DB: D1Database;
-  // KV cache for geocoding + routing
-  API_CACHE: KVNamespace;
-  // R2 bucket for print images
-  ROADTRIP_PRINTS: R2Bucket;
-  // Rate limiters
-  RATE_LIMITER_PUBLIC: RateLimit;
-  RATE_LIMITER_PROXY: RateLimit;
-  RATE_LIMITER_AUTH: RateLimit;
-  // Secrets (set via `wrangler secret put`)
-  BETTER_AUTH_SECRET: string;
-  GOOGLE_CLIENT_ID: string;
-  GOOGLE_CLIENT_SECRET: string;
-  FACEBOOK_CLIENT_ID: string;
-  FACEBOOK_CLIENT_SECRET: string;
-  STRIPE_SECRET_KEY: string;
-  STRIPE_WEBHOOK_SECRET: string;
-  PRODIGI_API_KEY: string;
-  ORS_API_KEY: string;
-  ADMIN_SECRET: string;
-}
-
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 1 });
+  return c.json({ status: 'ok', milestone: 2 });
 });
 
-// ── Auth routes (Milestone 2) ──────────────────────────────────────────────
-app.all('/api/auth/*', (c) => {
-  return c.json({ error: 'Auth not implemented yet (Milestone 2)' }, 501);
+// ── Rate limiter for auth routes (M6) ────────────────────────────────────
+app.use('/api/auth/*', async (c, next) => {
+  const ip =
+    c.req.header('cf-connecting-ip') ??
+    c.req.header('x-forwarded-for') ??
+    'unknown';
+  const { success } = await c.env.RATE_LIMITER_AUTH.limit({ key: ip });
+  if (!success) {
+    return c.json({ error: 'Too many requests' }, 429);
+  }
+  await next();
+});
+
+// ── Auth routes (Better Auth handler) ─────────────────────────────────────
+// Use app.all so PUT/DELETE/OPTIONS (passkey plugin, sign-out) are handled.
+app.all('/api/auth/*', async (c) => {
+  const auth = getAuth(c.env);
+  return auth.handler(c.req.raw);
 });
 
 // ── Map routes (Milestone 4) ───────────────────────────────────────────────
-app.get('/api/maps', (c) => {
+// Protected by requireAuth — returns 401 without valid session.
+app.get('/api/maps', requireAuth, (c) => {
   return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
 });
 
-app.post('/api/maps', (c) => {
+app.post('/api/maps', requireAuth, (c) => {
   return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
 });
 
-app.get('/api/maps/:id', (c) => {
+// TODO(M6): Replace requireAuth with optional auth — public maps should be
+// served without a session; private maps require one. See PLAN.md "Sharing".
+app.get('/api/maps/:id', requireAuth, (c) => {
   return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
 });
 
-app.put('/api/maps/:id', (c) => {
+app.put('/api/maps/:id', requireAuth, (c) => {
   return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
 });
 
-app.delete('/api/maps/:id', (c) => {
+app.delete('/api/maps/:id', requireAuth, (c) => {
   return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
 });
 

@@ -3,3 +3,4 @@ dist/
 .dev.vars
 tsconfig.tsbuildinfo
 worker/node_modules/
+worker/coverage/

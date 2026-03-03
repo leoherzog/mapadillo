@@ -461,6 +461,7 @@ CREATE TABLE orders (
 
 ### Secrets (via `wrangler secret put`)
 - `BETTER_AUTH_SECRET` — session signing key
+- `BETTER_AUTH_URL` — canonical app URL (e.g. `https://kidsroadtripmap.com`); used for `baseURL`, `trustedOrigins`, passkey `rpID`/`origin` instead of deriving from request headers
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
 - `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET`
 - `STRIPE_SECRET_KEY`
@@ -685,7 +686,7 @@ Worker-specific:
 
 ---
 
-### Milestone 2: Authentication
+### Milestone 2: Authentication ✅ COMPLETE
 
 **Goal:** Users can sign up, sign in, and see a protected dashboard.
 
@@ -709,6 +710,142 @@ Worker-specific:
 - Protected API routes return 401 without session, 200 with session
 - User menu shows avatar, sign-out works
 - Session persists on refresh
+
+#### Implementation Notes (M2)
+
+**Files created/modified (12 files):**
+
+```
+kids-roadtrip-map/
+├── .gitignore                            # Added worker/coverage/
+├── package.json                          # Added better-auth, @better-auth/passkey
+├── src/
+│   ├── index.ts                          # Added initAuth() at module load (non-blocking session check)
+│   ├── auth/
+│   │   ├── auth-client.ts        [NEW]   # createAuthClient() + passkeyClient() plugin
+│   │   ├── auth-state.ts                 # Rewritten: initAuth/refreshAuth/signOut via Better Auth session
+│   │   └── auth-guard.ts                 # Rewritten: awaits initAuth(), returnTo query param
+│   ├── pages/
+│   │   ├── sign-in-page.ts               # Full OAuth + passkey sign-in/register UI
+│   │   └── dashboard-page.ts             # Empty state with greeting, "My Trips" + "Shared with Me"
+│   └── components/
+│       ├── app-shell.ts                  # Auth-aware header (user-menu vs Sign In), subscribes to onAuthChange
+│       └── user-menu.ts          [NEW]   # Avatar/initials + wa-dropdown (My Trips, Sign Out)
+└── worker/
+    ├── package.json                      # Added better-auth, @better-auth/passkey, kysely-d1
+    ├── wrangler.toml                     # Added migrations_dir
+    ├── vitest.config.ts                  # Added test secrets + CJS dep inlining
+    └── src/
+        ├── index.ts                      # Better Auth handler, requireAuth on map stubs, rate limiter
+        ├── index.test.ts                 # Updated: auth health, 401 tests, milestone: 2
+        ├── types.ts              [NEW]   # Env, SessionUser, SessionData, AppEnv types
+        ├── auth.ts               [NEW]   # betterAuth() singleton (D1 via kysely-d1, OAuth, passkey)
+        ├── middleware/
+        │   └── require-auth.ts   [NEW]   # Validates session, sets c.user + c.session, or 401
+        └── db/
+            └── migrations/
+                └── 0001_initial.sql [NEW] # Full schema (Better Auth + passkey + app tables)
+```
+
+**Dependencies added:**
+
+Root:
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `better-auth` | ^1.5.1 | Auth client (signIn, signUp, signOut, getSession) |
+| `@better-auth/passkey` | ^1.5.1 | Passkey/WebAuthn client plugin |
+
+Worker:
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `better-auth` | ^1.5.1 | Auth server (session management, OAuth, D1 storage) |
+| `@better-auth/passkey` | ^1.5.1 | Passkey/WebAuthn server plugin |
+| `kysely-d1` | ^0.4.0 | D1 dialect for Better Auth's Kysely adapter |
+| `@vitest/coverage-istanbul` | ~3.2.0 | (dev) Test coverage |
+
+**Deliberate deviations from plan:**
+
+1. **kysely-d1 instead of native D1 adapter.** The plan says Better Auth v1.5+ auto-detects D1 bindings (`database: env.DB`), but Better Auth's Kysely adapter via `kysely-d1` is the documented production approach for D1. Using `D1Dialect` from `kysely-d1` with `type: 'sqlite'` is more reliable than relying on auto-detection.
+
+2. **`BETTER_AUTH_URL` secret added.** Not in the plan's original secrets list. The auth instance derives `baseURL`, `trustedOrigins`, and passkey `rpID`/`origin` from this fixed operator secret instead of `request.url`. Prevents Host header injection, OAuth redirect-URI mismatches between workers.dev and production, and passkey rpID drift.
+
+3. **Orders table uses `ON DELETE RESTRICT`.** Plan has plain `REFERENCES` (defaults to `NO ACTION` in SQLite). Changed to explicit `RESTRICT` — orders are financial records and must not be orphaned when a map or user is deleted.
+
+4. **No standalone `schema.sql`.** Plan lists `worker/src/db/schema.sql` separately from migrations. Only the D1 migration file exists (`0001_initial.sql`). The migration is the canonical schema — a separate file would be redundant.
+
+5. **Better Auth tables use INTEGER timestamps.** Plan's schema sketch uses `TEXT` with `datetime('now')` for all tables. Better Auth stores epoch timestamps as integers, so the migration uses `INTEGER` for Better Auth-managed columns (`createdAt`, `updatedAt`, `expiresAt`). Application tables (`maps`, `stops`, `map_shares`, `orders`) use `TEXT` datetimes as originally planned.
+
+**Schema extras beyond plan:**
+- `idx_maps_owner_id` index on `maps(owner_id)` — faster dashboard queries
+- `idx_orders_user_id` and `idx_orders_map_id` indexes — faster order lookups
+- `IF NOT EXISTS` guards on all tables — allows safe re-runs
+- Comment on `map_shares(map_id, user_id)` UNIQUE constraint documenting SQLite NULL uniqueness behavior
+
+**Auth server (`worker/src/auth.ts`):**
+- Module-level singleton: `getAuth(env)` constructs the `betterAuth()` instance once per isolate lifetime (Workers module-level state persists within an isolate)
+- `basePath: '/api/auth'`
+- `emailAndPassword: { enabled: true }` — required for passkey registration flow (`signUp.email` creates account, then `passkey.addPasskey` binds credential). No password-reset UI/routes exposed. Risk documented in code comments
+- `trustedOrigins: [url.origin]` from `BETTER_AUTH_URL`
+- Passkey plugin: `rpID` = hostname, `rpName` = "Kids Roadtrip Map", `origin` = full origin
+
+**Auth middleware (`worker/src/middleware/require-auth.ts`):**
+- Uses `auth.api.getSession({ headers })` to validate the session cookie
+- On success: sets `c.set('user', session.user)` and `c.set('session', session.session)`
+- On failure: returns `401 { error: 'Unauthorized' }`
+
+**Rate limiting (inline in `worker/src/index.ts`):**
+- Auth routes: 10/min per IP via `RATE_LIMITER_AUTH` binding
+- Key: `cf-connecting-ip` header with `x-forwarded-for` fallback
+
+**Frontend auth state (`src/auth/auth-state.ts`):**
+- `initAuth()` deduplicates concurrent calls via shared promise
+- `refreshAuth()` forces fresh server round-trip (called after passkey sign-in/register)
+- `signOut()` calls `authClient.signOut()` then clears local state; catches server errors gracefully
+- `onAuthChange(fn)` returns unsubscribe function; `app-shell` subscribes/unsubscribes in lifecycle callbacks
+
+**Sign-in page (`src/pages/sign-in-page.ts`):**
+- Two togglable modes: sign-in (returning users) and register (new users)
+- Sign-in mode: Google, Facebook, Passkey buttons
+- Register mode: Name + Email inputs → `signUp.email()` with `crypto.randomUUID()` password → `passkey.addPasskey()` → `refreshAuth()` → navigate. Risk of random password documented in code
+- `returnTo` query param preserved through OAuth redirect (`callbackURL`) and passkey flow (`navigateTo`)
+- Error display: `wa-callout variant="danger"`; loading state disables all buttons
+
+**User menu (`src/components/user-menu.ts`):**
+- `wa-dropdown` with `wa-button` trigger showing avatar (image or 2-letter initials) + name
+- Menu: "My Trips" → `/dashboard`, divider, "Sign Out" with spinner during async operation
+- Navigates to `/` after sign-out
+
+**Auth guard (`src/auth/auth-guard.ts`):**
+- Awaits `initAuth()` if session not yet checked (first guarded navigation waits for server)
+- Returns `/sign-in?returnTo={encodeURIComponent(path+search)}` when unauthenticated
+
+**App shell changes (`src/components/app-shell.ts`):**
+- Subscribes to `onAuthChange()` in `connectedCallback`, cleans up in `disconnectedCallback`
+- Header: shows `<user-menu .user=${user}>` when authenticated, "Sign In" `wa-button` when not
+- Passes `user` to `<dashboard-page>` via `.user` property
+
+**Entry point changes (`src/index.ts`):**
+- Calls `initAuth()` at module load — non-blocking, starts session check immediately so the auth guard doesn't delay the first protected navigation
+
+**Worker changes (`worker/src/index.ts`):**
+- Health check returns `milestone: 2`
+- Auth routes: `app.all('/api/auth/**', ...)` delegates to Better Auth handler (uses `all` so PUT/DELETE/OPTIONS for passkey plugin and sign-out are handled)
+- Map stubs: now use `requireAuth` middleware (401 without session, 501 with session)
+- Geocode/route stubs: remain unprotected 501
+
+**Test suite (`worker/src/index.test.ts`):**
+- Auth tests: `GET /api/auth/ok` returns 200 (Better Auth health), `GET /api/auth/get-session` returns 200 with null body (no active session)
+- Map tests: all 5 routes (GET/POST maps, GET/PUT/DELETE maps/:id) return 401 without session; response body has `{ error: 'Unauthorized' }`
+- Geocode/route/unknown route tests unchanged from M1
+
+**Vitest config (`worker/vitest.config.ts`):**
+- Test-only secrets injected via `miniflare.bindings` (all 11 env secrets including `BETTER_AUTH_URL`)
+- CJS deps inlined for workerd compatibility: `@better-auth/passkey`, `@simplewebauthn/server`, `@peculiar/*`, `tslib`
+
+**Deferred to later milestones:**
+- Cookie cache for session management (TODO comment in migration, deferred to M9)
+- Email verification on sign-up (accepted risk for MVP, noted in `auth.ts`)
+- `GET /api/maps/:id` currently uses `requireAuth` — will switch to optional auth in M6 when public map access is implemented
 
 ---
 

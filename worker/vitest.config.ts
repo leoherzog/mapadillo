@@ -7,6 +7,34 @@ export default defineWorkersConfig({
     poolOptions: {
       workers: {
         wrangler: { configPath: './wrangler.toml' },
+        miniflare: {
+          bindings: {
+            // Test-only secrets — never used in production
+            BETTER_AUTH_SECRET: 'test-secret-at-least-32-chars-for-better-auth',
+            BETTER_AUTH_URL: 'http://localhost',
+            GOOGLE_CLIENT_ID: 'test-google-client-id',
+            GOOGLE_CLIENT_SECRET: 'test-google-client-secret',
+            FACEBOOK_CLIENT_ID: 'test-facebook-client-id',
+            FACEBOOK_CLIENT_SECRET: 'test-facebook-client-secret',
+            STRIPE_SECRET_KEY: 'test-stripe-key',
+            STRIPE_WEBHOOK_SECRET: 'test-stripe-webhook-secret',
+            PRODIGI_API_KEY: 'test-prodigi-key',
+            ORS_API_KEY: 'test-ors-key',
+            ADMIN_SECRET: 'test-admin-secret',
+          },
+        },
+      },
+    },
+    server: {
+      deps: {
+        // Bundle CJS deps that break in the workerd ESM runtime.
+        // @better-auth/passkey → @simplewebauthn/server → @peculiar/* → tslib
+        inline: [
+          '@better-auth/passkey',
+          '@simplewebauthn/server',
+          /^@peculiar\//,
+          'tslib',
+        ],
       },
     },
   },

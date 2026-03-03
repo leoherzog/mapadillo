@@ -1,15 +1,20 @@
 /**
  * Auth guard — route `enter()` hook.
- * Returns '/sign-in' redirect string when user is not authenticated.
+ * Returns '/sign-in' redirect string when user has no valid session.
  *
- * M1: uses stub auth state. Replaced with real session check in Milestone 2.
+ * Awaits `initAuth()` if the session hasn't been checked yet, so the
+ * first guarded navigation waits for the server round-trip.
  */
 
-import { isAuthenticated } from './auth-state.js';
+import { isAuthenticated, isInitialized, initAuth } from './auth-state.js';
 import type { RouteParams } from '../router.js';
 
-export function requireAuth(_params: RouteParams): string | void {
+export async function requireAuth(_params: RouteParams): Promise<string | void> {
+  if (!isInitialized()) {
+    await initAuth();
+  }
   if (!isAuthenticated()) {
-    return '/sign-in';
+    const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+    return `/sign-in?returnTo=${returnTo}`;
   }
 }

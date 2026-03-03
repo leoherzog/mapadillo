@@ -1,10 +1,11 @@
 {
-  "name": "kids-roadtrip-map",
+  "name": "kids-map",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:full": "npm run build && npm run dev --prefix worker",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "npm test --prefix worker",
@@ -13,6 +14,7 @@
   "dependencies": {
     "@awesome.me/kit-781a3c6be3": "^1.0.4",
     "@awesome.me/webawesome-pro": "^3.2.1",
+    "@better-auth/passkey": "^1.5.1",
     "@watergis/maplibre-gl-export": "^4.1.1",
     "better-auth": "^1.5.1",
     "jspdf": "^4.2.0",

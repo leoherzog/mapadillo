@@ -1,20 +1,28 @@
 /**
  * App shell — layout wrapper with header, main, and footer.
  * Owns the router and renders the current page into `<main>`.
+ *
+ * Header shows "Sign In" when unauthenticated, user-menu when authenticated.
  */
 import { LitElement, html, css } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import { Router } from '../router.js';
 import { requireAuth } from '../auth/auth-guard.js';
+import { getUser, onAuthChange, type User } from '../auth/auth-state.js';
 
-// Page imports (lazy loading would happen in enter() hooks in prod)
+// Page imports
 import '../pages/landing-page.js';
 import '../pages/sign-in-page.js';
 import '../pages/dashboard-page.js';
 import '../pages/trip-builder-page.js';
+import './user-menu.js';
 
 @customElement('app-shell')
 export class AppShell extends LitElement {
+  @state() private _user: User | null = null;
+
+  private _unsubAuth?: () => void;
+
   // Router is a reactive controller — it calls requestUpdate() when the route changes
   private router = new Router(this, [
     {
@@ -28,7 +36,7 @@ export class AppShell extends LitElement {
     {
       path: '/dashboard',
       enter: requireAuth,
-      render: () => html`<dashboard-page></dashboard-page>`,
+      render: () => html`<dashboard-page .user=${this._user}></dashboard-page>`,
     },
     {
       path: '/map/new',
@@ -87,50 +95,78 @@ export class AppShell extends LitElement {
     }
   `;
 
+  connectedCallback() {
+    super.connectedCallback();
+    this._user = getUser();
+    this._unsubAuth = onAuthChange(() => {
+      this._user = getUser();
+    });
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubAuth?.();
+  }
+
   render() {
     return html`
       <wa-page disable-sticky="header">
         <div slot="header" class="header-inner">
-          <a class="logo" href="/" @click=${this._navClick('/')}>
+          <a class="logo" href="/" @click=${this._navHome}>
             <wa-icon name="map" family="jelly"></wa-icon>
-            Kids Roadtrip Map
+            kids-map
           </a>
 
-          <div class="header-nav">
-            <wa-button
-              appearance="plain"
-              variant="neutral"
-              size="small"
-              href="/dashboard"
-              @click=${this._navClick('/dashboard')}
-            >My Trips</wa-button>
-            <wa-button
-              size="small"
-              variant="brand"
-              href="/sign-in"
-              @click=${this._navClick('/sign-in')}
-            >
-              Sign In
-            </wa-button>
-          </div>
+          <nav class="header-nav" aria-label="Site navigation">
+            ${this._user
+              ? html`
+                  <wa-button
+                    appearance="plain"
+                    variant="neutral"
+                    size="small"
+                    href="/dashboard"
+                    @click=${this._navDashboard}
+                  >My Trips</wa-button>
+                  <user-menu .user=${this._user}></user-menu>
+                `
+              : html`
+                  <wa-button
+                    size="small"
+                    variant="brand"
+                    href="/sign-in"
+                    @click=${this._navSignIn}
+                  >
+                    Sign In
+                  </wa-button>
+                `}
+          </nav>
         </div>
 
         ${this.router.outlet}
 
         <div slot="footer" class="footer-inner">
-          &copy; ${new Date().getFullYear()} Kids Roadtrip Map &mdash;
+          &copy; ${new Date().getFullYear()} kids-map &mdash;
           Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>
+          &middot; Tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>
         </div>
       </wa-page>
     `;
   }
 
-  private _navClick(path: string) {
-    return (e: Event) => {
-      e.preventDefault();
-      this.router.navigate(path);
-    };
-  }
+  private _navHome = (e: Event) => {
+    e.preventDefault();
+    this.router.navigate('/');
+  };
+
+  private _navDashboard = (e: Event) => {
+    e.preventDefault();
+    this.router.navigate('/dashboard');
+  };
+
+  private _navSignIn = (e: Event) => {
+    e.preventDefault();
+    this.router.navigate('/sign-in');
+  };
 }
 
 declare global {

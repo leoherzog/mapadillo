@@ -82,11 +82,11 @@ export class LandingPage extends LitElement {
         ></wa-icon>
       </div>
 
-      <h1>Plan Your Family<br />Road Trip!</h1>
+      <h1>Plan Your Next<br />Adventure!</h1>
 
       <p class="tagline">
-        Add stops, draw the route, and turn your adventure into a beautiful
-        printed map the kids will love.
+        Add stops, draw the route, and create a paper map
+        the kids will love.
       </p>
 
       <div class="cta-group">

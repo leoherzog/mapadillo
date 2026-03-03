@@ -1,4 +1,4 @@
-name = "kids-roadtrip-map"
+name = "kids-map"
 main = "src/index.ts"
 compatibility_date = "2026-03-02"
 compatibility_flags = ["nodejs_compat"]
@@ -26,6 +26,7 @@ run_worker_first = ["/api/*"]
 binding = "DB"
 database_name = "roadtrip-db"
 database_id = "placeholder-replace-after-wrangler-d1-create"
+migrations_dir = "src/db/migrations"
 
 # ── KV Namespace (geocoding + routing cache) ─────────────────────────────────
 [[kv_namespaces]]
