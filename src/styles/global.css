@@ -1,0 +1,23 @@
+/*
+ * Kids Roadtrip Map — Global styles
+ */
+
+/* Import Web Awesome base styles */
+@import '@awesome.me/webawesome-pro/dist/styles/webawesome.css';
+/* Playful Pro theme */
+@import '@awesome.me/webawesome-pro/dist/styles/themes/playful.css';
+
+/* App-level reset / base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font-family: var(--wa-font-family-body, system-ui, sans-serif);
+  background-color: var(--wa-color-surface-default);
+  color: var(--wa-color-neutral-950);
+}

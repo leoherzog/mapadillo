@@ -1,0 +1,29 @@
+/*
+ * Kids Roadtrip Map — Theme overrides
+ *
+ * Base theme: Playful (Pro) + Rudimentary palette
+ * We tweak a few tokens to push the palette toward bright, kid-friendly candy colors.
+ */
+
+:root {
+  /* Brand accent — vivid orange for road-trip warmth */
+  --wa-color-brand-500: #ff6b00;
+  --wa-color-brand-600: #e05e00;
+
+  /* Slightly increase border-radius for a rounder, friendlier feel */
+  --wa-border-radius-m: 0.625rem;
+  --wa-border-radius-l: 1rem;
+  --wa-border-radius-xl: 1.5rem;
+
+  /* Rounded system font stack — no external font downloads */
+  --wa-font-family-body: ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT', 'Arial Rounded MT Bold', Calibri, source-sans-pro, system-ui, sans-serif;
+  --wa-font-weight-normal: 600;
+
+  /* Slightly larger default body text for readability */
+  --wa-font-size-m: 1.0625rem;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
