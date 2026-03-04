@@ -14,11 +14,11 @@ interface ModeInfo {
 }
 
 const MODES: ModeInfo[] = [
-  { icon: 'car', mode: 'drive', color: '#e05e00' },
-  { icon: 'compass', mode: 'walk', color: '#16a34a' },
-  { icon: 'person-biking', mode: 'bike', color: '#0d9488' },
-  { icon: 'plane', mode: 'plane', color: '#2563eb' },
-  { icon: 'ship', mode: 'boat', color: '#1e3a5f' },
+  { icon: 'car', mode: 'drive', color: 'var(--wa-color-brand-50)' },
+  { icon: 'compass', mode: 'walk', color: 'var(--wa-color-green-50)' },
+  { icon: 'person-biking', mode: 'bike', color: 'var(--wa-color-cyan-50)' },
+  { icon: 'plane', mode: 'plane', color: 'var(--wa-color-blue-50)' },
+  { icon: 'ship', mode: 'boat', color: 'var(--wa-color-indigo-70)' },
 ];
 
 @customElement('travel-mode-picker')
@@ -28,40 +28,29 @@ export class TravelModePicker extends LitElement {
   static styles = css`
     :host {
       display: flex;
-      gap: 0.25rem;
+      gap: var(--wa-space-3xs);
       align-items: center;
     }
 
-    .mode-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      background: none;
-      border: none;
-      border-bottom: 3px solid transparent;
-      padding: 0.3rem 0.5rem;
-      cursor: pointer;
-      font-size: 1rem;
-      color: var(--wa-color-neutral-500);
-      border-radius: 0;
-    }
-
-    .mode-btn:hover {
-      color: var(--wa-color-neutral-700);
+    .active::part(base) {
+      border-bottom: 3px solid var(--mode-color, currentColor);
+      color: var(--mode-color, currentColor);
     }
   `;
 
   render() {
     return MODES.map(
       ({ icon, mode, color }) => html`
-        <button
-          class="mode-btn"
-          style=${this.value === mode ? `border-bottom-color: ${color}; color: ${color};` : ''}
+        <wa-button
+          appearance="plain"
+          size="small"
+          class=${this.value === mode ? 'active' : ''}
+          style="--mode-color: ${color}"
           title=${mode}
           @click=${() => this._select(mode)}
         >
           <wa-icon name=${icon}></wa-icon>
-        </button>
+        </wa-button>
       `,
     );
   }

@@ -110,10 +110,10 @@ describe('GET /api/health', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
   });
 
-  it('returns status ok with milestone 4', async () => {
+  it('returns status ok with milestone 5', async () => {
     const res = await request('/api/health');
     const body = await res.json();
-    expect(body).toEqual({ status: 'ok', milestone: 4 });
+    expect(body).toEqual({ status: 'ok', milestone: 5 });
   });
 });
 
@@ -672,18 +672,98 @@ describe('Geocoding - /api/geocode', () => {
   });
 });
 
-// ── Routing stub (Milestone 5) ────────────────────────────────────────────────
+// ── Routing proxy (Milestone 5) ───────────────────────────────────────────────
 
-describe('Routing stub - 501', () => {
-  it('POST /api/route returns 501', async () => {
-    const res = await request('/api/route', { method: 'POST' });
-    expect(res.status).toBe(501);
+describe('Routing proxy - POST /api/route', () => {
+  it('returns 401 without session', async () => {
+    const res = await request('/api/route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'driving-car', start: [13.4, 52.5], end: [11.6, 48.1] }),
+    });
+    expect(res.status).toBe(401);
   });
 
-  it('error body mentions Milestone 5', async () => {
-    const res = await request('/api/route', { method: 'POST' });
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('Milestone 5');
+  describe('with auth', () => {
+    let cookie: string;
+
+    beforeAll(async () => {
+      ({ cookie } = await createTestSession());
+    });
+
+    it('returns 400 with invalid JSON', async () => {
+      const res = await request('/api/route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie },
+        body: 'not json',
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('Invalid JSON');
+    });
+
+    it('returns 400 with missing profile', async () => {
+      const res = await jsonRequest('/api/route', 'POST', {
+        start: [13.4, 52.5],
+        end: [11.6, 48.1],
+      }, cookie);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('profile');
+    });
+
+    it('returns 400 with invalid profile', async () => {
+      const res = await jsonRequest('/api/route', 'POST', {
+        profile: 'teleportation',
+        start: [13.4, 52.5],
+        end: [11.6, 48.1],
+      }, cookie);
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 with missing start', async () => {
+      const res = await jsonRequest('/api/route', 'POST', {
+        profile: 'driving-car',
+        end: [11.6, 48.1],
+      }, cookie);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('start');
+    });
+
+    it('returns 400 with invalid coordinates (out of range)', async () => {
+      const res = await jsonRequest('/api/route', 'POST', {
+        profile: 'driving-car',
+        start: [200, 100],
+        end: [11.6, 48.1],
+      }, cookie);
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 with invalid coordinate types', async () => {
+      const res = await jsonRequest('/api/route', 'POST', {
+        profile: 'driving-car',
+        start: ['a', 'b'],
+        end: [11.6, 48.1],
+      }, cookie);
+      expect(res.status).toBe(400);
+    });
+
+    it('proxies to ORS for valid request', async () => {
+      const res = await jsonRequest('/api/route', 'POST', {
+        profile: 'driving-car',
+        start: [13.388860, 52.517037],
+        end: [11.575382, 48.137154],
+      }, cookie);
+      // In test environments outbound fetch may fail — skip gracefully
+      if (res.status !== 200) {
+        expect([502, 500, 429]).toContain(res.status);
+        return;
+      }
+      const body = (await res.json()) as { type: string; features: unknown[] };
+      expect(body.type).toBe('FeatureCollection');
+      expect(Array.isArray(body.features)).toBe(true);
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Router } from '../router.js';
 import { requireAuth } from '../auth/auth-guard.js';
 import { getUser, onAuthChange, type User } from '../auth/auth-state.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 // Page imports
 import '../pages/landing-page.js';
@@ -50,37 +51,28 @@ export class AppShell extends LitElement {
     },
   ]);
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: block;
     }
 
     .header-inner {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-m);
       padding: var(--wa-space-s) var(--wa-space-l);
     }
 
     .logo {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-xs);
       text-decoration: none;
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
       font-weight: 900;
-      font-size: 1.15rem;
+      font-size: var(--wa-font-size-l);
       cursor: pointer;
     }
 
     .logo wa-icon {
-      font-size: 1.5rem;
+      font-size: var(--wa-font-size-xl);
     }
 
     .header-nav {
-      display: flex;
-      gap: var(--wa-space-s);
-      align-items: center;
       margin-left: auto;
     }
 
@@ -88,7 +80,7 @@ export class AppShell extends LitElement {
       display: block;
       padding: var(--wa-space-m) var(--wa-space-l);
       text-align: center;
-      font-size: 0.8rem;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-neutral-500);
     }
 
@@ -98,14 +90,14 @@ export class AppShell extends LitElement {
     }
 
     .footer-inner a:hover {
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
     }
 
     wa-page::part(navigation-toggle),
     wa-page::part(navigation) {
       display: none;
     }
-  `;
+  `];
 
   connectedCallback() {
     super.connectedCallback();
@@ -123,13 +115,13 @@ export class AppShell extends LitElement {
   render() {
     return html`
       <wa-page disable-sticky="header">
-        <div slot="header" class="header-inner">
-          <a class="logo" href="/" @click=${this._navHome}>
+        <div slot="header" class="header-inner wa-cluster wa-align-items-center wa-gap-m">
+          <a class="logo wa-cluster wa-align-items-center wa-gap-xs" href="/" @click=${this._navHome}>
             <wa-icon name="map"></wa-icon>
             Mapadillo
           </a>
 
-          <nav class="header-nav" aria-label="Site navigation">
+          <nav class="header-nav wa-cluster wa-align-items-center wa-gap-s" aria-label="Site navigation">
             ${this._user
               ? html`
                   <wa-button

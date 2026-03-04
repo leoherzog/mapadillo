@@ -200,6 +200,174 @@ describe('Router', () => {
     });
   });
 
+  describe('hostConnected — Navigation API', () => {
+    function setupNavigation() {
+      const listeners: Record<string, EventListener[]> = {};
+      const navigation = {
+        addEventListener: vi.fn((type: string, fn: EventListener) => {
+          (listeners[type] ??= []).push(fn);
+        }),
+        removeEventListener: vi.fn((type: string, fn: EventListener) => {
+          listeners[type] = (listeners[type] ?? []).filter((f) => f !== fn);
+        }),
+        navigate: vi.fn(),
+      };
+      vi.stubGlobal('navigation', navigation);
+      return { navigation, listeners };
+    }
+
+    it('registers navigate listener when Navigation API is available', () => {
+      const { navigation } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/', render: () => html`<p>Home</p>` },
+      ];
+      const router = new Router(host, routes);
+
+      router.hostConnected();
+
+      expect(navigation.addEventListener).toHaveBeenCalledWith('navigate', expect.any(Function));
+    });
+
+    it('removes navigate listener on disconnect', () => {
+      const { navigation } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/', render: () => html`<p>Home</p>` },
+      ];
+      const router = new Router(host, routes);
+
+      router.hostConnected();
+      router.hostDisconnected();
+
+      expect(navigation.removeEventListener).toHaveBeenCalledWith('navigate', expect.any(Function));
+    });
+
+    it('uses navigation.navigate() for programmatic navigation', async () => {
+      const { navigation } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/', render: () => html`<p>Home</p>` },
+        { path: '/dashboard', render: () => html`<p>Dash</p>` },
+      ];
+      const router = new Router(host, routes);
+
+      router.hostConnected();
+      router.navigate('/dashboard');
+
+      expect(navigation.navigate).toHaveBeenCalledWith('/dashboard');
+    });
+
+    it('intercepts same-origin navigations for matching routes', async () => {
+      const { listeners } = setupNavigation();
+      const host = createMockHost();
+      const renderFn = vi.fn(() => html`<p>Home</p>`);
+      const routes: RouteDefinition[] = [
+        { path: '/', render: renderFn },
+      ];
+      const router = new Router(host, routes);
+      router.hostConnected();
+
+      const interceptOpts: { handler?: () => Promise<void> } = {};
+      const event = {
+        canIntercept: true,
+        downloadRequest: null,
+        destination: { url: `${window.location.origin}/` },
+        intercept: vi.fn((opts: typeof interceptOpts) => Object.assign(interceptOpts, opts)),
+      };
+      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+
+      expect(event.intercept).toHaveBeenCalledWith(expect.objectContaining({
+        scroll: 'after-transition',
+        handler: expect.any(Function),
+      }));
+
+      // Execute the handler to cover _runRouteAsync via intercept
+      await interceptOpts.handler!();
+      await vi.waitFor(() => expect(renderFn).toHaveBeenCalled());
+    });
+
+    it('skips non-interceptable events', () => {
+      const { listeners } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/', render: () => html`<p>Home</p>` },
+      ];
+      const router = new Router(host, routes);
+      router.hostConnected();
+
+      const event = {
+        canIntercept: false,
+        downloadRequest: null,
+        destination: { url: `${window.location.origin}/` },
+        intercept: vi.fn(),
+      };
+      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+
+      expect(event.intercept).not.toHaveBeenCalled();
+    });
+
+    it('skips download requests', () => {
+      const { listeners } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/', render: () => html`<p>Home</p>` },
+      ];
+      const router = new Router(host, routes);
+      router.hostConnected();
+
+      const event = {
+        canIntercept: true,
+        downloadRequest: 'file.pdf',
+        destination: { url: `${window.location.origin}/` },
+        intercept: vi.fn(),
+      };
+      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+
+      expect(event.intercept).not.toHaveBeenCalled();
+    });
+
+    it('skips cross-origin navigations', () => {
+      const { listeners } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/', render: () => html`<p>Home</p>` },
+      ];
+      const router = new Router(host, routes);
+      router.hostConnected();
+
+      const event = {
+        canIntercept: true,
+        downloadRequest: null,
+        destination: { url: 'https://example.com/' },
+        intercept: vi.fn(),
+      };
+      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+
+      expect(event.intercept).not.toHaveBeenCalled();
+    });
+
+    it('skips when no route matches', () => {
+      const { listeners } = setupNavigation();
+      const host = createMockHost();
+      const routes: RouteDefinition[] = [
+        { path: '/dashboard', render: () => html`<p>Dash</p>` },
+      ];
+      const router = new Router(host, routes);
+      router.hostConnected();
+
+      const event = {
+        canIntercept: true,
+        downloadRequest: null,
+        destination: { url: `${window.location.origin}/nope` },
+        intercept: vi.fn(),
+      };
+      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+
+      expect(event.intercept).not.toHaveBeenCalled();
+    });
+  });
+
   describe('route params', () => {
     it('passes URL params to render function', async () => {
       window.history.pushState(null, '', '/map/abc-123');

@@ -10,6 +10,7 @@ import { customElement, property } from 'lit/decorators.js';
 import type { Stop } from '../services/maps.js';
 import './icon-picker.js';
 import './travel-mode-picker.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 const MODE_COLORS: Record<string, string> = {
   drive: '#e05e00',
@@ -25,29 +26,21 @@ export class StopCard extends LitElement {
   @property({ type: Number }) index = 0;
   @property({ type: Boolean }) first = false;
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: block;
     }
 
     .travel-mode-row {
-      display: flex;
-      justify-content: center;
-      padding: 0.25rem 0;
+      padding: var(--wa-space-3xs) 0;
     }
 
     wa-card {
-      --spacing: 0.5rem 0.75rem;
+      --spacing: var(--wa-space-xs) var(--wa-space-s);
     }
 
     wa-card::part(base) {
       border-left: 4px solid var(--border-color, var(--wa-color-neutral-300));
-    }
-
-    .top-row {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
     }
 
     .drag-handle {
@@ -70,15 +63,15 @@ export class StopCard extends LitElement {
     }
 
     .label-row {
-      margin-top: 0.35rem;
+      margin-top: var(--wa-space-3xs);
     }
 
     .coords {
-      font-size: 0.7rem;
+      font-size: var(--wa-font-size-xs);
       color: var(--wa-color-neutral-400);
-      margin-top: 0.25rem;
+      margin-top: var(--wa-space-3xs);
     }
-  `;
+  `];
 
   render() {
     const borderColor = MODE_COLORS[this.stop.travel_mode ?? ''] ?? 'var(--wa-color-neutral-300)';
@@ -86,7 +79,7 @@ export class StopCard extends LitElement {
     return html`
       ${!this.first
         ? html`
-            <div class="travel-mode-row">
+            <div class="travel-mode-row wa-cluster wa-justify-content-center">
               <travel-mode-picker
                 .value=${this.stop.travel_mode ?? ''}
                 @mode-change=${this._onModeChange}
@@ -95,7 +88,7 @@ export class StopCard extends LitElement {
           `
         : nothing}
       <wa-card style="--border-color: ${borderColor}" draggable="true">
-        <div class="top-row">
+        <div class="top-row wa-cluster wa-align-items-center wa-gap-xs">
           <wa-icon class="drag-handle" name="grip-vertical"></wa-icon>
           <icon-picker
             .value=${this.stop.icon ?? 'circle-plus'}

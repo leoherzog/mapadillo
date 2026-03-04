@@ -7,6 +7,7 @@
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 const CATEGORIES: Record<string, string[]> = {
   Outdoors: ['tree', 'leaf', 'flower', 'compass', 'fire', 'snowflake', 'sun', 'umbrella'],
@@ -24,39 +25,29 @@ export class IconPicker extends LitElement {
   @property() value = 'circle-plus';
   @state() private _open = false;
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: inline-block;
     }
 
     .trigger {
-      font-size: 1.2rem;
+      font-size: var(--wa-font-size-l);
     }
 
     .category-label {
-      font-size: 0.75rem;
+      font-size: var(--wa-font-size-xs);
       font-weight: 600;
       color: var(--wa-color-neutral-500);
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      margin: 0.75rem 0 0.25rem;
+      margin: var(--wa-space-s) 0 var(--wa-space-3xs);
     }
 
     .category-label:first-child {
       margin-top: 0;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(4rem, 1fr));
-      gap: 0.25rem;
-    }
-
     .icon-btn {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.15rem;
       padding: 0.4rem 0.2rem;
       background: none;
       border: 2px solid transparent;
@@ -70,7 +61,7 @@ export class IconPicker extends LitElement {
     }
 
     .icon-btn.selected {
-      border-color: var(--wa-color-brand-500, #ff6b00);
+      border-color: var(--wa-color-brand-50, #ff6b00);
     }
 
     .icon-btn .label {
@@ -81,7 +72,7 @@ export class IconPicker extends LitElement {
       white-space: nowrap;
       max-width: 100%;
     }
-  `;
+  `];
 
   render() {
     return html`
@@ -92,11 +83,11 @@ export class IconPicker extends LitElement {
         ${Object.entries(CATEGORIES).map(
           ([cat, icons]) => html`
             <div class="category-label">${cat}</div>
-            <div class="grid">
+            <div class="wa-grid wa-gap-3xs" style="--min-column-size: 4rem">
               ${icons.map(
                 (icon) => html`
                   <button
-                    class="icon-btn ${icon === this.value ? 'selected' : ''}"
+                    class="icon-btn wa-stack wa-align-items-center wa-gap-0 ${icon === this.value ? 'selected' : ''}"
                     @click=${() => this._select(icon)}
                   >
                     <wa-icon name=${icon}></wa-icon>

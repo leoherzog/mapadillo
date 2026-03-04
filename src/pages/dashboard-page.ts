@@ -5,12 +5,13 @@
  * with mini MapLibre previews.
  */
 import { LitElement, html, css } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, query, state } from 'lit/decorators.js';
 import type { User } from '../auth/auth-state.js';
 import type { MapWithStops } from '../services/maps.js';
 import { listMaps, deleteMap } from '../services/maps.js';
 import { navClick } from '../nav.js';
 import '../components/map-card.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
@@ -18,8 +19,11 @@ export class DashboardPage extends LitElement {
 
   @state() private _maps: MapWithStops[] = [];
   @state() private _loading = true;
+  @state() private _deleteMapId: string | null = null;
 
-  static styles = css`
+  @query('wa-dialog') private _dialog!: HTMLElement & { open: boolean; hide(): void; show(): void };
+
+  static styles = [waUtilities, css`
     :host {
       display: block;
       padding: var(--wa-space-xl) var(--wa-space-m);
@@ -28,23 +32,23 @@ export class DashboardPage extends LitElement {
     }
 
     .greeting {
-      font-size: 1.15rem;
+      font-size: var(--wa-font-size-l);
       color: var(--wa-color-neutral-600);
       margin: 0 0 var(--wa-space-l);
       font-weight: 500;
     }
 
     h1 {
-      font-size: 2rem;
+      font-size: var(--wa-font-size-3xl);
       font-weight: 900;
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
       margin: 0 0 var(--wa-space-xs);
     }
 
     h2 {
-      font-size: 1.4rem;
+      font-size: var(--wa-font-size-xl);
       font-weight: 800;
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
       margin: var(--wa-space-2xl) 0 var(--wa-space-xs);
     }
 
@@ -58,18 +62,7 @@ export class DashboardPage extends LitElement {
       vertical-align: -0.1em;
     }
 
-    .maps-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: var(--wa-space-l);
-      margin-top: var(--wa-space-l);
-    }
-
     .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: var(--wa-space-m);
       padding: var(--wa-space-2xl);
       text-align: center;
       border: 2px dashed var(--wa-color-neutral-300);
@@ -84,13 +77,7 @@ export class DashboardPage extends LitElement {
     .empty-state p {
       margin: 0;
     }
-
-    .loading {
-      display: flex;
-      justify-content: center;
-      padding: var(--wa-space-2xl);
-    }
-  `;
+  `];
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -123,10 +110,10 @@ export class DashboardPage extends LitElement {
       </h1>
 
       ${this._loading
-        ? html`<div class="loading"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="wa-cluster wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>`
         : this._maps.length === 0
           ? html`
-              <div class="empty-state">
+              <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
                 <wa-icon name="map" style="color: var(--wa-color-neutral-400);"></wa-icon>
                 <p>No trips yet! Create your first adventure to get started.</p>
                 <wa-button variant="brand" href="/map/new" @click=${navClick('/map/new')}>
@@ -140,7 +127,7 @@ export class DashboardPage extends LitElement {
                 <wa-icon slot="start" name="plus"></wa-icon>
                 Create New Trip
               </wa-button>
-              <div class="maps-grid" @map-delete=${this._onMapDelete}>
+              <div class="wa-grid wa-gap-l" style="--min-column-size: 280px; margin-top: var(--wa-space-l)" @map-delete=${this._onMapDelete}>
                 ${this._maps.map(
                   (m) => html`<map-card .map=${m}></map-card>`,
                 )}
@@ -152,16 +139,34 @@ export class DashboardPage extends LitElement {
         Shared with Me
       </h2>
 
-      <div class="empty-state">
+      <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
         <wa-icon name="share-nodes" style="color: var(--wa-color-neutral-400);"></wa-icon>
         <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
       </div>
+
+      <wa-dialog label="Delete Trip?">
+        <p>This cannot be undone.</p>
+        <wa-button slot="footer" variant="danger" @click=${this._onDialogConfirm}>Delete</wa-button>
+        <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onDialogCancel}>Cancel</wa-button>
+      </wa-dialog>
     `;
   }
 
-  private async _onMapDelete(e: CustomEvent<{ mapId: string }>) {
-    const { mapId } = e.detail;
-    if (!window.confirm('Delete this trip? This cannot be undone.')) return;
+  private _onMapDelete(e: CustomEvent<{ mapId: string }>) {
+    this._deleteMapId = e.detail.mapId;
+    this._dialog.show();
+  }
+
+  private _onDialogCancel() {
+    this._deleteMapId = null;
+    this._dialog.hide();
+  }
+
+  private async _onDialogConfirm() {
+    const mapId = this._deleteMapId;
+    this._deleteMapId = null;
+    this._dialog.hide();
+    if (!mapId) return;
 
     try {
       await deleteMap(mapId);

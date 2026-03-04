@@ -1,10 +1,11 @@
 import { LitElement, html, css } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { navClick } from '../nav.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('landing-page')
 export class LandingPage extends LitElement {
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -25,7 +26,7 @@ export class LandingPage extends LitElement {
       font-size: clamp(2rem, 6vw, 3.5rem);
       font-weight: 900;
       margin: 0;
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
       line-height: 1.15;
     }
 
@@ -36,27 +37,12 @@ export class LandingPage extends LitElement {
       margin: 0 auto;
     }
 
-    .cta-group {
-      display: flex;
-      gap: var(--wa-space-m);
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-
     .features {
-      display: flex;
-      gap: var(--wa-space-l);
-      flex-wrap: wrap;
-      justify-content: center;
       margin-top: var(--wa-space-xl);
       max-width: 800px;
     }
 
     .feature-card {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: var(--wa-space-s);
       flex: 1 1 140px;
       max-width: 200px;
       text-align: center;
@@ -67,15 +53,15 @@ export class LandingPage extends LitElement {
     }
 
     .feature-label {
-      font-size: 0.95rem;
+      font-size: var(--wa-font-size-m);
       font-weight: 700;
       color: var(--wa-color-neutral-700);
     }
 
     .hero-icon wa-icon {
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
     }
-  `;
+  `];
 
   render() {
     return html`
@@ -90,7 +76,7 @@ export class LandingPage extends LitElement {
         the whole family will love.
       </p>
 
-      <div class="cta-group">
+      <div class="wa-cluster wa-gap-m wa-justify-content-center">
         <wa-button
           size="large"
           variant="brand"
@@ -102,7 +88,7 @@ export class LandingPage extends LitElement {
         </wa-button>
       </div>
 
-      <div class="features">
+      <div class="features wa-cluster wa-gap-l wa-justify-content-center">
         ${[
           { icon: 'location-dot', label: 'Add Stops' },
           { icon: 'compass', label: 'Draw the Route' },
@@ -110,7 +96,7 @@ export class LandingPage extends LitElement {
           { icon: 'print', label: 'Print or Order' },
         ].map(
           ({ icon, label }) => html`
-            <div class="feature-card">
+            <div class="feature-card wa-stack wa-gap-s wa-align-items-center">
               <span class="feature-icon">
                 <wa-icon name=${icon} label=""></wa-icon>
               </span>

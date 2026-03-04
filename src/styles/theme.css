@@ -7,8 +7,8 @@
 
 :root {
   /* Brand accent — vivid orange for road-trip warmth */
-  --wa-color-brand-500: #ff6b00;
-  --wa-color-brand-600: #e05e00;
+  --wa-color-brand-50: #ff6b00;
+  --wa-color-brand-60: #e05e00;
 
   /* Slightly increase border-radius for a rounder, friendlier feel */
   --wa-border-radius-m: 0.625rem;

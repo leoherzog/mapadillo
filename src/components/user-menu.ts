@@ -27,7 +27,7 @@ export class UserMenu extends LitElement {
 
     .trigger-label {
       margin-left: var(--wa-space-xs);
-      font-size: 0.9rem;
+      font-size: var(--wa-font-size-s);
       max-width: 120px;
       overflow: hidden;
       text-overflow: ellipsis;

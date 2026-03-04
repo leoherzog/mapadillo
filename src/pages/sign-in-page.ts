@@ -11,6 +11,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { authClient } from '../auth/auth-client.js';
 import { refreshAuth } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('sign-in-page')
 export class SignInPage extends LitElement {
@@ -20,7 +21,7 @@ export class SignInPage extends LitElement {
   @state() private _error = '';
   @state() private _loading = false;
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: flex;
       align-items: center;
@@ -47,7 +48,7 @@ export class SignInPage extends LitElement {
       font-size: 1.75rem;
       font-weight: 900;
       margin: 0;
-      color: var(--wa-color-brand-600, #e05e00);
+      color: var(--wa-color-brand-60, #e05e00);
     }
 
     p {
@@ -55,54 +56,20 @@ export class SignInPage extends LitElement {
       margin: 0;
     }
 
-    .auth-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: var(--wa-space-s);
-      width: 100%;
-    }
-
-    .auth-buttons wa-button {
-      width: 100%;
-    }
-
-    .register-form {
-      display: flex;
-      flex-direction: column;
-      gap: var(--wa-space-m);
-      width: 100%;
-    }
-
+    .auth-buttons wa-button,
     .register-form wa-button {
       width: 100%;
     }
 
-    .divider {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-m);
-      width: 100%;
-      color: var(--wa-color-neutral-400);
-      font-size: 0.85rem;
-    }
-
-    .divider::before,
-    .divider::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--wa-color-neutral-200);
-    }
-
     .hero-icon {
       font-size: 3rem;
-      color: var(--wa-color-brand-500, #ff6b00);
+      color: var(--wa-color-brand-50, #ff6b00);
     }
 
     .mode-toggle {
-      font-size: 0.9rem;
+      font-size: var(--wa-font-size-s);
     }
-  `;
+  `];
 
   render() {
     return html`
@@ -136,7 +103,7 @@ export class SignInPage extends LitElement {
 
   private _renderSignIn() {
     return html`
-      <div class="auth-buttons">
+      <div class="auth-buttons wa-stack wa-gap-s" style="width: 100%">
         <wa-button
           variant="neutral"
           appearance="outlined"
@@ -169,7 +136,7 @@ export class SignInPage extends LitElement {
         </wa-button>
       </div>
 
-      <div class="divider"><span>or</span></div>
+      <div class="wa-cluster wa-align-items-center wa-gap-s" style="width: 100%"><wa-divider style="flex:1"></wa-divider><span>or</span><wa-divider style="flex:1"></wa-divider></div>
 
       <wa-button
         class="mode-toggle"
@@ -186,7 +153,7 @@ export class SignInPage extends LitElement {
 
   private _renderRegister() {
     return html`
-      <div class="register-form">
+      <div class="register-form wa-stack wa-gap-m" style="width: 100%">
         <wa-input
           label="Name"
           placeholder="Your name"
@@ -215,9 +182,9 @@ export class SignInPage extends LitElement {
         </wa-button>
       </div>
 
-      <div class="divider"><span>or</span></div>
+      <div class="wa-cluster wa-align-items-center wa-gap-s" style="width: 100%"><wa-divider style="flex:1"></wa-divider><span>or</span><wa-divider style="flex:1"></wa-divider></div>
 
-      <div class="auth-buttons">
+      <div class="auth-buttons wa-stack wa-gap-s" style="width: 100%">
         <wa-button
           variant="neutral"
           appearance="outlined"

@@ -11,6 +11,7 @@ import maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import type { MapWithStops } from '../services/maps.js';
 import { navigateTo } from '../nav.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
@@ -19,6 +20,7 @@ export class MapCard extends LitElement {
   private _mapInstance?: maplibregl.Map;
 
   static styles = [
+    waUtilities,
     unsafeCSS(maplibreCss),
     css`
       :host {
@@ -35,28 +37,27 @@ export class MapCard extends LitElement {
       }
 
       .map-container {
+        position: absolute;
+        inset: 0;
         width: 100%;
-        height: 200px;
+        height: 100%;
       }
 
       h3 {
         margin: 0;
-        font-size: 1rem;
+        font-size: var(--wa-font-size-m);
         font-weight: 600;
       }
 
       .family {
-        font-size: 0.85rem;
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-neutral-500);
-        margin-top: 0.15rem;
+        margin-top: var(--wa-space-3xs);
       }
 
       .meta {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
         margin-top: 0.35rem;
-        font-size: 0.8rem;
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-neutral-400);
       }
 
@@ -100,7 +101,7 @@ export class MapCard extends LitElement {
     const bounds = new maplibregl.LngLatBounds();
 
     for (const stop of this.map.stops) {
-      new maplibregl.Marker({ color: '#ff6b00' })
+      new maplibregl.Marker({ color: getComputedStyle(this).getPropertyValue('--wa-color-brand-50').trim() || '#ff6b00' })
         .setLngLat([stop.longitude, stop.latitude])
         .addTo(this._mapInstance);
       bounds.extend([stop.longitude, stop.latitude]);
@@ -114,12 +115,14 @@ export class MapCard extends LitElement {
 
     return html`
       <wa-card @click=${this._onClick}>
-        <div slot="media" class="map-container"></div>
+        <div slot="media" class="wa-frame:landscape">
+          <div class="map-container"></div>
+        </div>
         <h3>${this.map.name}</h3>
         ${this.map.family_name
           ? html`<div class="family">${this.map.family_name}</div>`
           : ''}
-        <div class="meta">
+        <div class="meta wa-split wa-align-items-center">
           <span>${stopCount} stop${stopCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
           <wa-button appearance="plain" size="small" @click=${this._onDelete}>
             <wa-icon name="trash" label="Delete map"></wa-icon>

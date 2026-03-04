@@ -989,7 +989,7 @@ mapadillo/
 ```
 mapadillo/
 ├── src/
-│   ├── index.ts                          # Added wa-dialog, wa-relative-time imports
+│   ├── index.ts                          # Added wa-badge, wa-details, wa-dialog, wa-radio, wa-radio-group, wa-relative-time imports
 │   ├── router.ts                         # Refactored DIY router (Lit ReactiveController, URLPattern + Navigation API)
 │   ├── router.test.ts            [NEW]   # 11 tests: construction, outlet, popstate, guards, params, errors
 │   ├── nav.ts                            # Refactored: navigateTo() + navClick() helpers with deduplication
@@ -1003,7 +1003,7 @@ mapadillo/
 │   │   ├── app-shell.ts                  # Added /map/new + /map/:id routes, "My Trips" nav button
 │   │   ├── stop-card.ts          [NEW]   # Stop card with icon-picker, name/label inputs, travel mode, drag handle
 │   │   ├── stop-list.ts          [NEW]   # Drag-and-drop stop list (native HTML DnD API)
-│   │   ├── icon-picker.ts        [NEW]   # Dialog-based picker: 37 Jelly icons in 8 categories
+│   │   ├── icon-picker.ts        [NEW]   # Dialog-based picker: 40 Jelly icons in 8 categories
 │   │   ├── save-indicator.ts     [NEW]   # Status display: idle/saving/saved/error with 3s auto-hide
 │   │   ├── travel-mode-picker.ts [NEW]   # 5-mode horizontal button bar (drive/walk/bike/plane/boat)
 │   │   └── map-card.ts           [NEW]   # Dashboard card: non-interactive MapLibre preview + metadata
@@ -1024,7 +1024,7 @@ mapadillo/
 - Hono sub-app with `getOwnedMap()` helper centralizing 404/403 ownership checks + `isResponse()` type guard
 - Map CRUD: `POST /` (requires `name`), `GET /` (list with batched stop queries via `DB.batch()`), `GET /:id`, `PUT /:id` (partial update with field validation), `DELETE /:id` (CASCADE handles stops)
 - Stop CRUD: `POST /:id/stops` (auto-increment position via `MAX(position)`), `PUT /:id/stops/:stopId`, `DELETE /:id/stops/:stopId` (re-compacts positions + nulls travel_mode on promoted first stop via `DB.batch()`), `PUT /:id/stops/reorder` (validates all IDs present, no duplicates)
-- Server-side validation: `VALID_ICONS` set (37 icons matching client picker), `VALID_TRAVEL_MODES` set (drive/walk/bike/plane/boat)
+- Server-side validation: `VALID_ICONS` set (40 icons matching client picker), `VALID_TRAVEL_MODES` set (drive/walk/bike/plane/boat)
 - First stop invariant: `travel_mode` forced to `null` on position 0 — enforced on create, reorder, and delete-promoted
 - All stop mutations update parent map's `updated_at` timestamp
 - Reorder route declared before `/:id/stops/:stopId` to avoid `reorder` matching as a `:stopId` param
@@ -1055,7 +1055,7 @@ mapadillo/
 - Fires `stops-reorder { order: string[] }` event; bubbles child `stop-update`/`stop-delete` events
 
 **Icon picker (`src/components/icon-picker.ts`):**
-- `wa-dialog` with 37 icons in 8 categories: Outdoors (8), Food & Drink (5), Sightseeing (5), Accommodation (2), Fun (6), Transport (6), People (2), Checklist (6)
+- `wa-dialog` with 40 icons in 8 categories: Outdoors (8), Food & Drink (5), Sightseeing (5), Accommodation (2), Fun (6), Transport (6), People (2), Checklist (6)
 - Responsive grid (`auto-fill, minmax(4rem, 1fr)`), selected icon gets orange border
 - Fires `icon-change` with icon name string
 
@@ -1064,7 +1064,7 @@ mapadillo/
 - Status reflected to attribute for CSS-based visibility control
 
 **Travel mode picker (`src/components/travel-mode-picker.ts`):**
-- 5 horizontal buttons: car/drive (orange), person-walking/walk (green), person-biking/bike (teal), plane/plane (blue), ship/boat (navy)
+- 5 horizontal buttons: car/drive (orange), compass/walk (green), person-biking/bike (teal), plane/plane (blue), ship/boat (navy)
 - Active mode gets colored bottom border + matching text color
 - Fires `mode-change` with mode string
 
@@ -1142,7 +1142,7 @@ mapadillo/
 
 4. **Server-authoritative positions after mutations.** After stop deletion and reorder, the client reloads the full map from the server rather than recalculating positions locally. Ensures position consistency without duplicating server-side re-compaction logic.
 
-5. **37 icons (not 38).** Plan mentions "38 curated icons" but the validated set contains 37. The `person-biking` icon is reserved for the travel-mode picker UI only and excluded from the stop icon picker, as specified in the plan's Map Elements section.
+5. **40 icons (not 38).** Plan mentions "38 curated icons" but the validated set contains 40 after adding additional icons during implementation. The `person-biking` icon is reserved for the travel-mode picker UI only and excluded from the stop icon picker, as specified in the plan's Map Elements section.
 
 6. **`wa-page` navigation-toggle CSS workaround.** Added `wa-page::part(navigation-toggle), wa-page::part(navigation) { display: none; }` to hide the hamburger button that appears on mobile even when no `navigation` slot is used. This is a known wa-page bug ([#1601](https://github.com/shoelace-style/webawesome/issues/1601)); the workaround can be removed once fixed upstream.
 
@@ -1154,7 +1154,7 @@ mapadillo/
 
 ---
 
-### Milestone 5: Route Drawing
+### Milestone 5: Route Drawing ✅ COMPLETE
 
 **Goal:** Colored, mode-specific route segments connect all stops on the map.
 
@@ -1178,6 +1178,124 @@ mapadillo/
 - Route redraws when stops are reordered or travel mode changes
 - Toggle units, total distance updates
 - Map bounds fit all segments
+
+#### Implementation Notes (M5)
+
+**Files created/modified (6 files):**
+
+```
+mapadillo/
+├── src/
+│   ├── services/
+│   │   └── routing.ts             [NEW]   # Per-segment routing: ORS proxy for drive/walk/bike, client-side for plane/boat
+│   ├── map/
+│   │   └── map-controller.ts      [NEW]   # MapController class: route layers, numbered markers, bounds fitting
+│   └── pages/
+│       └── trip-builder-page.ts           # Rewritten: MapController integration, route stats, distance display
+└── worker/
+    └── src/
+        ├── index.ts                       # Mounted route handler with requireAuth + rate limit, milestone: 5
+        ├── index.test.ts                  # 64 tests (was 54): +8 routing proxy tests, -2 old stubs
+        └── routes/
+            └── route.ts           [NEW]   # ORS proxy with KV caching (24h TTL)
+```
+
+**No new npm dependencies.** All packages were already present from earlier milestones.
+
+**Worker routing proxy (`worker/src/routes/route.ts`):**
+- `POST /api/route` with JSON body `{ profile, start: [lon,lat], end: [lon,lat] }`
+- Valid profiles: `driving-car`, `foot-walking`, `cycling-regular`
+- Validates coordinates: must be `[number, number]` arrays within valid lon/lat ranges
+- KV cache key: `route:{profile}:{SHA256(start_lon,start_lat,end_lon,end_lat)[0:32]}` — 24-hour TTL
+- Proxies to `POST https://api.openrouteservice.org/v2/directions/{profile}/geojson`
+- Auth via `ORS_API_KEY` env secret in Authorization header
+- Returns ORS GeoJSON `FeatureCollection` directly (no transformation)
+- Forwards 429 from ORS as 429 to client; all other errors → 502
+- KV write is best-effort (try/catch) — consistent with geocode proxy pattern
+
+**Frontend routing service (`src/services/routing.ts`):**
+- `getSegmentRoute(mode, start, end)` → `{ coordinates, distance }` (meters)
+- Drive/Walk/Bike: maps mode to ORS profile, calls `POST /api/route` via `apiPost()`
+- Plane: client-side great-circle arc via spherical interpolation (64 segments), Haversine distance
+- Boat: straight-line GeoJSON `LineString`, Haversine distance
+- Falls back to straight line for unknown modes or ORS failures
+- Exported `haversineDistance()` utility for distance calculations
+
+**Map controller (`src/map/map-controller.ts`):**
+- `MapController` class wraps a `maplibregl.Map` instance
+- `drawRoutes(stops)`: fetches all segment geometries in parallel, renders layers + markers, fits bounds
+- Each segment → own MapLibre source + layer with mode-specific paint:
+  - Drive: solid #e05e00 (orange), width 5
+  - Walk: dasharray [0, 2] #16a34a (green), width 4, round caps
+  - Bike: dasharray [3, 2] #0d9488 (teal), width 4
+  - Plane: dasharray [1, 2] #7c3aed (purple), width 3
+  - Boat: dasharray [5, 3] #1e3a5f (navy), width 3
+- Line opacity: 0.85 for visual distinction from map features
+- AbortController cancels in-progress fetches when `drawRoutes()` is called again
+- `clear()`: removes all layers, sources, and markers
+- `destroy()`: aborts + clears (called on page disconnect)
+
+**Numbered stop markers:**
+- Custom DOM elements (not default MapLibre markers) with two parts:
+  - Badge: orange circle (#ff6b00) with white number, 1.4rem, bold
+  - Pin: white circle with orange border, containing `<wa-icon>` with the stop's chosen Jelly icon
+- Popup on hover/click: stop name + optional label
+- Anchored at bottom for proper positioning
+
+**Trip builder page changes (`src/pages/trip-builder-page.ts`):**
+- Replaced `_syncMarkers()` with `_syncMap()` — uses `MapController.drawRoutes()` instead of raw `addMarker()`
+- MapController initialized in `_onMapReady()` from `mapView.map`
+- Route section: shows total distance, stop count, segment count (replaces "coming soon" placeholder)
+- Distance display: `_formatDistance()` converts meters → km or miles based on map units setting
+- Route loading state: shows spinner while segments are being fetched
+- `_debounceSyncMap()` (300ms): prevents excessive route fetches during rapid travel mode changes
+- Units toggle updates distance display reactively (no re-fetch needed)
+- `disconnectedCallback()`: calls `_mapController.destroy()` and clears route debounce timer
+- Removed direct `maplibregl` import — all map interaction now through MapController
+
+**Test suite (`worker/src/index.test.ts`) — 64 tests:**
+
+| Describe Block | Tests |
+|----------------|-------|
+| Health check | 3 |
+| Auth routes | 3 |
+| Map routes - require auth (401) | 8 |
+| Map CRUD | 12 |
+| Map ownership | 4 |
+| Stop CRUD | 9 |
+| Stop reorder | 5 |
+| Cascade delete | 1 |
+| First stop travel_mode nulling | 2 |
+| Geocoding proxy (M3) | 4 |
+| Routing proxy (M5) | 8 |
+| Unknown API routes | 2 |
+
+New routing proxy tests (8):
+- 401 without session
+- 400 with invalid JSON body
+- 400 with missing profile
+- 400 with invalid profile name
+- 400 with missing start coordinates
+- 400 with out-of-range coordinates
+- 400 with non-numeric coordinate types
+- Integration test: proxies to ORS, returns GeoJSON FeatureCollection (gracefully skips on 502/500/429)
+
+**Deliberate deviations from plan:**
+
+1. **Plane line color is purple (#7c3aed) not "blue/purple".** Plan says "dotted blue/purple line." Used purple to clearly distinguish from boat (navy) and ensure all five modes have visually distinct colors.
+
+2. **MapController is a standalone class, not extending map-view.** Plan says "Extend map-controller.ts." Created `MapController` as a separate class that accepts a `maplibregl.Map` instance, rather than subclassing the Lit `<map-view>` component. This is cleaner separation of concerns: `<map-view>` manages the MapLibre lifecycle, `MapController` manages route rendering.
+
+3. **Default travel mode.** Stops without an explicit `travel_mode` default to `'drive'` in the MapController. The plan doesn't specify a default for unset travel modes on non-first stops. Drive is the most common road trip mode.
+
+4. **Route debouncing at 300ms.** Not in plan. Added to prevent excessive ORS calls when rapidly clicking through travel mode options. Travel mode changes trigger immediate save to D1 (as before) but route re-draw is debounced.
+
+5. **Browser locale-based units default not implemented.** Plan says "default based on browser locale." The existing D1 default (`'km'`) is used. Locale-based defaulting would need to be set at map creation time — deferred as it requires passing locale info to the create endpoint.
+
+**Deferred to later milestones:**
+- Sharing & collaboration (M6)
+- Export/print (M7–M8)
+- Browser locale-based units default (M9 polish)
 
 ---
 

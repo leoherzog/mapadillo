@@ -8,6 +8,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Stop } from '../services/maps.js';
 import './stop-card.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('stop-list')
 export class StopList extends LitElement {
@@ -15,15 +16,9 @@ export class StopList extends LitElement {
   @state() private _draggedIndex = -1;
   @state() private _dropTargetIndex = -1;
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: block;
-    }
-
-    .list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
     }
 
     .card-wrapper {
@@ -36,16 +31,16 @@ export class StopList extends LitElement {
 
     .drop-indicator {
       height: 3px;
-      background: var(--wa-color-brand-500, #ff6b00);
+      background: var(--wa-color-brand-50, #ff6b00);
       border-radius: 2px;
       margin: -2px 0;
       pointer-events: none;
     }
 
     .empty {
-      margin-top: 1rem;
+      margin-top: var(--wa-space-m);
     }
-  `;
+  `];
 
   render() {
     if (this.stops.length === 0) {
@@ -57,7 +52,7 @@ export class StopList extends LitElement {
     }
 
     return html`
-      <div class="list">
+      <div class="wa-stack wa-gap-3xs">
         ${this.stops.map((stop, i) => html`
           ${this._dropTargetIndex === i && this._draggedIndex !== i && this._draggedIndex !== i - 1
             ? html`<div class="drop-indicator"></div>`

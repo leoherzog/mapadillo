@@ -14,8 +14,8 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init });
+async function request<T>(path: string, init?: RequestInit, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { credentials: 'same-origin', ...init, ...(signal ? { signal } : {}) });
 
   if (!res.ok) {
     let body: unknown;
@@ -37,12 +37,12 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
-export function apiPost<T>(path: string, data?: unknown): Promise<T> {
+export function apiPost<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
   return request<T>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: data !== undefined ? JSON.stringify(data) : undefined,
-  });
+  }, signal);
 }
 
 export function apiPut<T>(path: string, data?: unknown): Promise<T> {

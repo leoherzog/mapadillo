@@ -6,6 +6,11 @@ beforeEach(() => {
   vi.stubGlobal('PopStateEvent', class PopStateEvent extends Event {
     constructor(type: string) { super(type); }
   });
+  // navigateTo reads `location` directly (global), not `window.location`
+  vi.stubGlobal('location', {
+    origin: 'http://localhost',
+    href: 'http://localhost/',
+  });
   vi.stubGlobal('window', {
     history: { pushState: vi.fn() },
     dispatchEvent: vi.fn(),
@@ -17,7 +22,8 @@ describe('navigateTo', () => {
     it('calls navigation.navigate()', () => {
       const mockNavigate = vi.fn();
       vi.stubGlobal('window', {
-        ...window,
+        history: { pushState: vi.fn() },
+        dispatchEvent: vi.fn(),
         navigation: { navigate: mockNavigate },
       });
 
@@ -61,7 +67,8 @@ describe('navClick', () => {
   it('navigates to the given path', () => {
     const mockNavigate = vi.fn();
     vi.stubGlobal('window', {
-      ...window,
+      history: { pushState: vi.fn() },
+      dispatchEvent: vi.fn(),
       navigation: { navigate: mockNavigate },
     });
 

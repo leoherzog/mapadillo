@@ -1,12 +1,12 @@
 /**
  * Trip builder page — sidebar with stop management + full-screen map.
  *
- * M4: Full CRUD — create trips, add/reorder/edit stops, auto-save to D1.
- * Map markers sync with stops; camera fits bounds automatically.
+ * M5: Route drawing — colored, mode-specific route segments connect stops.
+ * Numbered markers with Jelly icons. Total distance with km/miles toggle.
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import maplibregl from 'maplibre-gl';
+import { waUtilities } from '../styles/wa-utilities.js';
 import type { GeocodingResult } from '../services/geocoding.js';
 import type { MapData, Stop, MapWithStops } from '../services/maps.js';
 import {
@@ -18,6 +18,7 @@ import {
   deleteStop,
   reorderStops,
 } from '../services/maps.js';
+import { MapController } from '../map/map-controller.js';
 import '../components/map-view.js';
 import '../components/location-search.js';
 import '../components/stop-list.js';
@@ -35,12 +36,16 @@ export class TripBuilderPage extends LitElement {
   @state() private _saveStatus: SaveStatus = 'idle';
   @state() private _error = '';
   @state() private _mapReady = false;
+  @state() private _totalDistance = 0; // meters
+  @state() private _routeLoading = false;
 
   private _saveTimer?: ReturnType<typeof setTimeout>;
   private _stopUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private _pendingSync = false;
+  private _mapController?: MapController;
+  private _routeDebounceTimer?: ReturnType<typeof setTimeout>;
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: flex;
       flex: 1;
@@ -54,49 +59,76 @@ export class TripBuilderPage extends LitElement {
       padding: var(--wa-space-l);
       overflow-y: auto;
       border-right: 1px solid var(--wa-color-neutral-200);
-      display: flex;
-      flex-direction: column;
-      gap: var(--wa-space-m);
       background: var(--wa-color-surface-default);
     }
 
-    .header-row {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-xs);
-    }
-
-    .header-row h1 {
+    h1 {
       flex: 1;
-      font-size: 1.5rem;
+      font-size: var(--wa-font-size-xl);
       font-weight: 900;
       margin: 0;
-      color: var(--wa-color-brand-600, #e05e00);
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-xs);
+      color: var(--wa-color-brand-60, #e05e00);
     }
 
-    .header-row h1 wa-icon {
+    h1 wa-icon {
       font-size: 1.3rem;
     }
 
-    .name-inputs {
-      display: flex;
-      flex-direction: column;
-      gap: var(--wa-space-xs);
+
+    wa-details::part(base) {
+      border-radius: var(--wa-border-radius-m);
     }
 
-    .search-section {
-      display: flex;
-      flex-direction: column;
-      gap: var(--wa-space-xs);
+    wa-details::part(content) {
+      padding-top: var(--wa-space-s);
     }
 
-    .search-label {
+    .section-summary {
+      display: flex;
+      align-items: center;
+      gap: var(--wa-space-xs);
       font-weight: 700;
       font-size: 0.9rem;
+    }
+
+    .section-summary wa-icon {
+      font-size: 1rem;
+      color: var(--wa-color-brand-60, #e05e00);
+    }
+
+    .section-summary wa-badge {
+      margin-left: auto;
+    }
+
+    .stat-row {
+      font-size: 0.9rem;
+    }
+
+    .stat-row wa-icon {
+      color: var(--wa-color-brand-60, #e05e00);
+      font-size: 1rem;
+    }
+
+    .stat-value {
+      font-weight: 700;
+      color: var(--wa-color-neutral-900);
+    }
+
+    .stat-label {
+      color: var(--wa-color-neutral-500);
+    }
+
+    .route-loading {
+      font-size: 0.85rem;
+      color: var(--wa-color-neutral-500);
+    }
+
+    .setting-row label {
+      display: block;
+      font-weight: 600;
+      font-size: 0.85rem;
       color: var(--wa-color-neutral-700);
+      margin-bottom: var(--wa-space-2xs);
     }
 
     .map-panel {
@@ -105,12 +137,6 @@ export class TripBuilderPage extends LitElement {
       position: relative;
     }
 
-    .loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: var(--wa-space-2xl);
-    }
 
     /* Responsive: stack on narrow viewports */
     @media (max-width: 700px) {
@@ -130,7 +156,7 @@ export class TripBuilderPage extends LitElement {
         min-height: 300px;
       }
     }
-  `;
+  `];
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -140,8 +166,10 @@ export class TripBuilderPage extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     clearTimeout(this._saveTimer);
+    clearTimeout(this._routeDebounceTimer);
     for (const t of this._stopUpdateTimers.values()) clearTimeout(t);
     this._stopUpdateTimers.clear();
+    this._mapController?.destroy();
   }
 
   willUpdate(changed: Map<string, unknown>): void {
@@ -151,6 +179,10 @@ export class TripBuilderPage extends LitElement {
   }
 
   private async _loadMap() {
+    // Task #5: Destroy the old controller before loading a new map to prevent
+    // leaking layers, markers, and abort controllers.
+    this._mapController?.destroy();
+    this._mapController = undefined;
     this._loading = true;
     this._error = '';
 
@@ -171,9 +203,9 @@ export class TripBuilderPage extends LitElement {
       this._error = err instanceof Error ? err.message : 'Failed to load map';
     } finally {
       this._loading = false;
-      // Markers will sync when map fires 'map-ready' (see _onMapReady)
       if (this._mapReady) {
-        this.updateComplete.then(() => this._syncMarkers());
+        // Task #8: Guard against _syncMap running after the component is removed.
+        this.updateComplete.then(() => { if (this.isConnected) this._syncMap(); });
       } else {
         this._pendingSync = true;
       }
@@ -184,7 +216,7 @@ export class TripBuilderPage extends LitElement {
     if (this._loading) {
       return html`
         <div class="sidebar">
-          <div class="loading"><wa-spinner></wa-spinner></div>
+          <div class="wa-cluster wa-align-items-center wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>
         </div>
         <div class="map-panel"><map-view></map-view></div>
       `;
@@ -202,9 +234,11 @@ export class TripBuilderPage extends LitElement {
       `;
     }
 
+    const units = this._map?.units ?? 'km';
+
     return html`
-      <div class="sidebar">
-        <div class="header-row">
+      <div class="sidebar wa-stack wa-gap-m">
+        <div class="wa-flank wa-gap-xs">
           <h1>
             <wa-icon name="compass"></wa-icon>
             Trip Builder
@@ -212,7 +246,7 @@ export class TripBuilderPage extends LitElement {
           <save-indicator .status=${this._saveStatus} @status-idle=${this._onStatusIdle}></save-indicator>
         </div>
 
-        <div class="name-inputs">
+        <div class="wa-stack wa-gap-xs">
           <wa-input
             placeholder="Trip name"
             .value=${this._map?.name ?? ''}
@@ -225,19 +259,65 @@ export class TripBuilderPage extends LitElement {
           ></wa-input>
         </div>
 
-        <div class="search-section">
-          <span class="search-label">Add a stop</span>
-          <location-search
-            @location-selected=${this._onLocationSelected}
-          ></location-search>
-        </div>
+        <div class="wa-stack wa-gap-xs">
+          <wa-details open>
+            <span slot="summary" class="section-summary">
+              <wa-icon name="location-dot"></wa-icon>
+              Points
+              ${this._stops.length > 0
+                ? html`<wa-badge variant="brand">${this._stops.length}</wa-badge>`
+                : ''}
+            </span>
+            <div class="wa-stack wa-gap-s">
+              <location-search
+                @location-selected=${this._onLocationSelected}
+              ></location-search>
+              <stop-list
+                .stops=${this._stops}
+                @stop-update=${this._onStopUpdate}
+                @stop-delete=${this._onStopDelete}
+                @stops-reorder=${this._onStopsReorder}
+              ></stop-list>
+            </div>
+          </wa-details>
 
-        <stop-list
-          .stops=${this._stops}
-          @stop-update=${this._onStopUpdate}
-          @stop-delete=${this._onStopDelete}
-          @stops-reorder=${this._onStopsReorder}
-        ></stop-list>
+          <wa-details open>
+            <span slot="summary" class="section-summary">
+              <wa-icon name="route"></wa-icon>
+              Routes
+              ${this._totalDistance > 0
+                ? html`<wa-badge variant="brand">${this._formatDistance(this._totalDistance, units)}</wa-badge>`
+                : ''}
+            </span>
+            ${this._renderRouteStats(units)}
+          </wa-details>
+
+          <wa-details>
+            <span slot="summary" class="section-summary">
+              <wa-icon name="gear"></wa-icon>
+              Settings
+            </span>
+            <div class="wa-stack wa-gap-m">
+              <div class="setting-row">
+                <label>Units</label>
+                <wa-radio-group
+                  .value=${units}
+                  @wa-change=${this._onUnitsChange}
+                >
+                  <wa-radio appearance="button" value="km">Kilometers</wa-radio>
+                  <wa-radio appearance="button" value="miles">Miles</wa-radio>
+                </wa-radio-group>
+              </div>
+              <div class="setting-row">
+                <label>Map theme</label>
+                <wa-callout>
+                  <wa-icon slot="icon" name="circle-info"></wa-icon>
+                  Custom map themes coming soon.
+                </wa-callout>
+              </div>
+            </div>
+          </wa-details>
+        </div>
       </div>
 
       <div class="map-panel">
@@ -246,11 +326,77 @@ export class TripBuilderPage extends LitElement {
     `;
   }
 
+  private _renderRouteStats(units: string) {
+    if (this._stops.length < 2) {
+      return html`
+        <wa-callout>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          Add at least 2 stops to see route information.
+        </wa-callout>
+      `;
+    }
+
+    if (this._routeLoading) {
+      return html`
+        <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
+          <wa-spinner></wa-spinner>
+          Calculating routes...
+        </div>
+      `;
+    }
+
+    const segments = this._mapController?.segments ?? [];
+    if (segments.length === 0) {
+      return html`
+        <wa-callout>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          No routes calculated yet.
+        </wa-callout>
+      `;
+    }
+
+    return html`
+      <div class="wa-stack wa-gap-s">
+        <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
+          <wa-icon name="ruler"></wa-icon>
+          <span class="stat-label">Total distance:</span>
+          <span class="stat-value">${this._formatDistance(this._totalDistance, units)}</span>
+        </div>
+        <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
+          <wa-icon name="location-dot"></wa-icon>
+          <span class="stat-label">Stops:</span>
+          <span class="stat-value">${this._stops.length}</span>
+        </div>
+        <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
+          <wa-icon name="route"></wa-icon>
+          <span class="stat-label">Segments:</span>
+          <span class="stat-value">${segments.length}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  private _formatDistance(meters: number, units: string): string {
+    if (units === 'miles') {
+      const miles = meters / 1609.344;
+      return miles < 1 ? `${miles.toFixed(1)} mi` : `${Math.round(miles).toLocaleString()} mi`;
+    }
+    const km = meters / 1000;
+    return km < 1 ? `${km.toFixed(1)} km` : `${Math.round(km).toLocaleString()} km`;
+  }
+
   private _onMapReady() {
     this._mapReady = true;
+
+    // Initialize map controller with the MapLibre instance
+    const mapView = this.shadowRoot?.querySelector('map-view');
+    if (mapView?.map) {
+      this._mapController = new MapController(mapView.map);
+    }
+
     if (this._pendingSync) {
       this._pendingSync = false;
-      this._syncMarkers();
+      this._syncMap();
     }
   }
 
@@ -272,6 +418,13 @@ export class TripBuilderPage extends LitElement {
     this._debounceSave();
   }
 
+  private _onUnitsChange(e: Event) {
+    const value = (e.target as HTMLInputElement).value;
+    if (this._map) this._map = { ...this._map, units: value };
+    this._debounceSave();
+    // Distance display updates reactively (re-render)
+  }
+
   private _debounceSave() {
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this._saveMetadata(), 2500);
@@ -284,6 +437,7 @@ export class TripBuilderPage extends LitElement {
       await updateMap(this._map.id, {
         name: this._map.name,
         family_name: this._map.family_name,
+        units: this._map.units,
       });
       this._saveStatus = 'saved';
     } catch {
@@ -304,7 +458,7 @@ export class TripBuilderPage extends LitElement {
         lng: longitude,
       });
       this._stops = [...this._stops, stop];
-      this._syncMarkers();
+      this._syncMap();
     } catch {
       this._saveStatus = 'error';
     }
@@ -324,6 +478,10 @@ export class TripBuilderPage extends LitElement {
     // Icon and travel_mode save immediately; text fields debounce
     if (field === 'icon' || field === 'travel_mode') {
       this._flushStopUpdate(this._map.id, stopId, { [field]: value });
+      // Travel mode changes affect route drawing
+      if (field === 'travel_mode') {
+        this._debounceSyncMap();
+      }
     } else {
       const mapId = this._map.id;
       const timerKey = `${stopId}:${field}`;
@@ -354,14 +512,14 @@ export class TripBuilderPage extends LitElement {
 
     // Optimistic remove
     this._stops = this._stops.filter((s) => s.id !== stopId);
-    this._syncMarkers();
+    this._syncMap();
 
     try {
       await deleteStop(this._map.id, stopId);
       // Reload to get re-compacted positions
       const data = await getMap(this._map.id);
       this._stops = data.stops;
-      this._syncMarkers();
+      this._syncMap();
     } catch {
       this._saveStatus = 'error';
     }
@@ -378,38 +536,49 @@ export class TripBuilderPage extends LitElement {
       .filter(Boolean)
       .map((s, i) => ({ ...s, position: i, travel_mode: i === 0 ? null : s.travel_mode }));
 
+    // Immediately redraw with optimistic order
+    this._syncMap();
+
     try {
       await reorderStops(this._map.id, order);
       // Reload for server-authoritative positions
       const data = await getMap(this._map.id);
       this._stops = data.stops;
-      this._syncMarkers();
+      this._syncMap();
     } catch {
       this._saveStatus = 'error';
     }
   }
 
-  // ── Map markers sync ────────────────────────────────────────────────────
+  // ── Map sync (routes + markers) ────────────────────────────────────────
 
-  private _syncMarkers() {
-    if (!this._mapReady) return;
-    const mapView = this.shadowRoot?.querySelector('map-view');
-    if (!mapView) return;
+  /**
+   * Debounce map sync to avoid excessive route fetches during rapid changes
+   * (e.g., travel mode clicks in quick succession).
+   */
+  private _debounceSyncMap() {
+    clearTimeout(this._routeDebounceTimer);
+    this._routeDebounceTimer = setTimeout(() => this._syncMap(), 300);
+  }
 
-    mapView.clearMarkers();
+  /**
+   * Draw route segments and stop markers on the map.
+   * Replaces the old _syncMarkers() — now uses MapController.
+   */
+  private async _syncMap() {
+    if (!this._mapReady || !this._mapController) return;
 
-    for (const stop of this._stops) {
-      mapView.addMarker(stop.longitude, stop.latitude, stop.name);
-    }
-
-    if (this._stops.length >= 2) {
-      const bounds = new maplibregl.LngLatBounds();
-      for (const stop of this._stops) {
-        bounds.extend([stop.longitude, stop.latitude]);
-      }
-      mapView.map?.fitBounds(bounds, { padding: 60, maxZoom: 14 });
-    } else if (this._stops.length === 1) {
-      mapView.flyTo(this._stops[0].longitude, this._stops[0].latitude);
+    this._routeLoading = true;
+    try {
+      // Task #7: Reset stale distance before fetching new routes so a failed
+      // fetch leaves the display at 0 rather than showing an outdated value.
+      this._totalDistance = 0;
+      const segments = await this._mapController.drawRoutes(this._stops);
+      this._totalDistance = segments.reduce((sum, s) => sum + s.distance, 0);
+    } catch (err) {
+      console.warn('Route drawing failed:', err);
+    } finally {
+      this._routeLoading = false;
     }
   }
 }

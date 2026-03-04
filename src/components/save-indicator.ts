@@ -16,24 +16,12 @@ export class SaveIndicator extends LitElement {
     :host {
       display: inline-flex;
       align-items: center;
-      gap: 0.4rem;
-      font-size: 0.8rem;
+      gap: var(--wa-space-2xs);
+      font-size: var(--wa-font-size-s);
     }
 
     :host([status='idle']) {
       display: none;
-    }
-
-    .saving {
-      color: var(--wa-color-neutral-500);
-    }
-
-    .saved {
-      color: var(--wa-color-success-600, #16a34a);
-    }
-
-    .error {
-      color: var(--wa-color-danger-600, #dc2626);
     }
   `;
 
@@ -56,11 +44,11 @@ export class SaveIndicator extends LitElement {
   render() {
     switch (this.status) {
       case 'saving':
-        return html`<span class="saving"><wa-spinner style="font-size: 0.8rem;"></wa-spinner> Saving...</span>`;
+        return html`<wa-badge variant="neutral"><wa-spinner style="font-size: var(--wa-font-size-s);"></wa-spinner> Saving...</wa-badge>`;
       case 'saved':
-        return html`<span class="saved"><wa-icon name="check"></wa-icon> Saved</span>`;
+        return html`<wa-badge variant="success"><wa-icon name="check"></wa-icon> Saved</wa-badge>`;
       case 'error':
-        return html`<span class="error"><wa-icon name="circle-xmark"></wa-icon> Save failed</span>`;
+        return html`<wa-badge variant="danger"><wa-icon name="circle-xmark"></wa-icon> Save failed</wa-badge>`;
       default:
         return nothing;
     }

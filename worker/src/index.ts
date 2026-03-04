@@ -8,7 +8,7 @@
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 4: maps + stops CRUD.
+ * Milestone 5: route drawing.
  */
 
 import { Hono } from 'hono';
@@ -16,6 +16,7 @@ import { logger } from 'hono/logger';
 import { getAuth } from './auth.js';
 import { requireAuth } from './middleware/require-auth.js';
 import { geocodeHandler } from './routes/geocode.js';
+import { routeHandler } from './routes/route.js';
 import maps from './routes/maps.js';
 import type { AppEnv } from './types.js';
 
@@ -36,7 +37,7 @@ app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 4 });
+  return c.json({ status: 'ok', milestone: 5 });
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
@@ -83,8 +84,20 @@ app.get(
 );
 
 // ── Routing proxy (Milestone 5) ───────────────────────────────────────────
-app.post('/api/route', (c) => {
-  return c.json({ error: 'Routing not implemented yet (Milestone 5)' }, 501);
-});
+// Auth required + 30 req/min per user via RATE_LIMITER_PROXY.
+app.post(
+  '/api/route',
+  requireAuth,
+  async (c, next) => {
+    const { success } = await c.env.RATE_LIMITER_PROXY.limit({
+      key: c.get('user').id,
+    });
+    if (!success) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+    await next();
+  },
+  routeHandler,
+);
 
 export default app;
