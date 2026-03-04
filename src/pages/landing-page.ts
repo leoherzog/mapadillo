@@ -97,7 +97,7 @@ export class LandingPage extends LitElement {
           href="/sign-in"
           @click=${navClick('/sign-in')}
         >
-          <wa-icon slot="start" name="paper-plane" family="jelly"></wa-icon>
+          <wa-icon slot="start" name="paper-plane"></wa-icon>
           Start Planning
         </wa-button>
       </div>
@@ -112,7 +112,7 @@ export class LandingPage extends LitElement {
           ({ icon, label }) => html`
             <div class="feature-card">
               <span class="feature-icon">
-                <wa-icon name=${icon} family="jelly" label=""></wa-icon>
+                <wa-icon name=${icon} label=""></wa-icon>
               </span>
               <span class="feature-label">${label}</span>
             </div>

@@ -6,6 +6,9 @@
  * instead of reimplementing Navigation API access.
  */
 export function navigateTo(path: string): void {
+  // Avoid duplicate history entries if already at this URL
+  if (new URL(path, location.origin).href === location.href) return;
+
   if ('navigation' in window) {
     (
       window as unknown as {

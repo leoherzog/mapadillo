@@ -959,7 +959,7 @@ mapadillo/
 
 ---
 
-### Milestone 4: Trip Builder (CRUD)
+### Milestone 4: Trip Builder (CRUD) ✅ COMPLETE
 
 **Goal:** Users can create trips, add/reorder stops, and everything persists.
 
@@ -981,6 +981,176 @@ mapadillo/
 - Map displays markers at each stop, fits bounds
 - Ownership enforced — can't access another user's map
 - Auto-save triggers on changes
+
+#### Implementation Notes (M4)
+
+**Files created/modified (19 files):**
+
+```
+mapadillo/
+├── src/
+│   ├── index.ts                          # Added wa-dialog, wa-relative-time imports
+│   ├── router.ts                         # Refactored DIY router (Lit ReactiveController, URLPattern + Navigation API)
+│   ├── router.test.ts            [NEW]   # 11 tests: construction, outlet, popstate, guards, params, errors
+│   ├── nav.ts                            # Refactored: navigateTo() + navClick() helpers with deduplication
+│   ├── nav.test.ts               [NEW]   # 7 tests: Navigation API path, fallback path, deduplication
+│   ├── services/
+│   │   ├── api-client.ts         [NEW]   # Generic JSON fetch wrapper (apiGet/Post/Put/Delete, ApiError class)
+│   │   ├── api-client.test.ts    [NEW]   # 17 tests: all HTTP methods, error body extraction, 204 handling
+│   │   ├── maps.ts               [NEW]   # Typed wrappers: map CRUD + stop CRUD (addStop, updateStop, deleteStop, reorderStops)
+│   │   └── maps.test.ts          [NEW]   # 9 tests: all map and stop operations
+│   ├── components/
+│   │   ├── app-shell.ts                  # Added /map/new + /map/:id routes, "My Trips" nav button
+│   │   ├── stop-card.ts          [NEW]   # Stop card with icon-picker, name/label inputs, travel mode, drag handle
+│   │   ├── stop-list.ts          [NEW]   # Drag-and-drop stop list (native HTML DnD API)
+│   │   ├── icon-picker.ts        [NEW]   # Dialog-based picker: 37 Jelly icons in 8 categories
+│   │   ├── save-indicator.ts     [NEW]   # Status display: idle/saving/saved/error with 3s auto-hide
+│   │   ├── travel-mode-picker.ts [NEW]   # 5-mode horizontal button bar (drive/walk/bike/plane/boat)
+│   │   └── map-card.ts           [NEW]   # Dashboard card: non-interactive MapLibre preview + metadata
+│   └── pages/
+│       ├── trip-builder-page.ts          # Full rewrite: sidebar + map, auto-save, stop management, marker sync
+│       └── dashboard-page.ts             # Rewritten: map grid via listMaps(), delete with confirm
+└── worker/
+    └── src/
+        ├── index.ts                      # Mounted maps sub-app, requireAuth on /api/maps, milestone: 4
+        ├── index.test.ts                 # 54 tests (was 23): +map CRUD, stop CRUD, reorder, cascade, ownership
+        └── routes/
+            └── maps.ts           [NEW]   # Hono sub-app: full map + stop CRUD with D1 (414 lines)
+```
+
+**No new npm dependencies.** All packages were already present from earlier milestones.
+
+**Worker maps API (`worker/src/routes/maps.ts`):**
+- Hono sub-app with `getOwnedMap()` helper centralizing 404/403 ownership checks + `isResponse()` type guard
+- Map CRUD: `POST /` (requires `name`), `GET /` (list with batched stop queries via `DB.batch()`), `GET /:id`, `PUT /:id` (partial update with field validation), `DELETE /:id` (CASCADE handles stops)
+- Stop CRUD: `POST /:id/stops` (auto-increment position via `MAX(position)`), `PUT /:id/stops/:stopId`, `DELETE /:id/stops/:stopId` (re-compacts positions + nulls travel_mode on promoted first stop via `DB.batch()`), `PUT /:id/stops/reorder` (validates all IDs present, no duplicates)
+- Server-side validation: `VALID_ICONS` set (37 icons matching client picker), `VALID_TRAVEL_MODES` set (drive/walk/bike/plane/boat)
+- First stop invariant: `travel_mode` forced to `null` on position 0 — enforced on create, reorder, and delete-promoted
+- All stop mutations update parent map's `updated_at` timestamp
+- Reorder route declared before `/:id/stops/:stopId` to avoid `reorder` matching as a `:stopId` param
+
+**API client (`src/services/api-client.ts`):**
+- `ApiError` class (extends `Error`) with `status` and `body` properties
+- `apiGet<T>`, `apiPost<T>`, `apiPut<T>`, `apiDelete<T>` — all include `credentials: 'same-origin'`
+- 204 No Content returns `undefined`; error body extraction tries JSON → text → null fallback
+
+**Maps service (`src/services/maps.ts`):**
+- Typed wrappers: `MapData`, `Stop`, `MapWithStops` interfaces matching D1 schema
+- Map operations: `createMap`, `listMaps`, `getMap`, `updateMap`, `deleteMap`
+- Stop operations: `addStop`, `updateStop`, `deleteStop`, `reorderStops`
+
+**Stop card (`src/components/stop-card.ts`):**
+- `wa-card` with left border colored by travel mode (orange/green/teal/blue/navy)
+- Top row: grip-vertical drag handle, `<icon-picker>`, name `wa-input`, trash delete button
+- Label row: editable `wa-input`
+- Coordinates display (5 decimal places)
+- `<travel-mode-picker>` shown above card for non-first stops
+- Fires `stop-update { stopId, field, value }` and `stop-delete { stopId }` events (bubbles + composed)
+
+**Stop list (`src/components/stop-list.ts`):**
+- Native HTML Drag and Drop API (`draggable="true"`, `dragstart`/`dragover`/`drop`/`dragend`)
+- Drop position calculated from cursor Y vs. card midpoint
+- Dragged card gets `opacity: 0.4`; 3px orange drop indicator between cards
+- Empty state: `wa-callout` prompting to search for places
+- Fires `stops-reorder { order: string[] }` event; bubbles child `stop-update`/`stop-delete` events
+
+**Icon picker (`src/components/icon-picker.ts`):**
+- `wa-dialog` with 37 icons in 8 categories: Outdoors (8), Food & Drink (5), Sightseeing (5), Accommodation (2), Fun (6), Transport (6), People (2), Checklist (6)
+- Responsive grid (`auto-fill, minmax(4rem, 1fr)`), selected icon gets orange border
+- Fires `icon-change` with icon name string
+
+**Save indicator (`src/components/save-indicator.ts`):**
+- 4 states: `idle` (hidden), `saving` (spinner), `saved` (checkmark, green, auto-hides after 3s), `error` (xmark, red)
+- Status reflected to attribute for CSS-based visibility control
+
+**Travel mode picker (`src/components/travel-mode-picker.ts`):**
+- 5 horizontal buttons: car/drive (orange), person-walking/walk (green), person-biking/bike (teal), plane/plane (blue), ship/boat (navy)
+- Active mode gets colored bottom border + matching text color
+- Fires `mode-change` with mode string
+
+**Map card (`src/components/map-card.ts`):**
+- Non-interactive MapLibre map preview (200px height, OpenFreeMap Bright style)
+- Adds orange markers for each stop, fits bounds on load (`padding: 30, maxZoom: 12`)
+- Shows trip name (h3), family name, stop count, `<wa-relative-time>` for last update
+- Trash button fires `map-delete { mapId }`; card click navigates to `/map/${id}`
+- Cleans up MapLibre instance in `disconnectedCallback`
+
+**Trip builder page (`src/pages/trip-builder-page.ts`):**
+- Sidebar (380px) + full-screen map panel; stacks vertically below 700px
+- New trip flow: creates "Untitled Trip" server-side immediately via `createMap()`, replaces URL with `history.replaceState` (no extra history entry)
+- Metadata auto-save: 2500ms debounce on name/family_name inputs
+- Stop save strategy: `icon` and `travel_mode` save immediately; `name` and `label` debounce at 1500ms per stop per field (keyed by `${stopId}:${field}` to avoid clobbering concurrent edits)
+- Stop deletion: optimistic local removal → API call → full map reload for re-compacted positions
+- Stop reorder: optimistic local reorder (including nulling first-stop travel_mode) → API call → full map reload
+- Marker sync: `_syncMarkers()` clears all, adds per-stop markers, fits bounds (2+ stops) or flies to single stop
+- Map-ready coordination: `_pendingSync` flag defers marker sync if data arrives before MapLibre loads
+
+**Dashboard page (`src/pages/dashboard-page.ts`):**
+- Fetches maps via `listMaps()` on connect
+- Responsive grid (`auto-fill, minmax(280px, 1fr)`) of `<map-card>` components
+- Empty state: dashed border box with "No trips yet!" + "Create New Trip" button → `/map/new`
+- Delete: `window.confirm()` → `deleteMap()` → optimistic removal from local list
+- "Shared with Me" section: static empty state placeholder (M6)
+
+**Router + nav refactoring:**
+- `router.ts`: Lit reactive controller with URLPattern matching, Navigation API handler + `popstate` fallback, optional async `enter()` guard, `outlet` getter for current template
+- `nav.ts`: `navigateTo(path)` uses Navigation API when available, falls back to `history.pushState()` + `popstate` dispatch; `navClick(path)` returns click handler; both skip navigation if already at target URL
+- `router.test.ts` (11 tests): construction, outlet, popstate fallback, disconnect cleanup, navigation, guards with redirect, route params, error handling. Uses `FakeURLPattern` stub (happy-dom lacks URLPattern)
+- `nav.test.ts` (7 tests): Navigation API path, fallback path, deduplication
+
+**App shell changes (`src/components/app-shell.ts`):**
+- 5 routes: `/`, `/sign-in`, `/dashboard` (guarded), `/map/new` (guarded, empty `mapId`), `/map/:id` (guarded, `mapId` from params)
+- Header nav: "My Trips" plain button → `/dashboard` (authenticated), "Sign In" brand button (unauthenticated)
+- `wa-page` has `disable-navigation-toggle` CSS workaround (bug [#1601](https://github.com/shoelace-style/webawesome/issues/1601))
+
+**Test suite (`worker/src/index.test.ts`) — 54 tests:**
+- `beforeAll` applies D1 table migrations inline (CREATE TABLE statements)
+- `createTestSession()` helper: creates user + session in D1, signs session token with HMAC-SHA256 matching Better Auth
+- `jsonRequest()`, `createMap()`, `createStop()` test helpers reduce boilerplate
+
+| Describe Block | Tests |
+|----------------|-------|
+| Health check | 3 |
+| Auth routes | 3 |
+| Map routes - require auth (401) | 8 |
+| Map CRUD | 12 |
+| Map ownership | 4 |
+| Stop CRUD | 9 |
+| Stop reorder | 5 |
+| Cascade delete | 1 |
+| First stop travel_mode nulling | 2 |
+| Geocoding proxy (M3) | 3 |
+| Routing stub (M5) | 2 |
+| Unknown API routes | 2 |
+
+**Frontend test suites:**
+
+| Suite | Tests |
+|-------|-------|
+| `api-client.test.ts` | 17 |
+| `maps.test.ts` | 9 |
+| `router.test.ts` | 11 |
+| `nav.test.ts` | 7 |
+
+**Deliberate deviations from plan:**
+
+1. **Stop text fields debounced at 1500ms.** Plan says "stop changes save immediately." Icon and travel_mode changes do save immediately, but name/label inputs debounce at 1.5s to avoid excessive API calls during typing. Per-stop-per-field timer keys (`${stopId}:${field}`) prevent concurrent edits from clobbering each other.
+
+2. **Native HTML Drag and Drop API instead of a library.** Plan says "drag-and-drop ordered list" without specifying implementation. Used native browser DnD API, consistent with the project's "bias towards native browser APIs" directive from CLAUDE.md.
+
+3. **New trip creates server-side immediately.** Plan doesn't specify when the map record is created. Implementation creates an "Untitled Trip" via `createMap()` as soon as the user navigates to `/map/new`, then replaces the URL to `/map/{id}` with `history.replaceState`. This ensures every trip has a server-side ID from the start, simplifying auto-save and stop addition.
+
+4. **Server-authoritative positions after mutations.** After stop deletion and reorder, the client reloads the full map from the server rather than recalculating positions locally. Ensures position consistency without duplicating server-side re-compaction logic.
+
+5. **37 icons (not 38).** Plan mentions "38 curated icons" but the validated set contains 37. The `person-biking` icon is reserved for the travel-mode picker UI only and excluded from the stop icon picker, as specified in the plan's Map Elements section.
+
+6. **`wa-page` navigation-toggle CSS workaround.** Added `wa-page::part(navigation-toggle), wa-page::part(navigation) { display: none; }` to hide the hamburger button that appears on mobile even when no `navigation` slot is used. This is a known wa-page bug ([#1601](https://github.com/shoelace-style/webawesome/issues/1601)); the workaround can be removed once fixed upstream.
+
+**Deferred to later milestones:**
+- Shared maps in dashboard listing (M6)
+- Route drawing between stops (M5)
+- Public/private map access (M6)
+- Export and print ordering (M7–M8)
 
 ---
 

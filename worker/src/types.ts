@@ -39,17 +39,9 @@ export interface SessionUser {
   image?: string | null;
 }
 
-export interface SessionData {
-  id: string;
-  userId: string;
-  token: string;
-  expiresAt: Date;
-}
-
 export type AppEnv = {
   Bindings: Env;
   Variables: {
     user: SessionUser;
-    session: SessionData;
   };
 };

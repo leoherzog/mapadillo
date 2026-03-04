@@ -34,12 +34,8 @@ export class UserMenu extends LitElement {
       white-space: nowrap;
     }
 
-    .spin {
-      animation: spin 1s linear infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    wa-spinner {
+      font-size: 1em;
     }
   `;
 
@@ -58,7 +54,7 @@ export class UserMenu extends LitElement {
         </wa-button>
 
         <wa-dropdown-item @click=${this._goToDashboard}>
-          <wa-icon slot="icon" name="grid-2" family="jelly"></wa-icon>
+          <wa-icon slot="icon" name="grid-2"></wa-icon>
           My Trips
         </wa-dropdown-item>
         <wa-divider></wa-divider>
@@ -66,7 +62,9 @@ export class UserMenu extends LitElement {
           @click=${this._handleSignOut}
           ?disabled=${this._signingOut}
         >
-          <wa-icon slot="icon" name=${this._signingOut ? 'spinner' : 'arrow-right-from-bracket'} family="jelly" class=${this._signingOut ? 'spin' : ''}></wa-icon>
+          ${this._signingOut
+            ? html`<wa-spinner slot="icon"></wa-spinner>`
+            : html`<wa-icon slot="icon" name="arrow-right-from-bracket"></wa-icon>`}
           ${this._signingOut ? 'Signing Out\u2026' : 'Sign Out'}
         </wa-dropdown-item>
       </wa-dropdown>

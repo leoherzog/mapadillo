@@ -85,6 +85,7 @@ export class AppShell extends LitElement {
     }
 
     .footer-inner {
+      display: block;
       padding: var(--wa-space-m) var(--wa-space-l);
       text-align: center;
       font-size: 0.8rem;
@@ -98,6 +99,11 @@ export class AppShell extends LitElement {
 
     .footer-inner a:hover {
       color: var(--wa-color-brand-600, #e05e00);
+    }
+
+    wa-page::part(navigation-toggle),
+    wa-page::part(navigation) {
+      display: none;
     }
   `;
 
@@ -119,7 +125,7 @@ export class AppShell extends LitElement {
       <wa-page disable-sticky="header">
         <div slot="header" class="header-inner">
           <a class="logo" href="/" @click=${this._navHome}>
-            <wa-icon name="map" family="jelly"></wa-icon>
+            <wa-icon name="map"></wa-icon>
             Mapadillo
           </a>
 

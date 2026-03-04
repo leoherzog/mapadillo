@@ -61,13 +61,13 @@ CREATE TABLE IF NOT EXISTS "passkey" (
   name TEXT,
   publicKey TEXT NOT NULL,
   userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-  webauthnUserID TEXT NOT NULL,
   counter INTEGER NOT NULL DEFAULT 0,
   deviceType TEXT,
   backedUp INTEGER NOT NULL DEFAULT 0,
   transports TEXT,
   credentialID TEXT NOT NULL UNIQUE,
-  createdAt INTEGER
+  createdAt INTEGER,
+  aaguid TEXT
 );
 
 -- ── Application tables ────────────────────────────────────────────────────

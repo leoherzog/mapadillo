@@ -34,6 +34,24 @@ export class LocationSearch extends LitElement {
     }
   `;
 
+  protected firstUpdated(): void {
+    // wa-combobox internally calls stopPropagation() on the native input
+    // event from typing, so @input on the host only fires on selection.
+    // We capture the native event before it's stopped, using composedPath()
+    // to read the typed value from the internal <input>.
+    const combobox = this.shadowRoot!.querySelector<HTMLElement>('wa-combobox')!;
+    combobox.addEventListener(
+      'input',
+      (e: Event) => {
+        const origin = e.composedPath()[0];
+        if (origin instanceof HTMLInputElement) {
+          this._onTyping(origin.value);
+        }
+      },
+      true, // capture phase — fires before combobox's stopPropagation
+    );
+  }
+
   disconnectedCallback(): void {
     super.disconnectedCallback();
     clearTimeout(this._debounceTimer);
@@ -46,7 +64,6 @@ export class LocationSearch extends LitElement {
         autocomplete="none"
         placeholder="Search for a place..."
         with-clear
-        @input=${this._onInput}
         @wa-clear=${this._onClear}
         @change=${this._onSelect}
       >
@@ -75,8 +92,7 @@ export class LocationSearch extends LitElement {
           <wa-icon
             slot="start"
             name="location-dot"
-            family="jelly"
-            style="color: var(--wa-color-brand-500, #ff6b00)"
+                       style="color: var(--wa-color-brand-500, #ff6b00)"
           ></wa-icon>
           ${r.name}
           <span class="option-detail">
@@ -87,9 +103,8 @@ export class LocationSearch extends LitElement {
     );
   }
 
-  private _onInput(e: Event) {
-    const combobox = e.target as HTMLInputElement;
-    const value = combobox.value?.trim();
+  private _onTyping(raw: string) {
+    const value = raw.trim();
     clearTimeout(this._debounceTimer);
 
     if (!value || value.length < 2) {

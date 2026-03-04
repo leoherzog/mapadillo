@@ -8,7 +8,7 @@
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 3: geocoding proxy + stub routes for M4–8.
+ * Milestone 4: maps + stops CRUD.
  */
 
 import { Hono } from 'hono';
@@ -16,16 +16,27 @@ import { logger } from 'hono/logger';
 import { getAuth } from './auth.js';
 import { requireAuth } from './middleware/require-auth.js';
 import { geocodeHandler } from './routes/geocode.js';
+import maps from './routes/maps.js';
 import type { AppEnv } from './types.js';
 
 const app = new Hono<AppEnv>();
+
+// ── Global error handler ──────────────────────────────────────────────────
+app.onError((err, c) => {
+  console.error(JSON.stringify({
+    message: 'Unhandled error',
+    error: err.message,
+    path: c.req.path,
+  }));
+  return c.json({ error: 'Internal server error' }, 500);
+});
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 3 });
+  return c.json({ status: 'ok', milestone: 4 });
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
@@ -50,27 +61,9 @@ app.all('/api/auth/*', async (c) => {
 
 // ── Map routes (Milestone 4) ───────────────────────────────────────────────
 // Protected by requireAuth — returns 401 without valid session.
-app.get('/api/maps', requireAuth, (c) => {
-  return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
-});
-
-app.post('/api/maps', requireAuth, (c) => {
-  return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
-});
-
-// TODO(M6): Replace requireAuth with optional auth — public maps should be
-// served without a session; private maps require one. See PLAN.md "Sharing".
-app.get('/api/maps/:id', requireAuth, (c) => {
-  return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
-});
-
-app.put('/api/maps/:id', requireAuth, (c) => {
-  return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
-});
-
-app.delete('/api/maps/:id', requireAuth, (c) => {
-  return c.json({ error: 'Maps not implemented yet (Milestone 4)' }, 501);
-});
+app.use('/api/maps/*', requireAuth);
+app.use('/api/maps', requireAuth);
+app.route('/api/maps', maps);
 
 // ── Geocoding proxy (Milestone 3) ─────────────────────────────────────────
 // Auth required + 30 req/min per user via RATE_LIMITER_PROXY.

@@ -34,6 +34,8 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js';
 import '@awesome.me/webawesome-pro/dist/components/option/option.js';
 import '@awesome.me/webawesome-pro/dist/components/page/page.js';
 import '@awesome.me/webawesome-pro/dist/components/spinner/spinner.js';
+import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome-pro/dist/components/relative-time/relative-time.js';
 
 // Kit code comes from the package @awesome.me/kit-781a3c6be3
 setKitCode('781a3c6be3');

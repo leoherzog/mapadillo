@@ -9,6 +9,9 @@ export default defineConfig({
   // (SPA mode — worker handles the true fallback in production)
   server: {
     port: 5173,
+    proxy: {
+      '/api': 'http://localhost:8787',
+    },
   },
   // Ensure maplibre-gl and other CJS deps are pre-bundled
   optimizeDeps: {

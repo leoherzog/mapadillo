@@ -109,8 +109,7 @@ export class SignInPage extends LitElement {
       <wa-card>
         <wa-icon
           name="map"
-          family="jelly"
-          label=""
+                   label=""
           class="hero-icon"
         ></wa-icon>
 
@@ -165,7 +164,7 @@ export class SignInPage extends LitElement {
           ?disabled=${this._loading}
           ?loading=${this._loading}
         >
-          <wa-icon slot="start" name="fingerprint" family="duotone-solid"></wa-icon>
+          <wa-icon slot="start" name="fingerprint" family="duotone"></wa-icon>
           Sign in with Passkey
         </wa-button>
       </div>
@@ -211,7 +210,7 @@ export class SignInPage extends LitElement {
           ?disabled=${this._loading}
           ?loading=${this._loading}
         >
-          <wa-icon slot="start" name="fingerprint" family="duotone-solid"></wa-icon>
+          <wa-icon slot="start" name="fingerprint" family="duotone"></wa-icon>
           Register with Passkey
         </wa-button>
       </div>

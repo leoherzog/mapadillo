@@ -27,6 +27,5 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   c.set('user', session.user);
-  c.set('session', session.session);
   await next();
 });
