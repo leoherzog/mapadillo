@@ -1,4 +1,4 @@
-# Kids Roadtrip Map — Implementation Plan
+# Mapadillo — Implementation Plan
 
 ## Context
 
@@ -72,7 +72,7 @@ A family-oriented web app where a parent/organizer enters road trip locations, a
 ## Project Structure
 
 ```
-kids-roadtrip-map/
+mapadillo/
 ├── index.html
 ├── package.json
 ├── vite.config.ts
@@ -533,7 +533,7 @@ Milestones 1–5 are strictly sequential — each builds on the prior. After M5,
 **Files created (21 total):**
 
 ```
-kids-roadtrip-map/
+mapadillo/
 ├── .gitignore                       # node_modules/, dist/, .dev.vars, tsconfig.tsbuildinfo, worker/node_modules/
 ├── .npmrc                           # @awesome.me + @fortawesome → npm.fontawesome.com, FONTAWESOME_AUTH_TOKEN
 ├── index.html                       # wa-theme-playful wa-palette-rudimentary, FOUC prevention, <app-shell> entry
@@ -636,12 +636,12 @@ Worker-specific:
 
 **App shell (`src/components/app-shell.ts`):**
 - CSS Grid layout: header (sticky? no — fixed at top of flow), main (flex-grow), footer
-- Header: logo link (orange `#e05e00`, rounded icon + "Kids Roadtrip Map" text) + nav buttons ("My Trips" plain variant, "Sign In" brand variant)
-- Footer: `© 2026 Kids Roadtrip Map · Map data © OpenStreetMap contributors · Tiles by OpenFreeMap`
+- Header: logo link (orange `#e05e00`, rounded icon + "Mapadillo" text) + nav buttons ("My Trips" plain variant, "Sign In" brand variant)
+- Footer: `© 2026 Mapadillo · Map data © OpenStreetMap contributors · Tiles by OpenFreeMap`
 - Router outlet: `this.router.outlet()` renders matched page template
 
 **Worker configuration (`worker/wrangler.toml`):**
-- `name = "kids-roadtrip-map"`, `compatibility_date = "2026-03-02"`, `nodejs_compat` flag
+- `name = "mapadillo"`, `compatibility_date = "2026-03-02"`, `nodejs_compat` flag
 - Observability: logs at 100% sampling, traces at 1% sampling
 - Static assets: `directory = "../dist"`, `binding = "ASSETS"`, `not_found_handling = "single-page-application"`, `run_worker_first = ["/api/*"]`
 - D1: `binding = "DB"`, `database_name = "roadtrip-db"` (placeholder ID)
@@ -716,7 +716,7 @@ Worker-specific:
 **Files created/modified (12 files):**
 
 ```
-kids-roadtrip-map/
+mapadillo/
 ├── .gitignore                            # Added worker/coverage/
 ├── package.json                          # Added better-auth, @better-auth/passkey
 ├── src/
@@ -786,7 +786,7 @@ Worker:
 - `basePath: '/api/auth'`
 - `emailAndPassword: { enabled: true }` — required for passkey registration flow (`signUp.email` creates account, then `passkey.addPasskey` binds credential). No password-reset UI/routes exposed. Risk documented in code comments
 - `trustedOrigins: [url.origin]` from `BETTER_AUTH_URL`
-- Passkey plugin: `rpID` = hostname, `rpName` = "Kids Roadtrip Map", `origin` = full origin
+- Passkey plugin: `rpID` = hostname, `rpName` = "Mapadillo", `origin` = full origin
 
 **Auth middleware (`worker/src/middleware/require-auth.ts`):**
 - Uses `auth.api.getSession({ headers })` to validate the session cookie
@@ -849,7 +849,7 @@ Worker:
 
 ---
 
-### Milestone 3: Map Display & Geocoding
+### Milestone 3: Map Display & Geocoding ✅ COMPLETE
 
 **Goal:** A working map with place search.
 
@@ -864,6 +864,98 @@ Worker:
 - Worker `/api/geocode` proxies Photon correctly, KV caching works
 - Type a place name, see suggestions, select one, map flies to it with a marker
 - Debouncing works (no excessive requests)
+
+#### Implementation Notes (M3)
+
+**Files created (5 total):**
+
+```
+mapadillo/
+├── src/
+│   ├── vite-env.d.ts               [NEW]   # /// <reference types="vite/client" /> for ?inline CSS imports
+│   ├── services/
+│   │   └── geocoding.ts            [NEW]   # searchPlaces() → /api/geocode proxy, returns GeocodingResult[]
+│   ├── components/
+│   │   ├── map-view.ts             [NEW]   # MapLibre GL wrapper (OpenFreeMap Bright, shadow DOM CSS)
+│   │   └── location-search.ts      [NEW]   # Debounced autocomplete (300ms) with wa-input + dropdown
+│   └── pages/
+│       └── trip-builder-page.ts             # Rewritten: sidebar (search) + full-screen map layout
+└── worker/
+    └── src/
+        ├── index.ts                         # Geocode route (requireAuth + RATE_LIMITER_PROXY), milestone: 3
+        ├── index.test.ts                    # 23 tests (was 22): +4 geocode tests, -2 old stubs
+        └── routes/
+            └── geocode.ts          [NEW]   # Photon proxy with KV caching (7-day TTL)
+```
+
+**Map view (`src/components/map-view.ts`):**
+- Shadow DOM component wrapping MapLibre GL JS v5.x
+- MapLibre CSS imported as inline string via Vite `?inline` and applied to shadow root via `unsafeCSS()` — required because the map container lives inside the shadow DOM
+- OpenFreeMap Bright style: `https://tiles.openfreemap.org/styles/bright` (free, no API key)
+- Default view: world-centered (lon: 0, lat: 20, zoom: 2)
+- `NavigationControl` (zoom/rotation) in top-right corner
+- `ResizeObserver` on the container calls `map.resize()` for correct rendering on layout changes
+- Public API: `flyTo(lng, lat, zoom?)`, `addMarker(lng, lat, label?)`, `clearMarkers()`, `get map()`
+- Markers use brand orange (`#ff6b00`); optional label shown as MapLibre `Popup` (auto-opened on add)
+- Dispatches `map-ready` event (bubbles + composed) after map loads
+
+**Location search (`src/components/location-search.ts`):**
+- `wa-combobox` [Pro] with `autocomplete="none"` — server controls filtering, combobox shows all slotted options as-is
+- Magnifying-glass icon in `start` slot, `wa-spinner` in `end` slot during loading
+- Debounces `input` event at 300ms via `setTimeout` — clears on each keystroke before re-scheduling
+- Minimum 2 characters before searching
+- Dynamic `wa-option` children rendered from async search results; `value` is index-based (`String(i)`), `label` set explicitly to place name for clean display after selection
+- Each option shows `wa-icon location-dot` (jelly, brand orange) + name + detail span (city, state, country)
+- Empty state: disabled `wa-option` with "No places found" when search completes with no results
+- On selection (`change` event): looks up `GeocodingResult` by index, fires `location-selected` CustomEvent (detail: `GeocodingResult`, bubbles + composed)
+- Gains for free vs. custom dropdown: ARIA combobox pattern (keyboard nav, live region announcements), viewport-aware popup positioning, native focus/blur handling (no mousedown/preventDefault hack)
+
+**Geocoding service (`src/services/geocoding.ts`):**
+- `searchPlaces(query, lang?, limit?)` → `GeocodingResult[]`
+- Calls `GET /api/geocode?q=...&lang=...&limit=...` (session cookie sent automatically by browser)
+- Parses Photon's GeoJSON `FeatureCollection` into flat `GeocodingResult` objects with `name`, `city`, `state`, `country`, `latitude`, `longitude`
+- Returns empty array on any error (non-throwing)
+
+**Worker geocoding proxy (`worker/src/routes/geocode.ts`):**
+- `GET /api/geocode?q=Berlin&lang=en&limit=5`
+- Requires auth (`requireAuth` middleware) + rate-limited at 30/min per user ID (`RATE_LIMITER_PROXY`)
+- Validates `q` (required, min 2 chars); clamps `limit` to 1–10
+- KV cache key: `geocode:{SHA256(lowercase_query:lang:limit)[0:16]}` — case-insensitive cache hits
+- Cache read: returns immediately if KV hit
+- Proxy: `GET https://photon.komoot.io/api?q=...&lang=...&limit=...`
+- Outbound fetch wrapped in try/catch → returns 502 on network failure
+- Cache write: `API_CACHE.put(key, body, { expirationTtl: 604_800 })` — 7-day TTL
+- KV write is best-effort (try/catch): failures are swallowed because cache is non-critical. This also avoids Miniflare isolated storage errors in tests
+
+**Trip builder page (`src/pages/trip-builder-page.ts`):**
+- Replaced M1 stub with sidebar + map layout
+- Sidebar (380px, min 300px): heading with compass icon, "Add a stop" section with `<location-search>`, M4 callout
+- Map panel: `<map-view>` filling remaining width
+- On `location-selected` event: clears previous markers, drops new marker with name label, flies to location
+- Responsive: stacks vertically below 700px viewport width (sidebar on top, map below)
+
+**Worker changes (`worker/src/index.ts`):**
+- Health check returns `milestone: 3`
+- Geocode route: `requireAuth` → rate limit middleware (30/min per user) → `geocodeHandler`
+- Rate limit middleware inline: reads `c.get('user').id` (set by requireAuth), calls `RATE_LIMITER_PROXY.limit()`
+
+**Test suite (`worker/src/index.test.ts`):**
+- 23 tests (was 22 in M2)
+- New geocode tests (4):
+  - 401 without session
+  - 400 when `q` param missing
+  - 400 when `q` too short (< 2 chars)
+  - Integration test: proxies to Photon, returns GeoJSON `FeatureCollection` (gracefully handles 502/500 in restricted test environments)
+- Removed: 2 old geocode stub tests (501 + "mentions Milestone 3")
+- Health check updated: expects `milestone: 3`
+
+**Deliberate deviations from plan:**
+
+1. **KV write uses `await` + try/catch instead of `waitUntil`.** The plan implies non-blocking cache writes via `executionCtx.waitUntil()`, but `app.request()` in Hono tests provides a fake execution context whose `waitUntil` is a no-op — resulting in floating promises that break Miniflare's isolated storage tracking. Using `await` with try/catch ensures writes complete within the request lifecycle and errors are handled gracefully. In production, the ~1ms KV write latency is negligible.
+
+2. **`vite-env.d.ts` added.** Not in the plan. Required for TypeScript to understand Vite's `?inline` CSS import syntax used by `map-view.ts`. Standard Vite project file.
+
+3. **Responsive layout on trip builder.** Plan doesn't mention responsive behavior for M3, but a basic `@media (max-width: 700px)` breakpoint was trivial to add: sidebar stacks above map on narrow viewports.
 
 ---
 

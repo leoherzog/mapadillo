@@ -1,4 +1,4 @@
-name = "kids-map"
+name = "mapadillo"
 main = "src/index.ts"
 compatibility_date = "2026-03-02"
 compatibility_flags = ["nodejs_compat"]

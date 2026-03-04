@@ -70,6 +70,7 @@ export class AppShell extends LitElement {
       color: var(--wa-color-brand-600, #e05e00);
       font-weight: 900;
       font-size: 1.15rem;
+      cursor: pointer;
     }
 
     .logo wa-icon {
@@ -92,6 +93,11 @@ export class AppShell extends LitElement {
 
     .footer-inner a {
       color: inherit;
+      text-underline-offset: 2px;
+    }
+
+    .footer-inner a:hover {
+      color: var(--wa-color-brand-600, #e05e00);
     }
   `;
 
@@ -114,7 +120,7 @@ export class AppShell extends LitElement {
         <div slot="header" class="header-inner">
           <a class="logo" href="/" @click=${this._navHome}>
             <wa-icon name="map" family="jelly"></wa-icon>
-            kids-map
+            Mapadillo
           </a>
 
           <nav class="header-nav" aria-label="Site navigation">
@@ -133,6 +139,7 @@ export class AppShell extends LitElement {
                   <wa-button
                     size="small"
                     variant="brand"
+                    appearance="outlined"
                     href="/sign-in"
                     @click=${this._navSignIn}
                   >
@@ -145,7 +152,7 @@ export class AppShell extends LitElement {
         ${this.router.outlet}
 
         <div slot="footer" class="footer-inner">
-          &copy; ${new Date().getFullYear()} kids-map &mdash;
+          &copy; ${new Date().getFullYear()} Mapadillo &mdash;
           Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>
           &middot; Tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>
         </div>

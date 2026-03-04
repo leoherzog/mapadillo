@@ -5,6 +5,7 @@
  */
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 import { signOut, type User } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
 
@@ -32,16 +33,24 @@ export class UserMenu extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    .spin {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   `;
 
   render() {
     if (!this.user) return nothing;
 
     return html`
-      <wa-dropdown>
-        <wa-button slot="trigger" variant="neutral" appearance="plain" size="small">
+      <wa-dropdown placement="bottom-end">
+        <wa-button slot="trigger" variant="neutral" appearance="plain" size="small" with-caret>
           <wa-avatar
-            image=${this.user.image ?? ''}
+            image=${ifDefined(this.user.image ?? undefined)}
             initials=${this._initials}
             label=${this.user.name ?? 'User avatar'}
           ></wa-avatar>
@@ -57,7 +66,7 @@ export class UserMenu extends LitElement {
           @click=${this._handleSignOut}
           ?disabled=${this._signingOut}
         >
-          <wa-icon slot="icon" name=${this._signingOut ? 'spinner' : 'arrow-right-from-bracket'} family="jelly"></wa-icon>
+          <wa-icon slot="icon" name=${this._signingOut ? 'spinner' : 'arrow-right-from-bracket'} family="jelly" class=${this._signingOut ? 'spin' : ''}></wa-icon>
           ${this._signingOut ? 'Signing Out\u2026' : 'Sign Out'}
         </wa-dropdown-item>
       </wa-dropdown>

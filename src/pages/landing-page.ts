@@ -57,7 +57,8 @@ export class LandingPage extends LitElement {
       flex-direction: column;
       align-items: center;
       gap: var(--wa-space-s);
-      width: 180px;
+      flex: 1 1 140px;
+      max-width: 200px;
       text-align: center;
     }
 
@@ -70,23 +71,23 @@ export class LandingPage extends LitElement {
       font-weight: 700;
       color: var(--wa-color-neutral-700);
     }
+
+    .hero-icon wa-icon {
+      color: var(--wa-color-brand-600, #e05e00);
+    }
   `;
 
   render() {
     return html`
       <div class="hero-icon">
-        <wa-icon
-          name="map"
-          family="jelly"
-          style="color: var(--wa-color-brand-500, #ff6b00);"
-        ></wa-icon>
+        <wa-icon name="map" family="jelly-duo" label=""></wa-icon>
       </div>
 
-      <h1>Plan Your Next<br />Adventure!</h1>
+      <h1>Map Your Next<br />Adventure!</h1>
 
       <p class="tagline">
         Add stops, draw the route, and create a paper map
-        the kids will love.
+        the whole family will love.
       </p>
 
       <div class="cta-group">
@@ -98,15 +99,6 @@ export class LandingPage extends LitElement {
         >
           <wa-icon slot="start" name="paper-plane" family="jelly"></wa-icon>
           Start Planning
-        </wa-button>
-        <wa-button
-          size="large"
-          variant="neutral"
-          appearance="outlined"
-          href="/sign-in"
-          @click=${navClick('/sign-in')}
-        >
-          Sign In
         </wa-button>
       </div>
 
@@ -120,7 +112,7 @@ export class LandingPage extends LitElement {
           ({ icon, label }) => html`
             <div class="feature-card">
               <span class="feature-icon">
-                <wa-icon name=${icon} family="jelly"></wa-icon>
+                <wa-icon name=${icon} family="jelly" label=""></wa-icon>
               </span>
               <span class="feature-label">${label}</span>
             </div>

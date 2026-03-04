@@ -1,5 +1,5 @@
 /**
- * kids-map — Cloudflare Worker
+ * Mapadillo — Cloudflare Worker
  *
  * Hono router serving:
  * - /api/auth/*  → Better Auth (OAuth, Passkey, sessions)
@@ -8,13 +8,14 @@
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 2: authentication via Better Auth + stub routes for M3–8.
+ * Milestone 3: geocoding proxy + stub routes for M4–8.
  */
 
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { getAuth } from './auth.js';
 import { requireAuth } from './middleware/require-auth.js';
+import { geocodeHandler } from './routes/geocode.js';
 import type { AppEnv } from './types.js';
 
 const app = new Hono<AppEnv>();
@@ -24,10 +25,10 @@ app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 2 });
+  return c.json({ status: 'ok', milestone: 3 });
 });
 
-// ── Rate limiter for auth routes (M6) ────────────────────────────────────
+// ── Rate limiter for auth routes ──────────────────────────────────────────
 app.use('/api/auth/*', async (c, next) => {
   const ip =
     c.req.header('cf-connecting-ip') ??
@@ -72,9 +73,21 @@ app.delete('/api/maps/:id', requireAuth, (c) => {
 });
 
 // ── Geocoding proxy (Milestone 3) ─────────────────────────────────────────
-app.get('/api/geocode', (c) => {
-  return c.json({ error: 'Geocoding not implemented yet (Milestone 3)' }, 501);
-});
+// Auth required + 30 req/min per user via RATE_LIMITER_PROXY.
+app.get(
+  '/api/geocode',
+  requireAuth,
+  async (c, next) => {
+    const { success } = await c.env.RATE_LIMITER_PROXY.limit({
+      key: c.get('user').id,
+    });
+    if (!success) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+    await next();
+  },
+  geocodeHandler,
+);
 
 // ── Routing proxy (Milestone 5) ───────────────────────────────────────────
 app.post('/api/route', (c) => {

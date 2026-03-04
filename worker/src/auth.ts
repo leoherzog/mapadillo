@@ -66,7 +66,7 @@ export function getAuth(env: Env) {
       plugins: [
         passkey({
           rpID: url.hostname,
-          rpName: 'kids-map',
+          rpName: 'Mapadillo',
           origin: url.origin,
         }),
       ],

@@ -11,12 +11,29 @@ import './styles/global.css';
 import './styles/theme.css';
 
 // ── Web Awesome Pro + FA Kit ────────────────────────────────────────────────
-// The loader registers all WA components and wires up the FA Pro icon kit.
-// setKitCode tells WA to load icons from the npm kit package instead of the CDN.
+// The loader's autoloader uses a MutationObserver on the document to
+// auto-discover wa-* elements. But our Lit components render wa-* elements
+// inside shadow DOM, which the observer can't see. We must explicitly import
+// every WA component used in the app so they're registered with
+// customElements.define() before our components render.
 import {
   setKitCode,
   setDefaultIconFamily,
 } from '@awesome.me/webawesome-pro/dist/webawesome.loader.js';
+
+import '@awesome.me/webawesome-pro/dist/components/avatar/avatar.js';
+import '@awesome.me/webawesome-pro/dist/components/button/button.js';
+import '@awesome.me/webawesome-pro/dist/components/callout/callout.js';
+import '@awesome.me/webawesome-pro/dist/components/card/card.js';
+import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js';
+import '@awesome.me/webawesome-pro/dist/components/divider/divider.js';
+import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js';
+import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js';
+import '@awesome.me/webawesome-pro/dist/components/icon/icon.js';
+import '@awesome.me/webawesome-pro/dist/components/input/input.js';
+import '@awesome.me/webawesome-pro/dist/components/option/option.js';
+import '@awesome.me/webawesome-pro/dist/components/page/page.js';
+import '@awesome.me/webawesome-pro/dist/components/spinner/spinner.js';
 
 // Kit code comes from the package @awesome.me/kit-781a3c6be3
 setKitCode('781a3c6be3');

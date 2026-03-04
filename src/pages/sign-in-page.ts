@@ -94,6 +94,11 @@ export class SignInPage extends LitElement {
       background: var(--wa-color-neutral-200);
     }
 
+    .hero-icon {
+      font-size: 3rem;
+      color: var(--wa-color-brand-500, #ff6b00);
+    }
+
     .mode-toggle {
       font-size: 0.9rem;
     }
@@ -105,20 +110,23 @@ export class SignInPage extends LitElement {
         <wa-icon
           name="map"
           family="jelly"
-          style="font-size: 3rem; color: var(--wa-color-brand-500, #ff6b00);"
+          label=""
+          class="hero-icon"
         ></wa-icon>
 
         <h1>${this._mode === 'sign-in' ? 'Welcome Back!' : 'Create Account'}</h1>
         <p>Sign in to plan and share your family adventures.</p>
 
-        ${this._error
-          ? html`
-              <wa-callout variant="danger" style="width: 100%;">
-                <wa-icon slot="icon" name="circle-exclamation" family="jelly"></wa-icon>
-                ${this._error}
-              </wa-callout>
-            `
-          : nothing}
+        <div aria-live="assertive" aria-atomic="true">
+          ${this._error
+            ? html`
+                <wa-callout variant="danger" style="width: 100%;">
+                  <wa-icon slot="icon" name="circle-exclamation" family="jelly"></wa-icon>
+                  ${this._error}
+                </wa-callout>
+              `
+            : nothing}
+        </div>
 
         ${this._mode === 'sign-in' ? this._renderSignIn() : this._renderRegister()}
       </wa-card>
@@ -135,7 +143,9 @@ export class SignInPage extends LitElement {
           appearance="outlined"
           @click=${() => this._signInSocial('google')}
           ?disabled=${this._loading}
+          ?loading=${this._loading}
         >
+          <wa-icon slot="start" name="google" family="brands"></wa-icon>
           Continue with Google
         </wa-button>
         <wa-button
@@ -143,7 +153,9 @@ export class SignInPage extends LitElement {
           appearance="outlined"
           @click=${() => this._signInSocial('facebook')}
           ?disabled=${this._loading}
+          ?loading=${this._loading}
         >
+          <wa-icon slot="start" name="facebook" family="brands"></wa-icon>
           Continue with Facebook
         </wa-button>
         <wa-button
@@ -151,8 +163,9 @@ export class SignInPage extends LitElement {
           appearance="outlined"
           @click=${this._signInPasskey}
           ?disabled=${this._loading}
+          ?loading=${this._loading}
         >
-          <wa-icon slot="start" name="fingerprint" family="jelly"></wa-icon>
+          <wa-icon slot="start" name="fingerprint" family="duotone-solid"></wa-icon>
           Sign in with Passkey
         </wa-button>
       </div>
@@ -178,22 +191,27 @@ export class SignInPage extends LitElement {
         <wa-input
           label="Name"
           placeholder="Your name"
+          autocomplete="name"
+          required
           .value=${this._name}
-          @wa-input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
         ></wa-input>
         <wa-input
           label="Email"
           type="email"
           placeholder="you@example.com"
+          autocomplete="email"
+          required
           .value=${this._email}
-          @wa-input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
         ></wa-input>
         <wa-button
           variant="brand"
           @click=${this._registerPasskey}
           ?disabled=${this._loading}
+          ?loading=${this._loading}
         >
-          <wa-icon slot="start" name="fingerprint" family="jelly"></wa-icon>
+          <wa-icon slot="start" name="fingerprint" family="duotone-solid"></wa-icon>
           Register with Passkey
         </wa-button>
       </div>
@@ -206,7 +224,9 @@ export class SignInPage extends LitElement {
           appearance="outlined"
           @click=${() => this._signInSocial('google')}
           ?disabled=${this._loading}
+          ?loading=${this._loading}
         >
+          <wa-icon slot="start" name="google" family="brands"></wa-icon>
           Sign up with Google
         </wa-button>
         <wa-button
@@ -214,7 +234,9 @@ export class SignInPage extends LitElement {
           appearance="outlined"
           @click=${() => this._signInSocial('facebook')}
           ?disabled=${this._loading}
+          ?loading=${this._loading}
         >
+          <wa-icon slot="start" name="facebook" family="brands"></wa-icon>
           Sign up with Facebook
         </wa-button>
       </div>

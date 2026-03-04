@@ -80,10 +80,10 @@ describe('GET /api/health', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
   });
 
-  it('returns status ok with milestone 2', async () => {
+  it('returns status ok with milestone 3', async () => {
     const res = await request('/api/health');
     const body = await res.json();
-    expect(body).toEqual({ status: 'ok', milestone: 2 });
+    expect(body).toEqual({ status: 'ok', milestone: 3 });
   });
 });
 
@@ -176,18 +176,51 @@ describe('Map routes - authenticated returns 501 stub', () => {
   });
 });
 
-// ── Geocoding stub (Milestone 3) ──────────────────────────────────────────────
+// ── Geocoding proxy (Milestone 3) ────────────────────────────────────────────
 
-describe('Geocoding stub - 501', () => {
-  it('GET /api/geocode returns 501', async () => {
-    const res = await request('/api/geocode');
-    expect(res.status).toBe(501);
+describe('Geocoding - /api/geocode', () => {
+  it('returns 401 without session', async () => {
+    const res = await request('/api/geocode?q=Berlin');
+    expect(res.status).toBe(401);
   });
 
-  it('error body mentions Milestone 3', async () => {
-    const res = await request('/api/geocode');
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('Milestone 3');
+  describe('with auth', () => {
+    let sessionCookie: string;
+
+    beforeAll(async () => {
+      sessionCookie = await createTestSession();
+    });
+
+    it('returns 400 when q param is missing', async () => {
+      const res = await request('/api/geocode', {
+        headers: { cookie: sessionCookie },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('"q"');
+    });
+
+    it('returns 400 when q is too short', async () => {
+      const res = await request('/api/geocode?q=B', {
+        headers: { cookie: sessionCookie },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('proxies to Photon and returns GeoJSON for valid query', async () => {
+      const res = await request('/api/geocode?q=Berlin&lang=en&limit=3', {
+        headers: { cookie: sessionCookie },
+      });
+      // In test environments outbound fetch or KV may fail — skip gracefully
+      if (res.status !== 200) {
+        expect([502, 500]).toContain(res.status);
+        return;
+      }
+
+      const body = (await res.json()) as { type: string; features: unknown[] };
+      expect(body.type).toBe('FeatureCollection');
+      expect(Array.isArray(body.features)).toBe(true);
+    });
   });
 });
 

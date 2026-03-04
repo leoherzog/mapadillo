@@ -40,6 +40,11 @@ export class DashboardPage extends LitElement {
       margin: var(--wa-space-2xl) 0 var(--wa-space-xs);
     }
 
+    h1 wa-icon {
+      font-size: 1.7rem;
+      vertical-align: -0.1em;
+    }
+
     h2 wa-icon {
       font-size: 1.2rem;
       vertical-align: -0.1em;
@@ -59,6 +64,10 @@ export class DashboardPage extends LitElement {
 
     .empty-state wa-icon {
       font-size: 3rem;
+    }
+
+    .empty-state p {
+      margin: 0;
     }
   `;
 
