@@ -12,10 +12,12 @@ import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import type { MapWithStops } from '../services/maps.js';
 import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { isDraftCoord } from '../utils/geo.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
   @property({ type: Object }) map!: MapWithStops;
+  @property() roleBadge: string | null = null;
 
   private _mapInstance?: maplibregl.Map;
 
@@ -29,18 +31,20 @@ export class MapCard extends LitElement {
       }
 
       wa-card {
-        --spacing: 0.75rem;
+        --spacing: var(--wa-space-s);
       }
 
       wa-card::part(base):hover {
         box-shadow: var(--wa-shadow-m);
       }
 
+      [slot='media'] {
+        position: relative;
+      }
+
       .map-container {
         position: absolute;
         inset: 0;
-        width: 100%;
-        height: 100%;
       }
 
       h3 {
@@ -66,7 +70,7 @@ export class MapCard extends LitElement {
       }
 
       .meta wa-button::part(base):hover {
-        color: var(--wa-color-danger-600);
+        color: var(--wa-color-danger-50);
       }
     `,
   ];
@@ -99,37 +103,69 @@ export class MapCard extends LitElement {
     if (!this._mapInstance || !this.map.stops?.length) return;
 
     const bounds = new maplibregl.LngLatBounds();
+    const color = getComputedStyle(this).getPropertyValue('--wa-color-brand-50').trim() || '#ff6b00';
 
     for (const stop of this.map.stops) {
-      new maplibregl.Marker({ color: getComputedStyle(this).getPropertyValue('--wa-color-brand-50').trim() || '#ff6b00' })
+      if (isDraftCoord(stop.latitude, stop.longitude)) continue;
+
+      new maplibregl.Marker({ color })
         .setLngLat([stop.longitude, stop.latitude])
         .addTo(this._mapInstance);
       bounds.extend([stop.longitude, stop.latitude]);
+
+      // For routes, also add a marker at the destination
+      if (stop.type === 'route' && stop.dest_latitude != null && stop.dest_longitude != null
+        && !isDraftCoord(stop.dest_latitude, stop.dest_longitude)) {
+        new maplibregl.Marker({ color })
+          .setLngLat([stop.dest_longitude, stop.dest_latitude])
+          .addTo(this._mapInstance);
+        bounds.extend([stop.dest_longitude, stop.dest_latitude]);
+      }
     }
 
-    this._mapInstance.fitBounds(bounds, { padding: 30, maxZoom: 12 });
+    if (!bounds.isEmpty()) {
+      this._mapInstance.fitBounds(bounds, { padding: 30, maxZoom: 12 });
+    }
   }
 
   render() {
-    const stopCount = this.map.stops?.length ?? 0;
+    const itemCount = this.map.stops?.length ?? 0;
 
     return html`
-      <wa-card @click=${this._onClick}>
+      <wa-card
+        tabindex="0"
+        role="button"
+        aria-label=${this.map.name}
+        @click=${this._onClick}
+        @keydown=${this._onKeyDown}
+      >
         <div slot="media" class="wa-frame:landscape">
           <div class="map-container"></div>
         </div>
-        <h3>${this.map.name}</h3>
+        <div class="wa-cluster wa-align-items-center wa-gap-xs">
+          <h3>${this.map.name}</h3>
+          ${this.roleBadge ? html`<wa-badge variant=${this.roleBadge === 'editor' ? 'brand' : 'neutral'}>${this.roleBadge}</wa-badge>` : ''}
+        </div>
         ${this.map.family_name
           ? html`<div class="family">${this.map.family_name}</div>`
           : ''}
         <div class="meta wa-split wa-align-items-center">
-          <span>${stopCount} stop${stopCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
-          <wa-button appearance="plain" size="small" @click=${this._onDelete}>
-            <wa-icon name="trash" label="Delete map"></wa-icon>
-          </wa-button>
+          <span>${itemCount} item${itemCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
+          ${!this.roleBadge ? html`
+            <wa-button appearance="plain" size="small" @click=${this._onDelete}>
+              <wa-icon name="trash" label="Delete map"></wa-icon>
+            </wa-button>
+          ` : ''}
         </div>
       </wa-card>
     `;
+  }
+
+  private _onKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      this._onClick(e);
+    }
   }
 
   private _onClick(e: Event) {

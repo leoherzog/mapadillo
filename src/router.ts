@@ -69,6 +69,7 @@ export class Router implements ReactiveController {
   private routes: CompiledRoute[] = [];
   private _currentTemplate: TemplateResult = html``;
   private _popstateHandler: (() => void) | null = null;
+  private _redirectDepth = 0;
 
   get outlet(): TemplateResult {
     return this._currentTemplate;
@@ -144,22 +145,30 @@ export class Router implements ReactiveController {
 
   private async _runRouteAsync(
     definition: RouteDefinition,
-    params: RouteParams
+    params: RouteParams,
   ): Promise<void> {
+    const MAX_REDIRECTS = 5;
     try {
       if (definition.enter) {
         const redirect = await definition.enter(params);
         if (typeof redirect === 'string') {
+          if (this._redirectDepth >= MAX_REDIRECTS) {
+            console.error('[Router] Redirect loop detected — stopping navigation after', MAX_REDIRECTS, 'redirects.');
+            this._redirectDepth = 0;
+            return;
+          }
+          this._redirectDepth++;
           this.navigate(redirect);
           return;
         }
       }
       this._currentTemplate = definition.render(params);
+      this._redirectDepth = 0;
     } catch (err) {
       console.error('[Router] Route error:', err);
       this._currentTemplate = html`
         <wa-callout variant="danger" style="max-width: 600px; margin: var(--wa-space-2xl) auto;">
-          <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
           <strong>Something went wrong</strong><br />
           <a href="/">Go home</a>
         </wa-callout>

@@ -1,14 +1,12 @@
 /**
- * Trip builder page — sidebar with stop management + full-screen map.
+ * Trip builder page — sidebar with item management + full-screen map.
  *
- * M5: Route drawing — colored, mode-specific route segments connect stops.
- * Numbered markers with Jelly icons. Total distance with km/miles toggle.
+ * M7: Unified map items — points (standalone markers) and routes (A→B pairs).
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
-import type { GeocodingResult } from '../services/geocoding.js';
-import type { MapData, Stop, MapWithStops } from '../services/maps.js';
+import type { MapData, Stop } from '../services/maps.js';
 import {
   createMap,
   getMap,
@@ -17,32 +15,52 @@ import {
   updateStop,
   deleteStop,
   reorderStops,
+  duplicateMap,
 } from '../services/maps.js';
+import { ApiError } from '../services/api-client.js';
+import { isAuthenticated } from '../auth/auth-state.js';
+import { navigateTo } from '../nav.js';
 import { MapController } from '../map/map-controller.js';
+import { formatDistance } from '../utils/geo.js';
 import '../components/map-view.js';
-import '../components/location-search.js';
-import '../components/stop-list.js';
+import '../components/item-list.js';
 import '../components/save-indicator.js';
+import '../components/share-dialog.js';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
+/** Maps API field names to model field names for optimistic updates. */
+const API_TO_MODEL: Record<string, string> = {
+  lat: 'latitude', lng: 'longitude',
+  dest_lat: 'dest_latitude', dest_lng: 'dest_longitude',
+};
 
 @customElement('trip-builder-page')
 export class TripBuilderPage extends LitElement {
   @property() mapId = '';
 
   @state() private _map: MapData | null = null;
-  @state() private _stops: Stop[] = [];
+  @state() private _items: Stop[] = [];
   @state() private _loading = true;
   @state() private _saveStatus: SaveStatus = 'idle';
   @state() private _error = '';
   @state() private _mapReady = false;
-  @state() private _totalDistance = 0; // meters
+  @state() private _routeDistances = new Map<string, number>();
   @state() private _routeLoading = false;
+  @state() private _role: 'owner' | 'editor' | 'viewer' | 'public' = 'owner';
+  @state() private _duplicating = false;
+
+  private get _totalDistance(): number {
+    let sum = 0;
+    for (const d of this._routeDistances.values()) sum += d;
+    return sum;
+  }
 
   private _saveTimer?: ReturnType<typeof setTimeout>;
-  private _stopUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private _itemUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private _pendingSync = false;
   private _mapController?: MapController;
+  private _creatingMap = false;
   private _routeDebounceTimer?: ReturnType<typeof setTimeout>;
 
   static styles = [waUtilities, css`
@@ -167,13 +185,13 @@ export class TripBuilderPage extends LitElement {
     super.disconnectedCallback();
     clearTimeout(this._saveTimer);
     clearTimeout(this._routeDebounceTimer);
-    for (const t of this._stopUpdateTimers.values()) clearTimeout(t);
-    this._stopUpdateTimers.clear();
+    for (const t of this._itemUpdateTimers.values()) clearTimeout(t);
+    this._itemUpdateTimers.clear();
     this._mapController?.destroy();
   }
 
   willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has('mapId') && changed.get('mapId') !== undefined) {
+    if (changed.has('mapId') && changed.get('mapId') !== undefined && !this._creatingMap) {
       this._loadMap();
     }
   }
@@ -188,18 +206,29 @@ export class TripBuilderPage extends LitElement {
 
     try {
       if (!this.mapId) {
-        // New trip — create on server, then update URL
+        // New trip — create on server, then update URL.
+        // Set flag to prevent willUpdate from triggering a redundant _loadMap
+        // when mapId is assigned below.
+        this._creatingMap = true;
         const newMap = await createMap({ name: 'Untitled Trip' });
         this._map = newMap;
-        this._stops = [];
+        this._items = [];
+        this._role = 'owner';
         this.mapId = newMap.id;
+        this._creatingMap = false;
         window.history.replaceState(null, '', `/map/${newMap.id}`);
       } else {
-        const data: MapWithStops = await getMap(this.mapId);
+        const data = await getMap(this.mapId);
         this._map = data;
-        this._stops = data.stops;
+        this._items = data.stops;
+        this._role = (data.role ?? 'owner') as typeof this._role;
       }
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401 && !isAuthenticated()) {
+        const returnTo = encodeURIComponent(window.location.pathname);
+        navigateTo(`/sign-in?returnTo=${returnTo}`);
+        return;
+      }
       this._error = err instanceof Error ? err.message : 'Failed to load map';
     } finally {
       this._loading = false;
@@ -235,6 +264,9 @@ export class TripBuilderPage extends LitElement {
     }
 
     const units = this._map?.units ?? 'km';
+    const canEdit = this._role === 'owner' || this._role === 'editor';
+    const isOwner = this._role === 'owner';
+    const isReadOnly = !canEdit;
 
     return html`
       <div class="sidebar wa-stack wa-gap-m">
@@ -243,146 +275,168 @@ export class TripBuilderPage extends LitElement {
             <wa-icon name="compass"></wa-icon>
             Trip Builder
           </h1>
-          <save-indicator .status=${this._saveStatus} @status-idle=${this._onStatusIdle}></save-indicator>
+          <div class="wa-cluster wa-gap-xs wa-align-items-center">
+            ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : ''}
+            ${isOwner ? html`
+              <wa-button
+                appearance="outlined"
+                size="small"
+                variant="neutral"
+                @click=${this._onShareClick}
+              >
+                <wa-icon slot="start" name="share-nodes"></wa-icon>
+                Share
+              </wa-button>
+            ` : ''}
+            ${canEdit ? html`<save-indicator .status=${this._saveStatus} @status-idle=${this._onStatusIdle}></save-indicator>` : ''}
+          </div>
         </div>
 
+        ${isReadOnly ? html`
+          <wa-callout variant="neutral">
+            <wa-icon slot="icon" name="eye"></wa-icon>
+            You are viewing this trip as ${this._role === 'public' ? 'a public visitor' : 'a viewer'}.
+            ${isAuthenticated() ? html`
+              <wa-button
+                size="small"
+                variant="brand"
+                ?loading=${this._duplicating}
+                @click=${this._onDuplicate}
+                style="margin-top: var(--wa-space-xs);"
+              >
+                <wa-icon slot="start" name="clone" library="fa-jelly"></wa-icon>
+                Duplicate this trip
+              </wa-button>
+            ` : html`
+              <wa-button
+                size="small"
+                variant="brand"
+                href="/sign-in?returnTo=${encodeURIComponent(`/map/${this.mapId}`)}"
+                style="margin-top: var(--wa-space-xs);"
+              >
+                <wa-icon slot="start" name="arrow-right-to-bracket" library="fa-jelly"></wa-icon>
+                Sign in to duplicate this trip
+              </wa-button>
+            `}
+          </wa-callout>
+        ` : ''}
+
         <div class="wa-stack wa-gap-xs">
-          <wa-input
-            placeholder="Trip name"
-            .value=${this._map?.name ?? ''}
-            @input=${this._onNameInput}
-          ></wa-input>
-          <wa-input
-            placeholder="Family name (optional)"
-            .value=${this._map?.family_name ?? ''}
-            @input=${this._onFamilyInput}
-          ></wa-input>
+          ${canEdit ? html`
+            <wa-input
+              placeholder="Trip name"
+              .value=${this._map?.name ?? ''}
+              @wa-input=${this._onNameInput}
+            ></wa-input>
+            <wa-input
+              placeholder="Family name (optional)"
+              .value=${this._map?.family_name ?? ''}
+              @wa-input=${this._onFamilyInput}
+            ></wa-input>
+          ` : html`
+            <h2 style="margin: 0; font-size: var(--wa-font-size-l); font-weight: 700;">${this._map?.name ?? 'Untitled Trip'}</h2>
+            ${this._map?.family_name ? html`<p style="margin: 0; color: var(--wa-color-neutral-500);">${this._map.family_name}</p>` : ''}
+          `}
         </div>
 
         <div class="wa-stack wa-gap-xs">
           <wa-details open>
             <span slot="summary" class="section-summary">
-              <wa-icon name="location-dot"></wa-icon>
-              Points
-              ${this._stops.length > 0
-                ? html`<wa-badge variant="brand">${this._stops.length}</wa-badge>`
+              <wa-icon name="map"></wa-icon>
+              Map Items
+              ${this._items.length > 0
+                ? html`<wa-badge variant="brand">${this._items.length}</wa-badge>`
                 : ''}
             </span>
             <div class="wa-stack wa-gap-s">
-              <location-search
-                @location-selected=${this._onLocationSelected}
-              ></location-search>
-              <stop-list
-                .stops=${this._stops}
-                @stop-update=${this._onStopUpdate}
-                @stop-delete=${this._onStopDelete}
-                @stops-reorder=${this._onStopsReorder}
-              ></stop-list>
+              <item-list
+                .items=${this._items}
+                .readonly=${isReadOnly}
+                .distances=${this._routeDistances}
+                .units=${this._map?.units ?? 'km'}
+                @item-update=${this._onItemUpdate}
+                @item-update-batch=${this._onItemUpdateBatch}
+                @item-delete=${this._onItemDelete}
+                @items-reorder=${this._onItemsReorder}
+              ></item-list>
+
+              ${canEdit ? html`
+                <div class="wa-cluster wa-gap-xs wa-justify-content-center">
+                  <wa-dropdown>
+                    <wa-button slot="trigger" variant="brand" size="small" with-caret>
+                      <wa-icon slot="start" name="plus"></wa-icon>
+                      Add
+                    </wa-button>
+                    <wa-dropdown-item @click=${this._onAddPoint}>
+                      <wa-icon slot="icon" name="location-dot"></wa-icon>
+                      Point
+                    </wa-dropdown-item>
+                    <wa-dropdown-item @click=${this._onAddRoute}>
+                      <wa-icon slot="icon" name="compass"></wa-icon>
+                      Route
+                    </wa-dropdown-item>
+                  </wa-dropdown>
+                </div>
+              ` : ''}
+
+              ${this._totalDistance ? html`
+                <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
+                  <span class="stat-label">Total distance:</span>
+                  <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
+                </div>
+              ` : ''}
+
+              ${this._routeLoading ? html`
+                <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
+                  <wa-spinner></wa-spinner>
+                  Calculating routes...
+                </div>
+              ` : ''}
             </div>
           </wa-details>
 
-          <wa-details open>
-            <span slot="summary" class="section-summary">
-              <wa-icon name="route"></wa-icon>
-              Routes
-              ${this._totalDistance > 0
-                ? html`<wa-badge variant="brand">${this._formatDistance(this._totalDistance, units)}</wa-badge>`
-                : ''}
-            </span>
-            ${this._renderRouteStats(units)}
-          </wa-details>
-
-          <wa-details>
-            <span slot="summary" class="section-summary">
-              <wa-icon name="gear"></wa-icon>
-              Settings
-            </span>
-            <div class="wa-stack wa-gap-m">
-              <div class="setting-row">
-                <label>Units</label>
-                <wa-radio-group
-                  .value=${units}
-                  @wa-change=${this._onUnitsChange}
-                >
-                  <wa-radio appearance="button" value="km">Kilometers</wa-radio>
-                  <wa-radio appearance="button" value="miles">Miles</wa-radio>
-                </wa-radio-group>
+          ${canEdit ? html`
+            <wa-details>
+              <span slot="summary" class="section-summary">
+                <wa-icon name="gear"></wa-icon>
+                Settings
+              </span>
+              <div class="wa-stack wa-gap-m">
+                <div class="setting-row">
+                  <label>Units</label>
+                  <wa-radio-group
+                    .value=${units}
+                    @wa-change=${this._onUnitsChange}
+                  >
+                    <wa-radio appearance="button" value="km">Kilometers</wa-radio>
+                    <wa-radio appearance="button" value="mi">Miles</wa-radio>
+                  </wa-radio-group>
+                </div>
+                <div class="setting-row">
+                  <label>Map theme</label>
+                  <wa-callout>
+                    <wa-icon slot="icon" name="circle-info"></wa-icon>
+                    Custom map themes coming soon.
+                  </wa-callout>
+                </div>
               </div>
-              <div class="setting-row">
-                <label>Map theme</label>
-                <wa-callout>
-                  <wa-icon slot="icon" name="circle-info"></wa-icon>
-                  Custom map themes coming soon.
-                </wa-callout>
-              </div>
-            </div>
-          </wa-details>
+            </wa-details>
+          ` : ''}
         </div>
       </div>
 
       <div class="map-panel">
         <map-view @map-ready=${this._onMapReady}></map-view>
       </div>
+
+      ${isOwner ? html`
+        <share-dialog
+          .mapId=${this._map?.id ?? ''}
+          .visibility=${(this._map?.visibility ?? 'private') as 'public' | 'private'}
+          @visibility-changed=${this._onVisibilityChanged}
+        ></share-dialog>
+      ` : ''}
     `;
-  }
-
-  private _renderRouteStats(units: string) {
-    if (this._stops.length < 2) {
-      return html`
-        <wa-callout>
-          <wa-icon slot="icon" name="circle-info"></wa-icon>
-          Add at least 2 stops to see route information.
-        </wa-callout>
-      `;
-    }
-
-    if (this._routeLoading) {
-      return html`
-        <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
-          <wa-spinner></wa-spinner>
-          Calculating routes...
-        </div>
-      `;
-    }
-
-    const segments = this._mapController?.segments ?? [];
-    if (segments.length === 0) {
-      return html`
-        <wa-callout>
-          <wa-icon slot="icon" name="circle-info"></wa-icon>
-          No routes calculated yet.
-        </wa-callout>
-      `;
-    }
-
-    return html`
-      <div class="wa-stack wa-gap-s">
-        <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
-          <wa-icon name="ruler"></wa-icon>
-          <span class="stat-label">Total distance:</span>
-          <span class="stat-value">${this._formatDistance(this._totalDistance, units)}</span>
-        </div>
-        <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
-          <wa-icon name="location-dot"></wa-icon>
-          <span class="stat-label">Stops:</span>
-          <span class="stat-value">${this._stops.length}</span>
-        </div>
-        <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
-          <wa-icon name="route"></wa-icon>
-          <span class="stat-label">Segments:</span>
-          <span class="stat-value">${segments.length}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  private _formatDistance(meters: number, units: string): string {
-    if (units === 'miles') {
-      const miles = meters / 1609.344;
-      return miles < 1 ? `${miles.toFixed(1)} mi` : `${Math.round(miles).toLocaleString()} mi`;
-    }
-    const km = meters / 1000;
-    return km < 1 ? `${km.toFixed(1)} km` : `${Math.round(km).toLocaleString()} km`;
   }
 
   private _onMapReady() {
@@ -445,108 +499,159 @@ export class TripBuilderPage extends LitElement {
     }
   }
 
-  // ── Location search → add stop ──────────────────────────────────────────
+  // ── Add item flows ─────────────────────────────────────────────────────
 
-  private async _onLocationSelected(e: CustomEvent<GeocodingResult>) {
+  private async _onAddPoint() {
     if (!this._map) return;
-    const { longitude, latitude, name } = e.detail;
-
     try {
-      const stop = await addStop(this._map.id, {
-        name,
-        lat: latitude,
-        lng: longitude,
+      const item = await addStop(this._map.id, {
+        type: 'point',
+        name: 'New Point',
+        lat: 0,
+        lng: 0,
       });
-      this._stops = [...this._stops, stop];
-      this._syncMap();
+      this._items = [...this._items, item];
     } catch {
       this._saveStatus = 'error';
     }
   }
 
-  // ── Stop events ─────────────────────────────────────────────────────────
-
-  private async _onStopUpdate(e: CustomEvent<{ stopId: string; field: string; value: string }>) {
+  private async _onAddRoute() {
     if (!this._map) return;
-    const { stopId, field, value } = e.detail;
+    try {
+      const item = await addStop(this._map.id, {
+        type: 'route',
+        name: 'New Route',
+        lat: 0,
+        lng: 0,
+        travel_mode: 'drive',
+      });
+      this._items = [...this._items, item];
+    } catch {
+      this._saveStatus = 'error';
+    }
+  }
+
+  // ── Item events ───────────────────────────────────────────────────────
+
+  private async _onItemUpdate(e: CustomEvent<{ itemId: string; field: string; value: unknown }>) {
+    if (!this._map) return;
+    const { itemId, field, value } = e.detail;
 
     // Update local state immediately (optimistic)
-    this._stops = this._stops.map((s) =>
-      s.id === stopId ? { ...s, [field]: value } : s,
+    this._items = this._items.map((s) =>
+      s.id === itemId ? { ...s, [field]: value } : s,
     );
 
     // Icon and travel_mode save immediately; text fields debounce
     if (field === 'icon' || field === 'travel_mode') {
-      this._flushStopUpdate(this._map.id, stopId, { [field]: value });
-      // Travel mode changes affect route drawing
+      this._flushItemUpdate(this._map.id, itemId, { [field]: value });
       if (field === 'travel_mode') {
         this._debounceSyncMap();
       }
     } else {
       const mapId = this._map.id;
-      const timerKey = `${stopId}:${field}`;
-      clearTimeout(this._stopUpdateTimers.get(timerKey));
-      this._stopUpdateTimers.set(
+      const timerKey = `${itemId}:${field}`;
+      clearTimeout(this._itemUpdateTimers.get(timerKey));
+      this._itemUpdateTimers.set(
         timerKey,
         setTimeout(() => {
-          this._stopUpdateTimers.delete(timerKey);
-          this._flushStopUpdate(mapId, stopId, { [field]: value });
+          this._itemUpdateTimers.delete(timerKey);
+          this._flushItemUpdate(mapId, itemId, { [field]: value });
         }, 1500),
       );
     }
   }
 
-  private async _flushStopUpdate(mapId: string, stopId: string, fields: Record<string, unknown>) {
+  /** Handle batch field updates (e.g., coordinate changes from route-card). */
+  private async _onItemUpdateBatch(e: CustomEvent<{ itemId: string; fields: Record<string, unknown> }>) {
+    if (!this._map) return;
+    const { itemId, fields } = e.detail;
+
+    const modelFields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      modelFields[API_TO_MODEL[k] ?? k] = v;
+    }
+
+    // Optimistic update
+    this._items = this._items.map((s) =>
+      s.id === itemId ? { ...s, ...modelFields } : s,
+    );
+
+    // Save immediately and sync map (coordinates changed)
+    this._flushItemUpdate(this._map.id, itemId, fields);
+    this._debounceSyncMap();
+  }
+
+  private async _flushItemUpdate(mapId: string, itemId: string, fields: Record<string, unknown>) {
     try {
       this._saveStatus = 'saving';
-      await updateStop(mapId, stopId, fields);
+      await updateStop(mapId, itemId, fields);
       this._saveStatus = 'saved';
     } catch {
       this._saveStatus = 'error';
     }
   }
 
-  private async _onStopDelete(e: CustomEvent<{ stopId: string }>) {
+  private async _onItemDelete(e: CustomEvent<{ itemId: string }>) {
     if (!this._map) return;
-    const { stopId } = e.detail;
+    const { itemId } = e.detail;
 
-    // Optimistic remove
-    this._stops = this._stops.filter((s) => s.id !== stopId);
-    this._syncMap();
+    // Optimistic remove — positions may have gaps but ordering is preserved
+    this._items = this._items.filter((s) => s.id !== itemId);
+    this._debounceSyncMap();
 
     try {
-      await deleteStop(this._map.id, stopId);
-      // Reload to get re-compacted positions
-      const data = await getMap(this._map.id);
-      this._stops = data.stops;
-      this._syncMap();
+      await deleteStop(this._map.id, itemId);
     } catch {
       this._saveStatus = 'error';
     }
   }
 
-  private async _onStopsReorder(e: CustomEvent<{ order: string[] }>) {
+  private async _onItemsReorder(e: CustomEvent<{ order: string[] }>) {
     if (!this._map) return;
     const { order } = e.detail;
 
     // Optimistic reorder
-    const stopMap = new Map(this._stops.map((s) => [s.id, s]));
-    this._stops = order
-      .map((id) => stopMap.get(id)!)
+    const itemMap = new Map(this._items.map((s) => [s.id, s]));
+    this._items = order
+      .map((id) => itemMap.get(id)!)
       .filter(Boolean)
-      .map((s, i) => ({ ...s, position: i, travel_mode: i === 0 ? null : s.travel_mode }));
+      .map((s, i) => ({ ...s, position: i }));
 
-    // Immediately redraw with optimistic order
-    this._syncMap();
+    this._debounceSyncMap();
 
     try {
-      await reorderStops(this._map.id, order);
-      // Reload for server-authoritative positions
-      const data = await getMap(this._map.id);
-      this._stops = data.stops;
-      this._syncMap();
+      const stops = await reorderStops(this._map.id, order);
+      this._items = stops;
     } catch {
       this._saveStatus = 'error';
+    }
+  }
+
+  // ── Sharing ────────────────────────────────────────────────────────────
+
+  private _onShareClick() {
+    const dialog = this.shadowRoot?.querySelector('share-dialog') as HTMLElement & { show(): void } | null;
+    dialog?.show();
+  }
+
+  private _onVisibilityChanged(e: CustomEvent<{ visibility: string }>) {
+    if (this._map) {
+      this._map = { ...this._map, visibility: e.detail.visibility };
+    }
+  }
+
+  private async _onDuplicate() {
+    if (!this._map) return;
+    this._duplicating = true;
+    try {
+      const newMap = await duplicateMap(this._map.id);
+      navigateTo(`/map/${newMap.id}`);
+    } catch {
+      // Could show error
+    } finally {
+      this._duplicating = false;
     }
   }
 
@@ -562,21 +667,18 @@ export class TripBuilderPage extends LitElement {
   }
 
   /**
-   * Draw route segments and stop markers on the map.
-   * Replaces the old _syncMarkers() — now uses MapController.
+   * Draw points and routes on the map.
    */
   private async _syncMap() {
     if (!this._mapReady || !this._mapController) return;
 
     this._routeLoading = true;
     try {
-      // Task #7: Reset stale distance before fetching new routes so a failed
-      // fetch leaves the display at 0 rather than showing an outdated value.
-      this._totalDistance = 0;
-      const segments = await this._mapController.drawRoutes(this._stops);
-      this._totalDistance = segments.reduce((sum, s) => sum + s.distance, 0);
+      this._routeDistances = new Map();
+      const result = await this._mapController.drawItems(this._items);
+      this._routeDistances = result.distances;
     } catch (err) {
-      console.warn('Route drawing failed:', err);
+      console.warn('Map drawing failed:', err);
     } finally {
       this._routeLoading = false;
     }

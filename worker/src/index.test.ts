@@ -10,9 +10,10 @@ beforeAll(async () => {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS "session" (id TEXT PRIMARY KEY NOT NULL, expiresAt INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, ipAddress TEXT, userAgent TEXT, userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS "account" (id TEXT PRIMARY KEY NOT NULL, accountId TEXT NOT NULL, providerId TEXT NOT NULL, userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE, accessToken TEXT, refreshToken TEXT, idToken TEXT, accessTokenExpiresAt INTEGER, refreshTokenExpiresAt INTEGER, scope TEXT, password TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS "verification" (id TEXT PRIMARY KEY NOT NULL, identifier TEXT NOT NULL, value TEXT NOT NULL, expiresAt INTEGER NOT NULL, createdAt INTEGER, updatedAt INTEGER)'),
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS "passkey" (id TEXT PRIMARY KEY NOT NULL, name TEXT, publicKey TEXT NOT NULL, userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE, webauthnUserID TEXT NOT NULL, counter INTEGER NOT NULL DEFAULT 0, deviceType TEXT, backedUp INTEGER NOT NULL DEFAULT 0, transports TEXT, credentialID TEXT NOT NULL UNIQUE, createdAt INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS "passkey" (id TEXT PRIMARY KEY NOT NULL, name TEXT, publicKey TEXT NOT NULL, userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE, counter INTEGER NOT NULL DEFAULT 0, deviceType TEXT, backedUp INTEGER NOT NULL DEFAULT 0, transports TEXT, credentialID TEXT NOT NULL UNIQUE, createdAt INTEGER, aaguid TEXT)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS maps (id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE, name TEXT NOT NULL, family_name TEXT, visibility TEXT NOT NULL DEFAULT \'private\', style_preferences TEXT DEFAULT \'{}\', units TEXT NOT NULL DEFAULT \'km\', created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), updated_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS stops (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, label TEXT, latitude REAL NOT NULL, longitude REAL NOT NULL, icon TEXT, travel_mode TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS map_shares (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE, user_id TEXT REFERENCES "user"(id), role TEXT NOT NULL DEFAULT \'viewer\', claim_token TEXT UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), UNIQUE(map_id, user_id))'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_stops_map_id ON stops(map_id)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_maps_owner_id ON maps(owner_id)'),
   ]);
@@ -110,10 +111,10 @@ describe('GET /api/health', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
   });
 
-  it('returns status ok with milestone 5', async () => {
+  it('returns status ok with milestone 6', async () => {
     const res = await request('/api/health');
     const body = await res.json();
-    expect(body).toEqual({ status: 'ok', milestone: 5 });
+    expect(body).toEqual({ status: 'ok', milestone: 6 });
   });
 });
 
@@ -150,9 +151,11 @@ describe('Map routes - require auth', () => {
     expect(res.status).toBe(401);
   });
 
-  it('GET /api/maps/:id returns 401 without session', async () => {
+  it('GET /api/maps/:id returns 404 without session (optional auth — public maps viewable unauthenticated)', async () => {
+    // M6: GET /:id uses optional auth so unauthenticated users can view public maps.
+    // A nonexistent / private map returns 404, not 401.
     const res = await request('/api/maps/abc-123');
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(404);
   });
 
   it('PUT /api/maps/:id returns 401 without session', async () => {
@@ -274,15 +277,14 @@ describe('Map CRUD', () => {
     expect(res.status).toBe(400);
   });
 
-  it('PUT /api/maps/:id can update units and visibility', async () => {
+  it('PUT /api/maps/:id can update units', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
 
-    const res = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { units: 'mi', visibility: 'public' }, cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { units: 'mi' }, cookie);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { units: string; visibility: string };
+    const body = (await res.json()) as { units: string };
     expect(body.units).toBe('mi');
-    expect(body.visibility).toBe('public');
   });
 
   it('DELETE /api/maps/:id deletes a map', async () => {
@@ -307,39 +309,66 @@ describe('Map CRUD', () => {
 // ── Ownership / authorization ────────────────────────────────────────────────
 
 describe('Map ownership', () => {
-  it('GET /api/maps/:id returns 403 for non-owner', async () => {
+  it('GET /api/maps/:id returns 404 for non-owner accessing private map (no info leak)', async () => {
+    // M6: Private maps return 404 (not 403) to unauthorized users — prevents map ID enumeration.
     const { cookie: cookie1 } = await createTestSession();
     const { cookie: cookie2 } = await createTestSession();
     const mapId = await createMap(cookie1, 'Owner Map');
 
     const res = await request(`/api/maps/${mapId}`, { headers: { cookie: cookie2 } });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
-  it('PUT /api/maps/:id returns 403 for non-owner', async () => {
+  it('PUT /api/maps/:id returns 404 for non-owner on private map', async () => {
+    // Non-owner + private map → getMapWithRole returns null → 404.
     const { cookie: cookie1 } = await createTestSession();
     const { cookie: cookie2 } = await createTestSession();
     const mapId = await createMap(cookie1);
 
     const res = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { name: 'Stolen' }, cookie2);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
-  it('DELETE /api/maps/:id returns 403 for non-owner', async () => {
+  it('DELETE /api/maps/:id returns 404 for non-owner on private map', async () => {
+    // Non-owner + private map → getMapWithRole returns null → 404.
     const { cookie: cookie1 } = await createTestSession();
     const { cookie: cookie2 } = await createTestSession();
     const mapId = await createMap(cookie1);
 
     const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: cookie2 } });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
-  it('GET /api/maps only lists own maps', async () => {
+  it('PUT /api/maps/:id returns 403 for editor trying to delete (owner-only)', async () => {
+    // An editor can see the map but cannot delete it — 403.
+    const { cookie: ownerCookie, userId: ownerId } = await createTestSession();
+    const { cookie: editorCookie, userId: editorId } = await createTestSession();
+    const mapId = await createMap(ownerCookie, 'Shared Map');
+
+    // Give editor access via map_shares
+    const shareId = crypto.randomUUID();
+    const token = crypto.randomUUID();
+    await env.DB.prepare(
+      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
+    ).bind(shareId, mapId, editorId, 'editor', token).run();
+
+    // Editor can edit — 200
+    const putRes = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { name: 'Editor Edit' }, editorCookie);
+    expect(putRes.status).toBe(200);
+
+    // Editor cannot delete — 403
+    const delRes = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: editorCookie } });
+    expect(delRes.status).toBe(403);
+    void ownerId; // used in setup
+  });
+
+  it('GET /api/maps only lists own maps and shared maps', async () => {
     const { cookie: cookie1 } = await createTestSession();
     const { cookie: cookie2 } = await createTestSession();
     const mapId = await createMap(cookie1, 'User1 Only');
 
     const res = await request('/api/maps', { headers: { cookie: cookie2 } });
+    expect(res.status).toBe(200);
     const body = (await res.json()) as Array<{ id: string }>;
     const ids = body.map((m) => m.id);
     expect(ids).not.toContain(mapId);
@@ -764,6 +793,288 @@ describe('Routing proxy - POST /api/route', () => {
       expect(body.type).toBe('FeatureCollection');
       expect(Array.isArray(body.features)).toBe(true);
     });
+  });
+});
+
+// ── Sharing routes (Milestone 6) ──────────────────────────────────────────────
+
+describe('Sharing - GET/POST /:id/shares', () => {
+  it('GET /:id/shares returns 401 without session', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await request(`/api/maps/${mapId}/shares`);
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /:id/shares returns shares list (empty by default)', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await request(`/api/maps/${mapId}/shares`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shares: unknown[] };
+    expect(Array.isArray(body.shares)).toBe(true);
+    expect(body.shares.length).toBe(0);
+  });
+
+  it('GET /:id/shares returns 404 for non-owner', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: otherCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+    const res = await request(`/api/maps/${mapId}/shares`, { headers: { cookie: otherCookie } });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /:id/shares creates a share invite link', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; claim_token: string; role: string; url: string };
+    expect(body.role).toBe('viewer');
+    expect(body.claim_token).toBeTruthy();
+    expect(body.url).toContain('/claim/');
+  });
+
+  it('POST /:id/shares returns 400 with invalid role', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'owner' }, cookie);
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /:id/shares returns 404 for non-owner', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: otherCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, otherCookie);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('Sharing - PUT/DELETE /:id/shares/:shareId', () => {
+  it('PUT /:id/shares/:shareId updates a share role', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const createRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
+    const { id: shareId } = (await createRes.json()) as { id: string };
+
+    const res = await jsonRequest(`/api/maps/${mapId}/shares/${shareId}`, 'PUT', { role: 'editor' }, cookie);
+    expect(res.status).toBe(200);
+  });
+
+  it('PUT /:id/shares/:shareId returns 400 with invalid role', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const createRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
+    const { id: shareId } = (await createRes.json()) as { id: string };
+
+    const res = await jsonRequest(`/api/maps/${mapId}/shares/${shareId}`, 'PUT', { role: 'owner' }, cookie);
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /:id/shares/:shareId returns 404 for nonexistent share', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/shares/nonexistent`, 'PUT', { role: 'editor' }, cookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('DELETE /:id/shares/:shareId removes a share', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const createRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
+    const { id: shareId } = (await createRes.json()) as { id: string };
+
+    const res = await request(`/api/maps/${mapId}/shares/${shareId}`, {
+      method: 'DELETE', headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('DELETE /:id/shares/:shareId returns 404 for nonexistent share', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await request(`/api/maps/${mapId}/shares/nonexistent`, {
+      method: 'DELETE', headers: { cookie },
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+// ── Claim share token (Milestone 6) ──────────────────────────────────────────
+
+describe('Sharing - POST /api/shares/claim/:token', () => {
+  it('returns 401 without session', async () => {
+    const res = await request('/api/shares/claim/some-token', { method: 'POST' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 404 for unknown token', async () => {
+    const { cookie } = await createTestSession();
+    const res = await jsonRequest('/api/shares/claim/nonexistent-token', 'POST', {}, cookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('claims a valid invite token and returns map_id', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: claimeeCookie, userId: claimeeId } = await createTestSession();
+    const mapId = await createMap(ownerCookie, 'Shared Trip');
+
+    // Owner creates invite
+    const inviteRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, ownerCookie);
+    const { claim_token } = (await inviteRes.json()) as { claim_token: string };
+
+    // Claimee claims it
+    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, claimeeCookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { map_id: string };
+    expect(body.map_id).toBe(mapId);
+
+    // Verify user_id set on share — query by map_id+user_id since claim_token is nullified after claim
+    const share = await env.DB.prepare(
+      'SELECT user_id FROM map_shares WHERE map_id = ? AND user_id = ?',
+    ).bind(mapId, claimeeId).first<{ user_id: string }>();
+    expect(share?.user_id).toBe(claimeeId);
+  });
+
+  it('returns 403 for already-claimed token', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: cookie2 } = await createTestSession();
+    const { cookie: cookie3 } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    const inviteRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'editor' }, ownerCookie);
+    const { claim_token } = (await inviteRes.json()) as { claim_token: string };
+
+    // First claim succeeds
+    await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, cookie2);
+    // Second claim by different user fails — token is nullified after first claim so link is invalid
+    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, cookie3);
+    expect(res.status).toBe(404);
+  });
+
+  it('owner claiming their own invite returns success without error', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    const inviteRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, ownerCookie);
+    const { claim_token } = (await inviteRes.json()) as { claim_token: string };
+
+    // Owner claims their own invite — should succeed (idempotent)
+    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, ownerCookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { map_id: string };
+    expect(body.map_id).toBe(mapId);
+  });
+});
+
+// ── Visibility toggle (Milestone 6) ──────────────────────────────────────────
+
+describe('Sharing - PUT /:id/visibility', () => {
+  it('returns 401 without session', async () => {
+    const res = await request('/api/maps/abc/visibility', { method: 'PUT' });
+    expect(res.status).toBe(401);
+  });
+
+  it('sets map to public', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+
+    const res = await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean; visibility: string };
+    expect(body.visibility).toBe('public');
+  });
+
+  it('sets map back to private', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+
+    await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'private' }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { visibility: string };
+    expect(body.visibility).toBe('private');
+  });
+
+  it('returns 400 with invalid visibility value', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+
+    const res = await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'shared' }, cookie);
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 for non-owner', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: otherCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    const res = await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, otherCookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('public map is viewable without auth', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie, 'Public Map');
+
+    // Make it public
+    await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, cookie);
+
+    // Access without auth — should return 200
+    const res = await request(`/api/maps/${mapId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; role: string };
+    expect(body.id).toBe(mapId);
+    expect(body.role).toBe('public');
+  });
+});
+
+// ── Duplicate map (Milestone 6) ───────────────────────────────────────────────
+
+describe('Sharing - POST /:id/duplicate', () => {
+  it('returns 401 without session', async () => {
+    const res = await request('/api/maps/abc/duplicate', { method: 'POST' });
+    expect(res.status).toBe(401);
+  });
+
+  it('duplicates an owned map', async () => {
+    const { cookie, userId } = await createTestSession();
+    const mapId = await createMap(cookie, 'Original Trip');
+    await createStop(cookie, mapId, { name: 'Stop A', lat: 50, lng: 10 });
+
+    const res = await jsonRequest(`/api/maps/${mapId}/duplicate`, 'POST', {}, cookie);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; name: string; owner_id: string; stops: unknown[] };
+    expect(body.id).not.toBe(mapId);
+    expect(body.name).toBe('Original Trip (copy)');
+    expect(body.owner_id).toBe(userId);
+    expect(body.stops.length).toBe(1);
+  });
+
+  it('duplicates a public map as a different user', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: otherCookie, userId: otherUserId } = await createTestSession();
+    const mapId = await createMap(ownerCookie, 'Public Trip');
+
+    // Make it public
+    await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, ownerCookie);
+
+    const res = await jsonRequest(`/api/maps/${mapId}/duplicate`, 'POST', {}, otherCookie);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { owner_id: string; visibility: string };
+    expect(body.owner_id).toBe(otherUserId);
+    // Duplicate is always private
+    expect(body.visibility).toBe('private');
+  });
+
+  it('returns 404 for private map owned by another user', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: otherCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie, 'Private Trip');
+
+    const res = await jsonRequest(`/api/maps/${mapId}/duplicate`, 'POST', {}, otherCookie);
+    expect(res.status).toBe(404);
   });
 });
 

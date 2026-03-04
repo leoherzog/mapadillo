@@ -19,27 +19,27 @@ import './styles/theme.css';
 import {
   setKitCode,
   setDefaultIconFamily,
-} from '@awesome.me/webawesome-pro/dist/webawesome.loader.js';
+} from '@web.awesome.me/webawesome-pro/dist/webawesome.loader.js';
 
-import '@awesome.me/webawesome-pro/dist/components/avatar/avatar.js';
-import '@awesome.me/webawesome-pro/dist/components/button/button.js';
-import '@awesome.me/webawesome-pro/dist/components/callout/callout.js';
-import '@awesome.me/webawesome-pro/dist/components/card/card.js';
-import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js';
-import '@awesome.me/webawesome-pro/dist/components/divider/divider.js';
-import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js';
-import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js';
-import '@awesome.me/webawesome-pro/dist/components/icon/icon.js';
-import '@awesome.me/webawesome-pro/dist/components/input/input.js';
-import '@awesome.me/webawesome-pro/dist/components/option/option.js';
-import '@awesome.me/webawesome-pro/dist/components/page/page.js';
-import '@awesome.me/webawesome-pro/dist/components/spinner/spinner.js';
-import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js';
-import '@awesome.me/webawesome-pro/dist/components/badge/badge.js';
-import '@awesome.me/webawesome-pro/dist/components/details/details.js';
-import '@awesome.me/webawesome-pro/dist/components/radio/radio.js';
-import '@awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js';
-import '@awesome.me/webawesome-pro/dist/components/relative-time/relative-time.js';
+import '@web.awesome.me/webawesome-pro/dist/components/avatar/avatar.js';
+import '@web.awesome.me/webawesome-pro/dist/components/button/button.js';
+import '@web.awesome.me/webawesome-pro/dist/components/callout/callout.js';
+import '@web.awesome.me/webawesome-pro/dist/components/card/card.js';
+import '@web.awesome.me/webawesome-pro/dist/components/combobox/combobox.js';
+import '@web.awesome.me/webawesome-pro/dist/components/divider/divider.js';
+import '@web.awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js';
+import '@web.awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js';
+import '@web.awesome.me/webawesome-pro/dist/components/icon/icon.js';
+import '@web.awesome.me/webawesome-pro/dist/components/input/input.js';
+import '@web.awesome.me/webawesome-pro/dist/components/option/option.js';
+import '@web.awesome.me/webawesome-pro/dist/components/page/page.js';
+import '@web.awesome.me/webawesome-pro/dist/components/spinner/spinner.js';
+import '@web.awesome.me/webawesome-pro/dist/components/dialog/dialog.js';
+import '@web.awesome.me/webawesome-pro/dist/components/badge/badge.js';
+import '@web.awesome.me/webawesome-pro/dist/components/details/details.js';
+import '@web.awesome.me/webawesome-pro/dist/components/radio/radio.js';
+import '@web.awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js';
+import '@web.awesome.me/webawesome-pro/dist/components/relative-time/relative-time.js';
 
 // Kit code comes from the package @awesome.me/kit-781a3c6be3
 setKitCode('781a3c6be3');

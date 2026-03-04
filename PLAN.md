@@ -83,7 +83,8 @@ mapadillo/
 │   ├── router.ts                   # DIY router (URLPattern + Navigation API reactive controller)
 │   ├── styles/
 │   │   ├── theme.css               # WA Playful theme overrides, bright kid palette
-│   │   └── global.css              # App-wide styles
+│   │   ├── global.css              # App-wide styles
+│   │   └── card-shared.ts          # Shared CSS for point-card + route-card components
 │   ├── auth/
 │   │   ├── auth-client.ts          # Better Auth client instance + helpers
 │   │   ├── auth-guard.ts           # Route guard: redirect to sign-in if unauthenticated
@@ -91,7 +92,7 @@ mapadillo/
 │   ├── map/
 │   │   ├── kid-friendly-style.json # Custom MapLibre style (from Maputnik)
 │   │   ├── sprites/                # Custom map icon sprites (fun markers)
-│   │   ├── map-controller.ts       # MapLibre map init, route drawing, markers
+│   │   ├── map-controller.ts       # MapController class: drawItems(), route lines, markers
 │   │   └── map-export.ts           # PDF/image export logic
 │   ├── pages/
 │   │   ├── landing-page.ts
@@ -101,20 +102,26 @@ mapadillo/
 │   │   ├── map-preview-page.ts
 │   │   ├── export-page.ts
 │   │   └── order-confirmation-page.ts
+│   ├── utils/
+│   │   └── geo.ts                  # Shared utilities: isDraftCoord(), formatDistance()
 │   ├── components/
-│   │   ├── location-search.ts      # Geocoding autocomplete
-│   │   ├── stop-list.ts            # Drag-and-drop trip stops
-│   │   ├── stop-card.ts            # Individual stop with label/icon
+│   │   ├── location-search.ts      # Geocoding autocomplete (configurable placeholder)
+│   │   ├── item-list.ts            # Pointer-based drag-and-drop item list (points + routes)
+│   │   ├── point-card.ts           # Standalone point card (icon picker, name/label)
+│   │   ├── route-card.ts           # A→B route card (start/end search, travel mode, distance)
 │   │   ├── map-view.ts             # MapLibre GL wrapper component
 │   │   ├── map-card.ts             # Map thumbnail card for dashboard
 │   │   ├── share-dialog.ts         # Share settings: public/private, generate invite links, role picker
+│   │   ├── icon-picker.ts          # Dialog-based Jelly icon picker (40 icons, 8 categories)
+│   │   ├── save-indicator.ts       # Save status display (saving/saved/error)
+│   │   ├── travel-mode-picker.ts   # 5-mode horizontal button bar
 │   │   ├── export-options.ts       # PDF/image/print selection
 │   │   ├── print-order-form.ts     # Size, address, Stripe checkout
 │   │   ├── user-menu.ts            # Avatar, sign-out, account dropdown
 │   │   └── app-shell.ts            # Layout wrapper (header with user-menu, nav, footer)
 │   └── services/
 │       ├── api-client.ts           # Base fetch wrapper (attaches auth session cookie)
-│       ├── maps.ts                 # CRUD for maps + stop sub-resource API calls
+│       ├── maps.ts                 # CRUD for maps + items + sharing, typed wrappers
 │       ├── geocoding.ts            # Calls Worker proxy → Photon
 │       ├── routing.ts              # Calls Worker proxy → OpenRouteService
 │       ├── image-upload.ts         # Renders map image, uploads to R2 via Worker
@@ -128,8 +135,8 @@ mapadillo/
 │   │   ├── middleware/
 │   │   │   └── require-auth.ts     # Hono middleware: validate session, attach user to context
 │   │   ├── routes/
-│   │   │   ├── maps.ts             # CRUD: map metadata + stops sub-resource (D1), ownership checks
-│   │   │   ├── sharing.ts          # Generate invite links (claim tokens), update roles, claim invites
+│   │   │   ├── maps.ts             # CRUD: map metadata + items (D1), role-based access (getMapWithRole)
+│   │   │   ├── sharing.ts          # Shares CRUD, visibility toggle, claim endpoint, duplicate
 │   │   │   ├── checkout.ts         # Create Stripe Checkout session
 │   │   │   ├── stripe-webhook.ts   # Handle Stripe payment confirmation
 │   │   │   ├── print-order.ts      # Place Prodigi fulfillment order
@@ -137,8 +144,9 @@ mapadillo/
 │   │   │   ├── route.ts            # Proxy OpenRouteService routing (with KV cache)
 │   │   │   └── images.ts           # Upload/serve print-ready images (R2)
 │   │   ├── db/
+│   │   │   ├── types.ts            # Shared D1 row types: MapRow, StopRow, ShareRow
 │   │   │   ├── schema.sql          # D1 schema: users, sessions, accounts, maps, stops, map_shares
-│   │   │   └── migrations/         # D1 migration files
+│   │   │   └── migrations/         # D1 migration files (0001–0004)
 │   │   └── lib/
 │   │       ├── prodigi.ts          # Prodigi API client
 │   │       └── stripe.ts           # Stripe API helpers
@@ -341,12 +349,16 @@ CREATE TABLE stops (
   id TEXT PRIMARY KEY,           -- UUID
   map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
   position INTEGER NOT NULL,     -- Display order (0-indexed)
+  type TEXT NOT NULL DEFAULT 'point', -- 'point' (standalone marker) | 'route' (A→B segment)
   name TEXT NOT NULL,             -- Place name from geocoding
   label TEXT,                     -- Custom label ("Grandma's House!")
   latitude REAL NOT NULL,
   longitude REAL NOT NULL,
   icon TEXT,                      -- Icon identifier (Jelly icon name, e.g. 'star', 'circle')
-  travel_mode TEXT,               -- How you arrive at this stop from the previous one: 'drive'|'walk'|'bike'|'plane'|'boat'. NULL on first stop.
+  travel_mode TEXT,               -- Routes only: 'drive'|'walk'|'bike'|'plane'|'boat'. NULL on points.
+  dest_name TEXT,                 -- Routes only: destination place name
+  dest_latitude REAL,             -- Routes only: destination latitude
+  dest_longitude REAL,            -- Routes only: destination longitude
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1299,9 +1311,9 @@ New routing proxy tests (8):
 
 ---
 
-### Milestone 6: Sharing & Collaboration
+### Milestone 6: Sharing & Collaboration ✅ COMPLETE
 
-**Goal:** Maps can be shared via invite links, or made public.
+**Goal:** Maps can be shared via invite links, or made public. Also: unified map items refactor (points + routes).
 
 **Build:**
 1. Build `share-dialog.ts` — public/private toggle, generate invite link with role picker (Viewer/Editor), copy-to-clipboard button, list of current collaborators
@@ -1319,6 +1331,82 @@ New routing proxy tests (8):
 - Owner can remove collaborators and change roles
 - Toggle visibility: public maps accessible without auth, private maps are not
 - Visit public map as different user, "Duplicate this trip" — new owned copy created
+
+#### Implementation Notes (M6)
+
+**Combined with Unified Items Refactor.** This milestone also introduced the unified map items model: maps now contain two types of items — **points** (standalone markers) and **routes** (A→B travel segments). The `stops` table was extended with `type`, `dest_name`, `dest_latitude`, `dest_longitude` columns via migration `0004_unified_items.sql`. The UI was refactored from `stop-card.ts` / `stop-list.ts` to `point-card.ts`, `route-card.ts`, and `item-list.ts`.
+
+**Files created/modified (17 files):**
+
+```
+mapadillo/
+├── src/
+│   ├── utils/
+│   │   └── geo.ts                 [NEW]   # Shared isDraftCoord() + formatDistance() utilities
+│   ├── styles/
+│   │   └── card-shared.ts         [NEW]   # Shared CSS for point-card + route-card (drag handle, delete btn)
+│   ├── components/
+│   │   ├── stop-card.ts           [DELETED] # Replaced by point-card.ts + route-card.ts
+│   │   ├── stop-list.ts           [DELETED] # Replaced by item-list.ts
+│   │   ├── point-card.ts          [NEW]   # Standalone point card (icon picker, name/label, coordinates)
+│   │   ├── route-card.ts          [NEW]   # A→B route card (start/end search, travel mode, distance)
+│   │   ├── item-list.ts           [NEW]   # Pointer-based drag-and-drop list (mouse + touch)
+│   │   ├── map-card.ts                    # Updated: route destination markers, isDraftCoord
+│   │   ├── share-dialog.ts                # Full rewrite: visibility toggle, invite links, collaborator list
+│   │   └── location-search.ts             # Added configurable placeholder property
+│   ├── map/
+│   │   └── map-controller.ts              # Rewritten: unified drawItems(), point + route rendering
+│   ├── pages/
+│   │   └── trip-builder-page.ts           # Rewritten: unified item management, role-based UI, sharing
+│   └── services/
+│       └── maps.ts                        # Added: sharing ops, duplicateMap, MapWithRole, ShareData types
+└── worker/
+    └── src/
+        ├── routes/
+        │   ├── maps.ts                    # Role-based access (getMapWithRole), route item CRUD, duplicate
+        │   └── sharing.ts         [NEW]   # Shares CRUD, visibility toggle, claim endpoint
+        └── db/
+            ├── types.ts                   # Added: StopRow.type + dest_* fields, ShareRow interface
+            └── migrations/
+                └── 0004_unified_items.sql [NEW] # ALTER TABLE: type, dest_name, dest_latitude, dest_longitude
+```
+
+**Sharing system (`worker/src/routes/sharing.ts`):**
+- `getMapWithRole(db, mapId, userId)` centralized access control: owner → editor/viewer (via share) → public → null
+- `POST /:id/shares` generates invite links with UUID claim tokens, rate-limited at 60/min per user
+- `POST /api/shares/claim/:token` auto-claims invite (race-condition safe via `WHERE user_id IS NULL AND claim_token = ?`); nullifies claim token on use; handles duplicate user+map shares by merging (keeps higher-privilege role)
+- `PUT /:id/visibility` toggles public/private
+- `POST /:id/duplicate` forks map + all stops with new UUIDs; duplicated map is always private
+
+**Share dialog (`src/components/share-dialog.ts`):**
+- `wa-dialog` with three sections: visibility toggle (wa-switch), invite link generator (role picker + generate button + copy URL), collaborators list
+- Collaborators show claimed (user info + role select + remove) vs. pending (invite URL + role badge + copy + remove)
+- Optimistic updates for role changes with revert on failure
+
+**Unified items model:**
+- `Stop.type` discriminator: `'point'` (standalone marker) or `'route'` (A→B with travel mode + destination)
+- Routes have `dest_name`, `dest_latitude`, `dest_longitude` for the B endpoint; start uses existing `latitude`/`longitude`
+- `route-card.ts`: inline `<location-search>` for start/end, `<travel-mode-picker>`, distance display; fires `item-update-batch` for coordinate changes
+- `item-list.ts`: pointer-based drag-and-drop (replaces native HTML DnD), works on touch devices; clone visual during drag
+- `map-controller.ts`: `drawItems()` handles both types — points get single markers, routes get line layers + start/end markers
+
+**Shared utilities (`src/utils/geo.ts`):**
+- `isDraftCoord(lat, lng)` — centralized `(0,0)` sentinel check (was duplicated in 3 files)
+- `formatDistance(meters, units)` — centralized distance formatting (was duplicated in 2 files)
+
+**Deliberate deviations from plan:**
+
+1. **Unified items model added to M6.** Plan treats points and routes as separate concepts introduced at different milestones. Implementation unified them in M6 since sharing requires rendering both item types correctly for public/read-only views.
+
+2. **Pointer-based drag-and-drop replaces native HTML DnD.** `item-list.ts` uses Pointer Events API instead of the HTML Drag and Drop API (used in the old `stop-list.ts`). Pointer Events work on touch devices natively; HTML DnD does not.
+
+3. **`_syncMap` optimized.** Delete and reorder operations now use `_debounceSyncMap()` (300ms debounce) instead of calling `_syncMap()` twice (once for optimistic, once for server response). Reorder uses `reorderStops()` return value directly instead of a redundant `getMap()` call.
+
+4. **`_totalDistance` is a derived getter.** Changed from `@state()` property to a getter that sums `_routeDistances`, eliminating redundant state.
+
+**Deferred to later milestones:**
+- Export/print (M7–M8)
+- Browser locale-based units default (M9 polish)
 
 ---
 

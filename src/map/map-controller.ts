@@ -1,12 +1,13 @@
 /**
- * Map controller — draws route segments and numbered stop markers on a MapLibre map.
+ * Map controller — draws route lines and item markers on a MapLibre map.
  *
- * Each segment is its own MapLibre source + layer with mode-specific line style.
- * Stop markers show a numbered badge + the chosen Jelly icon.
+ * Items are either **points** (single marker) or **routes** (A→B line + two markers).
+ * Each route segment is its own MapLibre source + layer with mode-specific line style.
  */
 import maplibregl from 'maplibre-gl';
 import type { Stop } from '../services/maps.js';
 import { getSegmentRoute, type SegmentGeometry } from '../services/routing.js';
+import { isDraftCoord } from '../utils/geo.js';
 
 // ── Mode-specific line styles ────────────────────────────────────────────────
 
@@ -27,98 +28,121 @@ const LINE_STYLES: Record<string, LineStyle> = {
 
 const DEFAULT_STYLE: LineStyle = { color: '#999', width: 3 };
 
-// ── Segment result (stored for distance tracking) ────────────────────────────
+// ── Result type ──────────────────────────────────────────────────────────────
 
-export interface RenderedSegment {
-  /** Index of the destination stop */
-  index: number;
-  mode: string;
-  distance: number; // meters
-  geometry: SegmentGeometry;
+export interface DrawItemsResult {
+  /** Per-route distances keyed by item id */
+  distances: Map<string, number>;
+  /** Sum of all route distances in meters */
+  totalDistance: number;
 }
 
 // ── Map Controller ───────────────────────────────────────────────────────────
 
 export class MapController {
   private _map: maplibregl.Map;
-  private _segmentIds: string[] = [];
+  private _layerIds: string[] = [];
   private _markers: maplibregl.Marker[] = [];
-  private _segments: RenderedSegment[] = [];
   private _abortController?: AbortController;
 
   constructor(map: maplibregl.Map) {
     this._map = map;
   }
 
-  /** Currently rendered segments (for distance summation). */
-  get segments(): RenderedSegment[] {
-    return this._segments;
-  }
-
-  /** Total distance in meters across all rendered segments. */
-  get totalDistance(): number {
-    return this._segments.reduce((sum, s) => sum + s.distance, 0);
-  }
-
   /**
-   * Draw all route segments and stop markers for the given stops.
+   * Draw all items (points + routes) on the map.
    * Cancels any in-progress route fetching from a prior call.
    */
-  async drawRoutes(stops: Stop[]): Promise<RenderedSegment[]> {
-    // Cancel any in-progress fetches
+  async drawItems(items: Stop[]): Promise<DrawItemsResult> {
     this._abortController?.abort();
     this._abortController = new AbortController();
     const { signal } = this._abortController;
 
-    // Clear previous layers and markers
     this.clear();
 
-    if (stops.length === 0) return [];
+    const distances = new Map<string, number>();
+    if (items.length === 0) return { distances, totalDistance: 0 };
 
-    // Fetch all segment geometries in parallel
-    const segmentPromises: Promise<RenderedSegment | null>[] = [];
+    // Separate points and complete routes (filter out drafts with 0/null coords)
+    const points = items.filter((i) => i.type === 'point' && !isDraftCoord(i.latitude, i.longitude));
+    const routes = items.filter(
+      (i) =>
+        i.type === 'route' &&
+        !isDraftCoord(i.latitude, i.longitude) &&
+        i.dest_latitude != null &&
+        i.dest_longitude != null &&
+        !isDraftCoord(i.dest_latitude, i.dest_longitude),
+    );
 
-    for (let i = 1; i < stops.length; i++) {
-      const prev = stops[i - 1];
-      const curr = stops[i];
-      const mode = curr.travel_mode ?? 'drive'; // default to drive if unset
+    // Fetch route geometries in parallel
+    const routeResults = await Promise.all(
+      routes.map(async (route) => {
+        const mode = route.travel_mode ?? 'drive';
+        try {
+          const geometry = await getSegmentRoute(
+            mode,
+            [route.longitude, route.latitude],
+            [route.dest_longitude!, route.dest_latitude!],
+            signal,
+          );
+          if (signal.aborted) return null;
+          return { route, mode, geometry };
+        } catch (err) {
+          console.warn(`Route fetch failed for item ${route.id} (${mode}):`, err);
+          return null;
+        }
+      }),
+    );
+    if (signal.aborted) return { distances, totalDistance: 0 };
 
-      segmentPromises.push(
-        this._fetchSegment(i, mode, prev, curr, signal),
-      );
+    // Render route line layers + collect distances
+    let totalDistance = 0;
+    for (const result of routeResults) {
+      if (!result) continue;
+      this._renderSegmentLayer(result.route.id, result.mode, result.geometry);
+      distances.set(result.route.id, result.geometry.distance);
+      totalDistance += result.geometry.distance;
     }
 
-    const results = await Promise.all(segmentPromises);
-    if (signal.aborted) return [];
-
-    this._segments = results.filter((r): r is RenderedSegment => r !== null);
-
-    // Render each segment on the map
-    for (const seg of this._segments) {
-      this._renderSegmentLayer(seg);
+    // Render point markers
+    for (const point of points) {
+      const marker = this._createMarker(point.icon, point.name, point.label, [point.longitude, point.latitude]);
+      marker.addTo(this._map);
+      this._markers.push(marker);
     }
 
-    // Add numbered stop markers
-    this._renderStopMarkers(stops);
+    // Render route endpoint markers (start + end)
+    for (const result of routeResults) {
+      if (!result) continue;
+      const { route } = result;
+      const startMarker = this._createMarker(route.icon, route.name, 'Start', [route.longitude, route.latitude]);
+      startMarker.addTo(this._map);
+      this._markers.push(startMarker);
 
-    // Fit bounds to all stop coordinates + route geometries
-    this._fitBounds(stops);
+      const endMarker = this._createMarker(route.icon, route.dest_name ?? route.name, 'End', [route.dest_longitude!, route.dest_latitude!]);
+      endMarker.addTo(this._map);
+      this._markers.push(endMarker);
+    }
 
-    return this._segments;
+    // Fit bounds to all visible coordinates
+    this._fitBounds(items, routeResults.filter((r) => r != null));
+
+    return { distances, totalDistance };
   }
 
-  /** Remove all route layers, sources, and markers. */
+  /** Remove all layers, sources, and markers. */
   clear(): void {
-    for (const id of this._segmentIds) {
+    for (const id of this._layerIds) {
       if (this._map.getLayer(id)) this._map.removeLayer(id);
       if (this._map.getSource(id)) this._map.removeSource(id);
     }
-    this._segmentIds = [];
+    this._layerIds = [];
 
-    for (const m of this._markers) m.remove();
+    for (const m of this._markers) {
+      m.getPopup()?.remove();
+      m.remove();
+    }
     this._markers = [];
-
-    this._segments = [];
   }
 
   /** Clean up resources. */
@@ -129,31 +153,9 @@ export class MapController {
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
-  private async _fetchSegment(
-    index: number,
-    mode: string,
-    from: Stop,
-    to: Stop,
-    signal: AbortSignal,
-  ): Promise<RenderedSegment | null> {
-    try {
-      const geometry = await getSegmentRoute(
-        mode,
-        [from.longitude, from.latitude],
-        [to.longitude, to.latitude],
-        signal,
-      );
-      if (signal.aborted) return null;
-      return { index, mode, distance: geometry.distance, geometry };
-    } catch (err) {
-      console.warn(`Route fetch failed for segment ${index} (${mode}):`, err);
-      return null;
-    }
-  }
-
-  private _renderSegmentLayer(seg: RenderedSegment): void {
-    const id = `route-segment-${seg.index}-${Date.now()}`;
-    const style = LINE_STYLES[seg.mode] ?? DEFAULT_STYLE;
+  private _renderSegmentLayer(itemId: string, mode: string, geometry: SegmentGeometry): void {
+    const id = `route-${itemId}`;
+    const style = LINE_STYLES[mode] ?? DEFAULT_STYLE;
 
     this._map.addSource(id, {
       type: 'geojson',
@@ -162,7 +164,7 @@ export class MapController {
         properties: {},
         geometry: {
           type: 'LineString',
-          coordinates: seg.geometry.coordinates,
+          coordinates: geometry.coordinates,
         },
       },
     });
@@ -188,24 +190,17 @@ export class MapController {
         : paint,
     });
 
-    this._segmentIds.push(id);
+    this._layerIds.push(id);
   }
 
-  private _renderStopMarkers(stops: Stop[]): void {
-    for (let i = 0; i < stops.length; i++) {
-      const stop = stops[i];
-      const marker = this._createNumberedMarker(i + 1, stop);
-      marker.addTo(this._map);
-      this._markers.push(marker);
-    }
-  }
-
-  private _createNumberedMarker(
-    number: number,
-    stop: Stop,
+  private _createMarker(
+    icon: string | null,
+    name: string,
+    label: string | null,
+    lngLat: [number, number],
   ): maplibregl.Marker {
     const el = document.createElement('div');
-    el.className = 'mapadillo-stop-marker';
+    el.className = 'mapadillo-item-marker';
     el.style.cssText = `
       display: flex;
       flex-direction: column;
@@ -214,97 +209,87 @@ export class MapController {
       filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
     `;
 
-    // Badge with number
-    const badge = document.createElement('div');
-    badge.style.cssText = `
-      background: #ff6b00;
-      color: white;
-      font-size: 1.4rem;
-      font-weight: 900;
-      width: 1.4rem;
-      height: 1.4rem;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border: 2px solid white;
-      line-height: 1;
-    `;
-    badge.textContent = String(number);
-
-    // Icon pin below the badge
+    // Icon pin
     const pin = document.createElement('div');
     pin.style.cssText = `
       background: white;
       border-radius: 50%;
-      width: 1.6rem;
-      height: 1.6rem;
+      width: 1.8rem;
+      height: 1.8rem;
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-top: -2px;
-      border: 2px solid #ff6b00;
-      font-size: 0.8rem;
+      border: 2.5px solid #ff6b00;
+      font-size: 0.9rem;
       color: #ff6b00;
     `;
 
-    // Use a wa-icon element for the Jelly icon
-    const icon = document.createElement('wa-icon');
-    icon.setAttribute('name', stop.icon ?? 'location-dot');
-    icon.style.fontSize = '0.8rem';
-    pin.appendChild(icon);
+    const iconEl = document.createElement('wa-icon');
+    iconEl.setAttribute('name', icon ?? 'location-dot');
+    iconEl.style.fontSize = '0.9rem';
+    pin.appendChild(iconEl);
 
-    el.appendChild(badge);
     el.appendChild(pin);
 
-    // Popup with stop name + label (DOM-constructed to prevent XSS)
+    // Popup with name + label
     const popupEl = document.createElement('div');
     const strong = document.createElement('strong');
-    strong.textContent = stop.name;
+    strong.textContent = name;
     popupEl.appendChild(strong);
-    if (stop.label) {
+    if (label) {
       popupEl.appendChild(document.createElement('br'));
       const em = document.createElement('em');
-      em.textContent = stop.label;
+      em.textContent = label;
       popupEl.appendChild(em);
     }
 
-    const popup = new maplibregl.Popup({ offset: 25, closeButton: false })
+    const popup = new maplibregl.Popup({ offset: 20, closeButton: false })
       .setDOMContent(popupEl);
 
     const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
-      .setLngLat([stop.longitude, stop.latitude])
+      .setLngLat(lngLat)
       .setPopup(popup);
 
-    // Hover to show/hide popup (spec: "hover/click")
     el.addEventListener('mouseenter', () => popup.addTo(this._map));
     el.addEventListener('mouseleave', () => popup.remove());
 
     return marker;
   }
 
-  private _fitBounds(stops: Stop[]): void {
-    if (stops.length === 0) return;
-
+  private _fitBounds(
+    items: Stop[],
+    routeResults: Array<{ route: Stop; geometry: SegmentGeometry }>,
+  ): void {
     const bounds = new maplibregl.LngLatBounds();
+    let coordCount = 0;
 
-    // Include all stop positions
-    for (const stop of stops) {
-      bounds.extend([stop.longitude, stop.latitude]);
+    // Include all non-draft item positions
+    for (const item of items) {
+      if (isDraftCoord(item.latitude, item.longitude)) continue;
+      bounds.extend([item.longitude, item.latitude]);
+      coordCount++;
+      // Include route destinations
+      if (item.dest_latitude != null && item.dest_longitude != null && !isDraftCoord(item.dest_latitude, item.dest_longitude)) {
+        bounds.extend([item.dest_longitude, item.dest_latitude]);
+        coordCount++;
+      }
     }
 
-    // Include all route geometry points for more accurate bounds
-    for (const seg of this._segments) {
-      for (const coord of seg.geometry.coordinates) {
+    // Include route geometry points for accurate bounds
+    for (const result of routeResults) {
+      for (const coord of result.geometry.coordinates) {
         bounds.extend(coord);
       }
     }
 
-    if (stops.length >= 2) {
+    if (coordCount === 0) return;
+
+    if (coordCount >= 2) {
       this._map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
     } else {
+      const first = items.find((i) => !isDraftCoord(i.latitude, i.longitude))!;
       this._map.flyTo({
-        center: [stops[0].longitude, stops[0].latitude],
+        center: [first.longitude, first.latitude],
         zoom: 12,
       });
     }

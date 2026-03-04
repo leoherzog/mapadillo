@@ -7,11 +7,16 @@
  * Fires `location-selected` with a GeocodingResult when the user picks a place.
  */
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { searchPlaces, type GeocodingResult } from '../services/geocoding.js';
+
+export type SearchType = 'point' | 'city';
 
 @customElement('location-search')
 export class LocationSearch extends LitElement {
+  @property() placeholder = 'Search for a place...';
+  @property({ attribute: 'search-type' }) searchType: SearchType = 'point';
+
   @state() private _results: GeocodingResult[] = [];
   @state() private _loading = false;
   @state() private _searched = false;
@@ -62,7 +67,7 @@ export class LocationSearch extends LitElement {
       <wa-combobox
         label="Search for a place"
         autocomplete="none"
-        placeholder="Search for a place..."
+        placeholder=${this.placeholder}
         with-clear
         @wa-clear=${this._onClear}
         @change=${this._onSelect}
@@ -121,7 +126,8 @@ export class LocationSearch extends LitElement {
     const gen = ++this._searchGeneration;
     this._loading = true;
     try {
-      const results = await searchPlaces(query);
+      const layer = this.searchType === 'city' ? 'city,county,state,country' : undefined;
+      const results = await searchPlaces(query, 'en', 5, layer);
       if (gen !== this._searchGeneration) return; // stale response
       this._results = results;
       this._searched = true;

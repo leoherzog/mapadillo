@@ -16,6 +16,7 @@ import '../pages/landing-page.js';
 import '../pages/sign-in-page.js';
 import '../pages/dashboard-page.js';
 import '../pages/trip-builder-page.js';
+import '../pages/claim-page.js';
 import './user-menu.js';
 
 @customElement('app-shell')
@@ -46,8 +47,12 @@ export class AppShell extends LitElement {
     },
     {
       path: '/map/:id',
-      enter: requireAuth,
       render: ({ id }) => html`<trip-builder-page .mapId=${id ?? ''}></trip-builder-page>`,
+    },
+    {
+      path: '/claim/:token',
+      enter: requireAuth,
+      render: ({ token }) => html`<claim-page .token=${token ?? ''}></claim-page>`,
     },
   ]);
 

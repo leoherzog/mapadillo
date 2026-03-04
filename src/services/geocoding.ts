@@ -28,12 +28,14 @@ export async function searchPlaces(
   query: string,
   lang = 'en',
   limit = 5,
+  layer?: string,
 ): Promise<GeocodingResult[]> {
   const params = new URLSearchParams({
     q: query,
     lang,
     limit: String(limit),
   });
+  if (layer) params.set('layer', layer);
 
   const res = await fetch(`/api/geocode?${params}`);
   if (!res.ok) return [];

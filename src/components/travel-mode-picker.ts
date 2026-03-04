@@ -15,15 +15,16 @@ interface ModeInfo {
 
 const MODES: ModeInfo[] = [
   { icon: 'car', mode: 'drive', color: 'var(--wa-color-brand-50)' },
-  { icon: 'compass', mode: 'walk', color: 'var(--wa-color-green-50)' },
-  { icon: 'person-biking', mode: 'bike', color: 'var(--wa-color-cyan-50)' },
   { icon: 'plane', mode: 'plane', color: 'var(--wa-color-blue-50)' },
   { icon: 'ship', mode: 'boat', color: 'var(--wa-color-indigo-70)' },
+  { icon: 'person-biking', mode: 'bike', color: 'var(--wa-color-cyan-50)' },
+  { icon: 'compass', mode: 'walk', color: 'var(--wa-color-green-50)' },
 ];
 
 @customElement('travel-mode-picker')
 export class TravelModePicker extends LitElement {
   @property() value = '';
+  @property({ type: Boolean }) disabled = false;
 
   static styles = css`
     :host {
@@ -47,6 +48,7 @@ export class TravelModePicker extends LitElement {
           class=${this.value === mode ? 'active' : ''}
           style="--mode-color: ${color}"
           title=${mode}
+          ?disabled=${this.disabled}
           @click=${() => this._select(mode)}
         >
           <wa-icon name=${icon}></wa-icon>

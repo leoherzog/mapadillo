@@ -26,14 +26,22 @@ import type { Env } from './types.js';
 
 type AuthInstance = ReturnType<typeof betterAuth>;
 let _auth: AuthInstance | null = null;
+// Tracks the DB binding reference used to create _auth. In a normal Workers
+// isolate, env.DB is a stable binding object: the same reference is passed to
+// every request within a single isolate lifetime, so _cachedDB === env.DB will
+// always be true after the first call. The staleness check below is a defensive
+// guard for non-standard environments (tests using fake envs, future isolate
+// recycling, etc.) where the binding reference might differ between calls.
+let _cachedDB: Env['DB'] | null = null;
 
 export function getAuth(env: Env) {
-  if (!_auth) {
+  if (!_auth || _cachedDB !== env.DB) {
     if (!env.BETTER_AUTH_URL) {
       throw new Error('BETTER_AUTH_URL secret is not set. Run: wrangler secret put BETTER_AUTH_URL');
     }
     const url = new URL(env.BETTER_AUTH_URL);
 
+    _cachedDB = env.DB;
     _auth = betterAuth({
       database: {
         dialect: new D1Dialect({ database: env.DB }),

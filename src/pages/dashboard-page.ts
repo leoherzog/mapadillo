@@ -5,9 +5,9 @@
  * with mini MapLibre previews.
  */
 import { LitElement, html, css } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import type { User } from '../auth/auth-state.js';
-import type { MapWithStops } from '../services/maps.js';
+import type { MapWithRole } from '../services/maps.js';
 import { listMaps, deleteMap } from '../services/maps.js';
 import { navClick } from '../nav.js';
 import '../components/map-card.js';
@@ -17,11 +17,19 @@ import { waUtilities } from '../styles/wa-utilities.js';
 export class DashboardPage extends LitElement {
   @property({ type: Object }) user: User | null = null;
 
-  @state() private _maps: MapWithStops[] = [];
+  @state() private _maps: MapWithRole[] = [];
   @state() private _loading = true;
   @state() private _deleteMapId: string | null = null;
 
-  @query('wa-dialog') private _dialog!: HTMLElement & { open: boolean; hide(): void; show(): void };
+  private get _myMaps(): MapWithRole[] {
+    return this._maps.filter(m => m.role === 'owner');
+  }
+
+  private get _sharedMaps(): MapWithRole[] {
+    return this._maps.filter(m => m.role !== 'owner');
+  }
+
+  @state() private _dialogOpen = false;
 
   static styles = [waUtilities, css`
     :host {
@@ -111,7 +119,7 @@ export class DashboardPage extends LitElement {
 
       ${this._loading
         ? html`<div class="wa-cluster wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>`
-        : this._maps.length === 0
+        : this._myMaps.length === 0
           ? html`
               <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
                 <wa-icon name="map" style="color: var(--wa-color-neutral-400);"></wa-icon>
@@ -128,7 +136,7 @@ export class DashboardPage extends LitElement {
                 Create New Trip
               </wa-button>
               <div class="wa-grid wa-gap-l" style="--min-column-size: 280px; margin-top: var(--wa-space-l)" @map-delete=${this._onMapDelete}>
-                ${this._maps.map(
+                ${this._myMaps.map(
                   (m) => html`<map-card .map=${m}></map-card>`,
                 )}
               </div>
@@ -139,12 +147,24 @@ export class DashboardPage extends LitElement {
         Shared with Me
       </h2>
 
-      <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
-        <wa-icon name="share-nodes" style="color: var(--wa-color-neutral-400);"></wa-icon>
-        <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
-      </div>
+      ${this._loading
+        ? html`<div class="wa-cluster wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>`
+        : this._sharedMaps.length === 0
+          ? html`
+              <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
+                <wa-icon name="share-nodes" style="color: var(--wa-color-neutral-400);"></wa-icon>
+                <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
+              </div>
+            `
+          : html`
+              <div class="wa-grid wa-gap-l" style="--min-column-size: 280px; margin-top: var(--wa-space-l)">
+                ${this._sharedMaps.map(
+                  (m) => html`<map-card .map=${m} .roleBadge=${m.role}></map-card>`,
+                )}
+              </div>
+            `}
 
-      <wa-dialog label="Delete Trip?">
+      <wa-dialog label="Delete Trip?" ?open=${this._dialogOpen} @wa-after-hide=${this._onDialogCancel}>
         <p>This cannot be undone.</p>
         <wa-button slot="footer" variant="danger" @click=${this._onDialogConfirm}>Delete</wa-button>
         <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onDialogCancel}>Cancel</wa-button>
@@ -154,18 +174,18 @@ export class DashboardPage extends LitElement {
 
   private _onMapDelete(e: CustomEvent<{ mapId: string }>) {
     this._deleteMapId = e.detail.mapId;
-    this._dialog.show();
+    this._dialogOpen = true;
   }
 
   private _onDialogCancel() {
     this._deleteMapId = null;
-    this._dialog.hide();
+    this._dialogOpen = false;
   }
 
   private async _onDialogConfirm() {
     const mapId = this._deleteMapId;
     this._deleteMapId = null;
-    this._dialog.hide();
+    this._dialogOpen = false;
     if (!mapId) return;
 
     try {

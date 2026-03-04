@@ -85,7 +85,8 @@ async function fetchORSRoute(
   let data: ORSResponse;
   try {
     data = await apiPost<ORSResponse>('/api/route', { profile, start, end }, signal);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
     return straightLine(start, end);
   }
 

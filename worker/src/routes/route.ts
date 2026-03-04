@@ -88,6 +88,11 @@ export async function routeHandler(c: Context<AppEnv>) {
     return c.json({ error: 'Routing service error' }, 502);
   }
 
+  const contentLength = upstream.headers.get('Content-Length');
+  if (contentLength !== null && parseInt(contentLength, 10) > 1_048_576) {
+    return c.json({ error: 'Upstream response too large' }, 502);
+  }
+
   const responseBody = await upstream.text();
 
   let parsed: unknown;

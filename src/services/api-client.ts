@@ -18,17 +18,22 @@ async function request<T>(path: string, init?: RequestInit, signal?: AbortSignal
   const res = await fetch(path, { credentials: 'same-origin', ...init, ...(signal ? { signal } : {}) });
 
   if (!res.ok) {
-    let body: unknown;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text().catch(() => null);
+    const text = await res.text().catch(() => null);
+    let body: unknown = text;
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        body = parsed.message !== undefined ? parsed.message : parsed;
+      } catch {
+        // keep raw text as body
+      }
     }
     throw new ApiError(res.status, body);
   }
 
-  // 204 No Content — nothing to parse
-  if (res.status === 204) return undefined as T;
+  // 204 No Content — nothing to parse.
+  // Safe: all 204 callers use Promise<void>.
+  if (res.status === 204) return undefined as unknown as T;
 
   return (await res.json()) as T;
 }

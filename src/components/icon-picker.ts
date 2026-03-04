@@ -79,7 +79,7 @@ export class IconPicker extends LitElement {
       <wa-button class="trigger" appearance="outlined" size="small" @click=${this._openDialog}>
         <wa-icon name=${this.value} label="Pick icon"></wa-icon>
       </wa-button>
-      <wa-dialog label="Pick an icon" .open=${this._open} @wa-after-hide=${this._closeDialog}>
+      <wa-dialog label="Pick an icon" ?open=${this._open} @wa-after-hide=${this._closeDialog}>
         ${Object.entries(CATEGORIES).map(
           ([cat, icons]) => html`
             <div class="category-label">${cat}</div>
@@ -88,6 +88,7 @@ export class IconPicker extends LitElement {
                 (icon) => html`
                   <button
                     class="icon-btn wa-stack wa-align-items-center wa-gap-0 ${icon === this.value ? 'selected' : ''}"
+                    aria-label=${icon}
                     @click=${() => this._select(icon)}
                   >
                     <wa-icon name=${icon}></wa-icon>

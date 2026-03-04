@@ -87,7 +87,7 @@ export class SignInPage extends LitElement {
           ${this._error
             ? html`
                 <wa-callout variant="danger" style="width: 100%;">
-                  <wa-icon slot="icon" name="circle-exclamation" family="jelly"></wa-icon>
+                  <wa-icon slot="icon" name="circle-info" family="jelly"></wa-icon>
                   ${this._error}
                 </wa-callout>
               `
@@ -160,7 +160,7 @@ export class SignInPage extends LitElement {
           autocomplete="name"
           required
           .value=${this._name}
-          @input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
+          @wa-input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
         ></wa-input>
         <wa-input
           label="Email"
@@ -169,7 +169,7 @@ export class SignInPage extends LitElement {
           autocomplete="email"
           required
           .value=${this._email}
-          @input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
+          @wa-input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
         ></wa-input>
         <wa-button
           variant="brand"

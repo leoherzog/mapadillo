@@ -3,9 +3,9 @@
  */
 
 /* Import Web Awesome base styles */
-@import '@awesome.me/webawesome-pro/dist/styles/webawesome.css';
+@import '@web.awesome.me/webawesome-pro/dist/styles/webawesome.css';
 /* Playful Pro theme */
-@import '@awesome.me/webawesome-pro/dist/styles/themes/playful.css';
+@import '@web.awesome.me/webawesome-pro/dist/styles/themes/playful.css';
 
 /* App-level reset / base */
 *,

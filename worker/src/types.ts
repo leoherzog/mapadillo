@@ -42,6 +42,6 @@ export interface SessionUser {
 export type AppEnv = {
   Bindings: Env;
   Variables: {
-    user: SessionUser;
+    user?: SessionUser;
   };
 };

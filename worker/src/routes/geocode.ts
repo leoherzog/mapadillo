@@ -28,8 +28,14 @@ export async function geocodeHandler(c: Context<AppEnv>) {
     10,
   );
 
+  const ALLOWED_LAYERS = ['house', 'street', 'locality', 'district', 'city', 'county', 'state', 'country', 'other'] as const;
+  const rawLayer = c.req.query('layer') || '';
+  const layer = rawLayer
+    ? rawLayer.split(',').filter((l) => ALLOWED_LAYERS.includes(l.trim() as (typeof ALLOWED_LAYERS)[number])).join(',')
+    : '';
+
   // KV cache lookup
-  const cacheKey = `geocode:${await hashText(`${q.toLowerCase()}:${lang}:${limit}`)}`;
+  const cacheKey = `geocode:${await hashText(`${q.toLowerCase()}:${lang}:${limit}:${layer}`)}`;
   const cached = await c.env.API_CACHE.get(cacheKey);
   if (cached) {
     try {
@@ -45,6 +51,7 @@ export async function geocodeHandler(c: Context<AppEnv>) {
   url.searchParams.set('q', q);
   url.searchParams.set('lang', lang);
   url.searchParams.set('limit', String(limit));
+  if (layer) url.searchParams.set('layer', layer);
 
   let upstream: Response;
   try {
@@ -55,6 +62,11 @@ export async function geocodeHandler(c: Context<AppEnv>) {
 
   if (!upstream.ok) {
     return c.json({ error: 'Geocoding service unavailable' }, 502);
+  }
+
+  const contentLength = upstream.headers.get('Content-Length');
+  if (contentLength !== null && parseInt(contentLength, 10) > 1_048_576) {
+    return c.json({ error: 'Upstream response too large' }, 502);
   }
 
   const body = await upstream.text();

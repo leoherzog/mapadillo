@@ -1,39 +1,13 @@
 /**
  * Maps + Stops CRUD routes.
  *
- * Mounted at /api/maps — all routes assume requireAuth has already run,
- * so c.get('user').id is always available.
+ * Mounted at /api/maps — most routes require requireAuth,
+ * GET /:id uses optionalAuth for public map viewing.
  */
 
 import { Hono } from 'hono';
 import type { AppEnv } from '../types.js';
-
-// ── Types matching D1 schema ─────────────────────────────────────────────────
-
-interface MapRow {
-  id: string;
-  owner_id: string;
-  name: string;
-  family_name: string | null;
-  visibility: string;
-  style_preferences: string;
-  units: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface StopRow {
-  id: string;
-  map_id: string;
-  position: number;
-  name: string;
-  label: string | null;
-  latitude: number;
-  longitude: number;
-  icon: string | null;
-  travel_mode: string | null;
-  created_at: string;
-}
+import type { MapRow, StopRow } from '../db/types.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -47,29 +21,48 @@ const VALID_ICONS = new Set([
 ]);
 
 const VALID_TRAVEL_MODES = new Set(['drive', 'walk', 'bike', 'plane', 'boat']);
-const VALID_VISIBILITY = new Set(['private', 'public']);
+const VALID_TYPES = new Set(['point', 'route']);
 const VALID_UNITS = new Set(['km', 'mi']);
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Role-based access control ────────────────────────────────────────────────
 
-async function getOwnedMap(
-  c: { get: (key: 'user') => { id: string }; env: { DB: D1Database }; json: (data: unknown, status: number) => Response },
+export type MapRole = 'owner' | 'editor' | 'viewer' | 'public' | null;
+
+export async function getMapWithRole(
+  db: D1Database,
   mapId: string,
-): Promise<MapRow | Response> {
-  const map = await c.env.DB.prepare('SELECT * FROM maps WHERE id = ?')
+  userId: string | null,
+): Promise<{ map: MapRow; role: MapRole } | null> {
+  const map = await db.prepare('SELECT * FROM maps WHERE id = ?')
     .bind(mapId)
     .first<MapRow>();
-  if (!map) {
-    return c.json({ error: 'Map not found' }, 404);
+  if (!map) return null;
+
+  // Owner check
+  if (userId && userId === map.owner_id) {
+    return { map, role: 'owner' };
   }
-  if (map.owner_id !== c.get('user').id) {
-    return c.json({ error: 'Forbidden' }, 403);
+
+  // Share check
+  if (userId) {
+    const share = await db.prepare(
+      'SELECT role FROM map_shares WHERE map_id = ? AND user_id = ?',
+    ).bind(mapId, userId).first<{ role: string }>();
+    if (share) {
+      return { map, role: share.role as MapRole };
+    }
   }
-  return map;
+
+  // Public check
+  if (map.visibility === 'public') {
+    return { map, role: 'public' };
+  }
+
+  return null;
 }
 
-function isResponse(v: unknown): v is Response {
-  return v instanceof Response;
+function canEdit(role: MapRole): boolean {
+  return role === 'owner' || role === 'editor';
 }
 
 // ── Sub-app ──────────────────────────────────────────────────────────────────
@@ -84,7 +77,7 @@ maps.post('/', async (c) => {
   }
 
   const id = crypto.randomUUID();
-  const userId = c.get('user').id;
+  const userId = c.get('user')!.id;
   const now = new Date().toISOString();
 
   await c.env.DB.prepare(
@@ -95,22 +88,41 @@ maps.post('/', async (c) => {
   return c.json(map, 201);
 });
 
-// GET / — list maps for current user
+// GET / — list maps for current user (owned + shared)
 maps.get('/', async (c) => {
-  const userId = c.get('user').id;
-  const mapRows = await c.env.DB.prepare(
+  const userId = c.get('user')!.id;
+
+  // Fetch owned maps
+  const ownedRows = await c.env.DB.prepare(
     'SELECT * FROM maps WHERE owner_id = ? ORDER BY updated_at DESC',
   ).bind(userId).all<MapRow>();
 
-  if (mapRows.results.length === 0) return c.json([]);
+  // Fetch shared maps
+  const sharedRows = await c.env.DB.prepare(
+    `SELECT m.*, ms.role AS share_role
+     FROM map_shares ms
+     JOIN maps m ON ms.map_id = m.id
+     WHERE ms.user_id = ?
+     ORDER BY m.updated_at DESC`,
+  ).bind(userId).all<MapRow & { share_role: string }>();
+
+  const allMaps = [
+    ...ownedRows.results.map((m) => ({ ...m, role: 'owner' as const })),
+    ...sharedRows.results.map((m) => {
+      const { share_role, ...mapData } = m;
+      return { ...mapData, role: share_role as 'editor' | 'viewer' };
+    }),
+  ];
+
+  if (allMaps.length === 0) return c.json([]);
 
   // Batch all stop queries in a single D1 round-trip
-  const stopStmts = mapRows.results.map((map) =>
+  const stopStmts = allMaps.map((map) =>
     c.env.DB.prepare('SELECT * FROM stops WHERE map_id = ? ORDER BY position').bind(map.id),
   );
   const stopResults = await c.env.DB.batch(stopStmts);
 
-  const mapsWithStops = mapRows.results.map((map, i) => ({
+  const mapsWithStops = allMaps.map((map, i) => ({
     ...map,
     stops: (stopResults[i] as D1Result<StopRow>).results,
   }));
@@ -118,26 +130,33 @@ maps.get('/', async (c) => {
   return c.json(mapsWithStops);
 });
 
-// GET /:id — get single map with stops
+// GET /:id — get single map with stops (uses optional auth, allows public)
 maps.get('/:id', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')?.id ?? null;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
+
+  if (!result) {
+    return c.json({ error: 'Map not found' }, 404);
+  }
 
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(result.id).all<StopRow>();
+  ).bind(result.map.id).all<StopRow>();
 
-  return c.json({ ...result, stops: stops.results });
+  return c.json({ ...result.map, role: result.role, stops: stops.results });
 });
 
-// PUT /:id — update map
+// PUT /:id — update map (owner or editor)
 maps.put('/:id', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')!.id;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
+
+  if (!result) return c.json({ error: 'Map not found' }, 404);
+  if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
   const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
 
-  const allowed = ['name', 'family_name', 'visibility', 'style_preferences', 'units'] as const;
+  const allowed = ['name', 'family_name', 'style_preferences', 'units'] as const;
   const updates: string[] = [];
   const values: unknown[] = [];
 
@@ -149,9 +168,6 @@ maps.put('/:id', async (c) => {
           return c.json({ error: 'name cannot be empty' }, 400);
         }
         val = (val as string).trim();
-      }
-      if (key === 'visibility' && !VALID_VISIBILITY.has(val as string)) {
-        return c.json({ error: 'visibility must be "private" or "public"' }, 400);
       }
       if (key === 'units' && !VALID_UNITS.has(val as string)) {
         return c.json({ error: 'units must be "km" or "mi"' }, 400);
@@ -171,34 +187,40 @@ maps.put('/:id', async (c) => {
   const now = new Date().toISOString();
   updates.push('updated_at = ?');
   values.push(now);
-  values.push(result.id);
+  values.push(result.map.id);
 
   await c.env.DB.prepare(
     `UPDATE maps SET ${updates.join(', ')} WHERE id = ?`,
   ).bind(...values).run();
 
   const updated = await c.env.DB.prepare('SELECT * FROM maps WHERE id = ?')
-    .bind(result.id).first<MapRow>();
+    .bind(result.map.id).first<MapRow>();
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(result.id).all<StopRow>();
+  ).bind(result.map.id).all<StopRow>();
 
   return c.json({ ...updated, stops: stops.results });
 });
 
-// DELETE /:id — delete map (cascade deletes stops)
+// DELETE /:id — delete map (owner only, cascade deletes stops)
 maps.delete('/:id', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')!.id;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
 
-  await c.env.DB.prepare('DELETE FROM maps WHERE id = ?').bind(result.id).run();
+  if (!result) return c.json({ error: 'Map not found' }, 404);
+  if (result.role !== 'owner') return c.json({ error: 'Forbidden' }, 403);
+
+  await c.env.DB.prepare('DELETE FROM maps WHERE id = ?').bind(result.map.id).run();
   return c.json({ success: true });
 });
 
 // PUT /:id/stops/reorder — MUST be before /:id/stops/:stopId
 maps.put('/:id/stops/reorder', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')!.id;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
+
+  if (!result) return c.json({ error: 'Map not found' }, 404);
+  if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
   const body = await c.req.json<{ order?: string[] }>().catch(() => ({}));
   if (!body.order || !Array.isArray(body.order)) {
@@ -211,7 +233,7 @@ maps.put('/:id/stops/reorder', async (c) => {
   // Verify all stop IDs belong to this map
   const existing = await c.env.DB.prepare(
     'SELECT id FROM stops WHERE map_id = ?',
-  ).bind(result.id).all<{ id: string }>();
+  ).bind(result.map.id).all<{ id: string }>();
 
   const existingIds = new Set(existing.results.map((s) => s.id));
   for (const sid of body.order) {
@@ -228,42 +250,46 @@ maps.put('/:id/stops/reorder', async (c) => {
     c.env.DB.prepare('UPDATE stops SET position = ? WHERE id = ?').bind(i, sid),
   );
 
-  // Null travel_mode for the new first stop
-  if (body.order.length > 0) {
-    stmts.push(
-      c.env.DB.prepare('UPDATE stops SET travel_mode = NULL WHERE id = ?').bind(body.order[0]),
-    );
-  }
-
   // Include updated_at in the same atomic batch
   stmts.push(
     c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
-      .bind(new Date().toISOString(), result.id),
+      .bind(new Date().toISOString(), result.map.id),
   );
 
   await c.env.DB.batch(stmts);
 
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(result.id).all<StopRow>();
+  ).bind(result.map.id).all<StopRow>();
 
   return c.json(stops.results);
 });
 
-// POST /:id/stops — add stop
+// POST /:id/stops — add stop (owner or editor)
 maps.post('/:id/stops', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')!.id;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
+
+  if (!result) return c.json({ error: 'Map not found' }, 404);
+  if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
   const body = await c.req.json<{
+    type?: string;
     name?: string;
     lat?: number;
     lng?: number;
     label?: string;
     icon?: string;
     travel_mode?: string;
+    dest_name?: string;
+    dest_lat?: number;
+    dest_lng?: number;
   }>().catch(() => ({}));
 
+  const type = body.type ?? 'point';
+  if (!VALID_TYPES.has(type)) {
+    return c.json({ error: `Invalid type: ${type}` }, 400);
+  }
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
@@ -273,45 +299,65 @@ maps.post('/:id/stops', async (c) => {
   if (body.icon && !VALID_ICONS.has(body.icon)) {
     return c.json({ error: `Invalid icon: ${body.icon}` }, 400);
   }
+
+  // travel_mode validation: only allowed on routes
   if (body.travel_mode && !VALID_TRAVEL_MODES.has(body.travel_mode)) {
     return c.json({ error: `Invalid travel_mode: ${body.travel_mode}` }, 400);
+  }
+  if (type === 'point' && body.travel_mode) {
+    return c.json({ error: 'Points cannot have a travel_mode' }, 400);
+  }
+
+  // dest_* validation: only for routes
+  if (type === 'point' && (body.dest_lat != null || body.dest_lng != null || body.dest_name != null)) {
+    return c.json({ error: 'Points cannot have destination fields' }, 400);
+  }
+  if (body.dest_lat != null && typeof body.dest_lat !== 'number') {
+    return c.json({ error: 'dest_lat must be a number' }, 400);
+  }
+  if (body.dest_lng != null && typeof body.dest_lng !== 'number') {
+    return c.json({ error: 'dest_lng must be a number' }, 400);
   }
 
   // Auto-increment position
   const maxPos = await c.env.DB.prepare(
     'SELECT COALESCE(MAX(position), -1) as max_pos FROM stops WHERE map_id = ?',
-  ).bind(result.id).first<{ max_pos: number }>();
+  ).bind(result.map.id).first<{ max_pos: number }>();
   const position = (maxPos?.max_pos ?? -1) + 1;
 
-  // Force travel_mode = null for first stop
-  const travelMode = position === 0 ? null : (body.travel_mode ?? null);
+  const travelMode = type === 'route' ? (body.travel_mode ?? 'drive') : null;
 
   const stopId = crypto.randomUUID();
-  await c.env.DB.prepare(
-    'INSERT INTO stops (id, map_id, position, name, label, latitude, longitude, icon, travel_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  ).bind(
-    stopId, result.id, position, body.name.trim(), body.label?.trim() ?? null,
-    body.lat, body.lng, body.icon ?? null, travelMode,
-  ).run();
-
-  // Update map's updated_at
-  await c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
-    .bind(new Date().toISOString(), result.id).run();
+  const now = new Date().toISOString();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(
+      stopId, result.map.id, position, type, body.name.trim(), body.label?.trim() ?? null,
+      body.lat, body.lng, body.icon ?? null, travelMode,
+      body.dest_name?.trim() ?? null, body.dest_lat ?? null, body.dest_lng ?? null,
+    ),
+    c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
+      .bind(now, result.map.id),
+  ]);
 
   const stop = await c.env.DB.prepare('SELECT * FROM stops WHERE id = ?')
     .bind(stopId).first<StopRow>();
   return c.json(stop, 201);
 });
 
-// PUT /:id/stops/:stopId — update stop
+// PUT /:id/stops/:stopId — update stop (owner or editor)
 maps.put('/:id/stops/:stopId', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')!.id;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
+
+  if (!result) return c.json({ error: 'Map not found' }, 404);
+  if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
   const stopId = c.req.param('stopId');
   const stop = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE id = ? AND map_id = ?',
-  ).bind(stopId, result.id).first<StopRow>();
+  ).bind(stopId, result.map.id).first<StopRow>();
 
   if (!stop) {
     return c.json({ error: 'Stop not found' }, 404);
@@ -354,12 +400,32 @@ maps.put('/:id/stops/:stopId', async (c) => {
     if (body.travel_mode !== null && !VALID_TRAVEL_MODES.has(body.travel_mode as string)) {
       return c.json({ error: `Invalid travel_mode: ${body.travel_mode}` }, 400);
     }
-    // Cannot set travel_mode on first stop
-    if (stop.position === 0 && body.travel_mode !== null) {
-      return c.json({ error: 'First stop cannot have a travel_mode' }, 400);
+    if (stop.type === 'point' && body.travel_mode !== null) {
+      return c.json({ error: 'Points cannot have a travel_mode' }, 400);
     }
     updates.push('travel_mode = ?');
     values.push(body.travel_mode ?? null);
+  }
+  if ('type' in body) {
+    return c.json({ error: 'type cannot be changed after creation' }, 400);
+  }
+  if ('dest_name' in body) {
+    updates.push('dest_name = ?');
+    values.push(body.dest_name ?? null);
+  }
+  if ('dest_lat' in body) {
+    if (body.dest_lat !== null && typeof body.dest_lat !== 'number') {
+      return c.json({ error: 'dest_lat must be a number' }, 400);
+    }
+    updates.push('dest_latitude = ?');
+    values.push(body.dest_lat ?? null);
+  }
+  if ('dest_lng' in body) {
+    if (body.dest_lng !== null && typeof body.dest_lng !== 'number') {
+      return c.json({ error: 'dest_lng must be a number' }, 400);
+    }
+    updates.push('dest_longitude = ?');
+    values.push(body.dest_lng ?? null);
   }
 
   if (updates.length === 0) {
@@ -367,45 +433,46 @@ maps.put('/:id/stops/:stopId', async (c) => {
   }
 
   values.push(stopId);
-  await c.env.DB.prepare(
-    `UPDATE stops SET ${updates.join(', ')} WHERE id = ?`,
-  ).bind(...values).run();
-
-  // Update map's updated_at
-  await c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
-    .bind(new Date().toISOString(), result.id).run();
+  const now = new Date().toISOString();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE stops SET ${updates.join(', ')} WHERE id = ?`,
+    ).bind(...values),
+    c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
+      .bind(now, result.map.id),
+  ]);
 
   const updated = await c.env.DB.prepare('SELECT * FROM stops WHERE id = ?')
     .bind(stopId).first<StopRow>();
   return c.json(updated);
 });
 
-// DELETE /:id/stops/:stopId — delete stop
+// DELETE /:id/stops/:stopId — delete stop (owner or editor)
 maps.delete('/:id/stops/:stopId', async (c) => {
-  const result = await getOwnedMap(c, c.req.param('id'));
-  if (isResponse(result)) return result;
+  const userId = c.get('user')!.id;
+  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
+
+  if (!result) return c.json({ error: 'Map not found' }, 404);
+  if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
   const stopId = c.req.param('stopId');
   const stop = await c.env.DB.prepare(
-    'SELECT * FROM stops WHERE id = ? AND map_id = ?',
-  ).bind(stopId, result.id).first<StopRow>();
+    'SELECT position FROM stops WHERE id = ? AND map_id = ?',
+  ).bind(stopId, result.map.id).first<{ position: number }>();
 
   if (!stop) {
     return c.json({ error: 'Stop not found' }, 404);
   }
 
-  // Atomic: delete, re-compact positions, null first stop's travel_mode, touch map
+  // Atomic: delete, re-compact positions, touch map
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM stops WHERE id = ?').bind(stopId),
     c.env.DB.prepare(
       'UPDATE stops SET position = position - 1 WHERE map_id = ? AND position > ?',
-    ).bind(result.id, stop.position),
-    c.env.DB.prepare(
-      'UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0',
-    ).bind(result.id),
+    ).bind(result.map.id, stop.position),
     c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
-      .bind(now, result.id),
+      .bind(now, result.map.id),
   ]);
 
   return c.json({ success: true });

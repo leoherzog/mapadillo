@@ -53,11 +53,6 @@ export class UserMenu extends LitElement {
           <span class="trigger-label">${this.user.name}</span>
         </wa-button>
 
-        <wa-dropdown-item @click=${this._goToDashboard}>
-          <wa-icon slot="icon" name="grid-2"></wa-icon>
-          My Trips
-        </wa-dropdown-item>
-        <wa-divider></wa-divider>
         <wa-dropdown-item
           @click=${this._handleSignOut}
           ?disabled=${this._signingOut}
@@ -81,10 +76,6 @@ export class UserMenu extends LitElement {
         .toUpperCase()
         .slice(0, 2) ?? ''
     );
-  }
-
-  private _goToDashboard() {
-    navigateTo('/dashboard');
   }
 
   private _handleSignOut = async () => {
