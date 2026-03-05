@@ -39,13 +39,6 @@ export class DashboardPage extends LitElement {
       margin: 0 auto;
     }
 
-    .greeting {
-      font-size: var(--wa-font-size-l);
-      color: var(--wa-color-neutral-600);
-      margin: 0 0 var(--wa-space-l);
-      font-weight: 500;
-    }
-
     h1 {
       font-size: var(--wa-font-size-3xl);
       font-weight: 900;
@@ -105,13 +98,7 @@ export class DashboardPage extends LitElement {
   }
 
   render() {
-    const firstName = this.user?.name?.split(' ')[0] ?? '';
-
     return html`
-      ${firstName
-        ? html`<p class="greeting">Hey ${firstName}!</p>`
-        : ''}
-
       <h1>
         <wa-icon name="map"></wa-icon>
         My Trips

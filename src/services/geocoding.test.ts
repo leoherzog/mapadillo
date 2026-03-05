@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { searchPlaces } from './geocoding.js';
+import { apiGet, ApiError } from './api-client.js';
+
+vi.mock('./api-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api-client.js')>();
+  return { ...actual, apiGet: vi.fn() };
+});
+
+const mockApiGet = vi.mocked(apiGet);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,24 +48,17 @@ function photonResponse(features: unknown[] = []) {
   return { type: 'FeatureCollection', features };
 }
 
-function mockOk(body: object) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn());
+  mockApiGet.mockReset();
 });
 
 describe('searchPlaces', () => {
   describe('happy path', () => {
     it('returns mapped results from valid Photon response', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(photonResponse([photonFeature({ name: 'Berlin', city: 'Berlin', state: 'Berlin', country: 'Germany' })]))
+      mockApiGet.mockResolvedValue(
+        photonResponse([photonFeature({ name: 'Berlin', city: 'Berlin', state: 'Berlin', country: 'Germany' })])
       );
 
       const results = await searchPlaces('Berlin');
@@ -75,8 +76,8 @@ describe('searchPlaces', () => {
     });
 
     it('maps lon/lat correctly from coordinates [lon, lat]', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(photonResponse([photonFeature({ lon: -73.9857, lat: 40.7484 })]))
+      mockApiGet.mockResolvedValue(
+        photonResponse([photonFeature({ lon: -73.9857, lat: 40.7484 })])
       );
 
       const [result] = await searchPlaces('New York');
@@ -86,8 +87,8 @@ describe('searchPlaces', () => {
     });
 
     it('includes optional fields when present', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(photonResponse([photonFeature({ name: 'Munich', city: 'Munich', state: 'Bavaria', country: 'Germany' })]))
+      mockApiGet.mockResolvedValue(
+        photonResponse([photonFeature({ name: 'Munich', city: 'Munich', state: 'Bavaria', country: 'Germany' })])
       );
 
       const [result] = await searchPlaces('Munich');
@@ -98,8 +99,8 @@ describe('searchPlaces', () => {
     });
 
     it('omits optional fields when absent', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(photonResponse([photonFeature({ name: 'Nowhere' })]))
+      mockApiGet.mockResolvedValue(
+        photonResponse([photonFeature({ name: 'Nowhere' })])
       );
 
       const [result] = await searchPlaces('Nowhere');
@@ -110,35 +111,33 @@ describe('searchPlaces', () => {
     });
 
     it('builds correct query params', async () => {
-      vi.mocked(fetch).mockResolvedValue(mockOk(photonResponse()));
+      mockApiGet.mockResolvedValue(photonResponse());
 
       await searchPlaces('Berlin', 'de', 3);
 
-      const url = vi.mocked(fetch).mock.calls[0][0] as string;
-      expect(url).toContain('/api/geocode?');
-      expect(url).toContain('q=Berlin');
-      expect(url).toContain('lang=de');
-      expect(url).toContain('limit=3');
+      const path = mockApiGet.mock.calls[0][0];
+      expect(path).toContain('/api/geocode?');
+      expect(path).toContain('q=Berlin');
+      expect(path).toContain('lang=de');
+      expect(path).toContain('limit=3');
     });
 
     it('uses defaults: lang=en, limit=5', async () => {
-      vi.mocked(fetch).mockResolvedValue(mockOk(photonResponse()));
+      mockApiGet.mockResolvedValue(photonResponse());
 
       await searchPlaces('Paris');
 
-      const url = vi.mocked(fetch).mock.calls[0][0] as string;
-      expect(url).toContain('lang=en');
-      expect(url).toContain('limit=5');
+      const path = mockApiGet.mock.calls[0][0];
+      expect(path).toContain('lang=en');
+      expect(path).toContain('limit=5');
     });
 
     it('returns multiple results', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(
-          photonResponse([
-            photonFeature({ name: 'Berlin', lon: 13.4, lat: 52.5 }),
-            photonFeature({ name: 'Bern', lon: 7.45, lat: 46.95 }),
-          ])
-        )
+      mockApiGet.mockResolvedValue(
+        photonResponse([
+          photonFeature({ name: 'Berlin', lon: 13.4, lat: 52.5 }),
+          photonFeature({ name: 'Bern', lon: 7.45, lat: 46.95 }),
+        ])
       );
 
       const results = await searchPlaces('Ber');
@@ -150,24 +149,22 @@ describe('searchPlaces', () => {
   });
 
   describe('error handling', () => {
-    it('returns [] on non-ok response', async () => {
-      vi.mocked(fetch).mockResolvedValue(new Response('Server Error', { status: 500 }));
+    it('returns [] on ApiError (non-ok response)', async () => {
+      mockApiGet.mockRejectedValue(new ApiError(500, 'Server Error'));
 
       const results = await searchPlaces('Berlin');
 
       expect(results).toEqual([]);
     });
 
-    it('rejects on fetch rejection (network error)', async () => {
-      vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'));
+    it('rethrows non-ApiError errors (network error)', async () => {
+      mockApiGet.mockRejectedValue(new TypeError('Failed to fetch'));
 
       await expect(searchPlaces('Berlin')).rejects.toThrow('Failed to fetch');
     });
 
     it('returns [] when response has no features property', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk({ type: 'FeatureCollection' })
-      );
+      mockApiGet.mockResolvedValue({ type: 'FeatureCollection' });
 
       const results = await searchPlaces('Berlin');
 
@@ -175,7 +172,7 @@ describe('searchPlaces', () => {
     });
 
     it('returns [] when features is empty', async () => {
-      vi.mocked(fetch).mockResolvedValue(mockOk(photonResponse([])));
+      mockApiGet.mockResolvedValue(photonResponse([]));
 
       const results = await searchPlaces('Berlin');
 
@@ -185,13 +182,11 @@ describe('searchPlaces', () => {
 
   describe('filtering', () => {
     it('filters out features without name', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(
-          photonResponse([
-            photonFeature({ name: null }),
-            photonFeature({ name: 'Berlin' }),
-          ])
-        )
+      mockApiGet.mockResolvedValue(
+        photonResponse([
+          photonFeature({ name: null }),
+          photonFeature({ name: 'Berlin' }),
+        ])
       );
 
       const results = await searchPlaces('test');
@@ -201,13 +196,11 @@ describe('searchPlaces', () => {
     });
 
     it('filters out features with fewer than 2 coordinates', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(
-          photonResponse([
-            { type: 'Feature', properties: { name: 'Bad' }, geometry: { type: 'Point', coordinates: [13.4] } },
-            photonFeature({ name: 'Good' }),
-          ])
-        )
+      mockApiGet.mockResolvedValue(
+        photonResponse([
+          { type: 'Feature', properties: { name: 'Bad' }, geometry: { type: 'Point', coordinates: [13.4] } },
+          photonFeature({ name: 'Good' }),
+        ])
       );
 
       const results = await searchPlaces('test');
@@ -217,13 +210,11 @@ describe('searchPlaces', () => {
     });
 
     it('returns [] when all features are filtered out', async () => {
-      vi.mocked(fetch).mockResolvedValue(
-        mockOk(
-          photonResponse([
-            photonFeature({ name: null }),
-            { type: 'Feature', properties: { name: 'X' }, geometry: { type: 'Point', coordinates: [] } },
-          ])
-        )
+      mockApiGet.mockResolvedValue(
+        photonResponse([
+          photonFeature({ name: null }),
+          { type: 'Feature', properties: { name: 'X' }, geometry: { type: 'Point', coordinates: [] } },
+        ])
       );
 
       const results = await searchPlaces('test');

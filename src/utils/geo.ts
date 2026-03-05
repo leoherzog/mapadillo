@@ -25,12 +25,11 @@ export function toDeg(rad: number): number {
   return (rad * 180) / Math.PI;
 }
 
-/** Haversine distance in meters between two [lon, lat] points. */
-export function haversineDistance(
+/** Haversine angular distance in radians between two [lon, lat] points. */
+export function haversineAngle(
   a: [number, number],
   b: [number, number],
 ): number {
-  const R = 6_371_000; // Earth radius in meters
   const lat1 = toRad(a[1]);
   const lat2 = toRad(b[1]);
   const dLat = toRad(b[1] - a[1]);
@@ -40,7 +39,16 @@ export function haversineDistance(
     Math.pow(Math.sin(dLat / 2), 2) +
     Math.cos(lat1) * Math.cos(lat2) * Math.pow(Math.sin(dLon / 2), 2);
 
-  return 2 * R * Math.asin(Math.sqrt(h));
+  return 2 * Math.asin(Math.sqrt(h));
+}
+
+/** Haversine distance in meters between two [lon, lat] points. */
+export function haversineDistance(
+  a: [number, number],
+  b: [number, number],
+): number {
+  const R = 6_371_000; // Earth radius in meters
+  return R * haversineAngle(a, b);
 }
 
 /** Sanitize a string for use as a filename. */

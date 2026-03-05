@@ -13,6 +13,7 @@
 
 import { type ReactiveController, type ReactiveControllerHost } from 'lit';
 import { html, type TemplateResult } from 'lit';
+import { navigateTo } from './nav.js';
 
 // ── Navigation API + URLPattern type shims ────────────────────────────────
 // These APIs are Baseline cross-browser but not yet in all TS DOM lib versions.
@@ -115,12 +116,7 @@ export class Router implements ReactiveController {
 
   /** Programmatic navigation */
   navigate(path: string): void {
-    if ('navigation' in window) {
-      (window as unknown as { navigation: NavigationInterface }).navigation.navigate(path);
-    } else {
-      window.history.pushState(null, '', path);
-      void this._renderForUrl(window.location.href);
-    }
+    navigateTo(path);
   }
 
   private _onNavigate = (rawEvent: Event): void => {

@@ -6,6 +6,7 @@
  */
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
 import type { MapRow, StopRow, ShareRow } from '../db/types.js';
 import { getMapWithRole } from './maps.js';
@@ -19,7 +20,7 @@ async function getOwnedMap(
 ): Promise<MapRow | null> {
   const result = await getMapWithRole(db, mapId, userId);
   if (!result || result.role !== 'owner') return null;
-  return result.map as MapRow;
+  return result.map;
 }
 
 const VALID_ROLES = new Set(['viewer', 'editor']);
@@ -153,7 +154,7 @@ sharing.post('/:id/duplicate', async (c) => {
   // Check read access: owner, shared, or public
   const result = await getMapWithRole(c.env.DB, mapId, userId);
   if (!result) return c.json({ error: 'Map not found' }, 404);
-  const map = result.map as MapRow;
+  const map = result.map;
 
   // Create new map
   const newMapId = crypto.randomUUID();
@@ -174,11 +175,11 @@ sharing.post('/:id/duplicate', async (c) => {
   if (stops.results.length > 0) {
     const stmts = stops.results.map((stop) =>
       c.env.DB.prepare(
-        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, route_geometry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(
         crypto.randomUUID(), newMapId, stop.position, stop.type, stop.name,
         stop.label, stop.latitude, stop.longitude, stop.icon, stop.travel_mode,
-        stop.dest_name, stop.dest_latitude, stop.dest_longitude,
+        stop.dest_name, stop.dest_latitude, stop.dest_longitude, stop.route_geometry,
       ),
     );
     await c.env.DB.batch(stmts);
@@ -192,5 +193,86 @@ sharing.post('/:id/duplicate', async (c) => {
 
   return c.json({ ...newMap, stops: newStops.results }, 201);
 });
+
+// ── Claim share handler (mounted separately at /api/shares/claim/:token) ──
+
+export async function claimShareHandler(c: Context<AppEnv>) {
+  const userId = c.get('user')!.id;
+
+  // Rate limit: 20 claim attempts per minute per user
+  const { success: claimAllowed } = await c.env.RATE_LIMITER_PUBLIC.limit({ key: `claim:${userId}` });
+  if (!claimAllowed) {
+    return c.json({ error: 'Too many requests' }, 429);
+  }
+
+  const token = c.req.param('token');
+
+  const share = await c.env.DB.prepare(
+    'SELECT * FROM map_shares WHERE claim_token = ?',
+  ).bind(token).first<{ id: string; map_id: string; user_id: string | null; role: string; claim_token: string | null }>();
+
+  if (!share) {
+    return c.json({ error: 'Invalid or expired invite link' }, 404);
+  }
+
+  // Already claimed by this user — treat as success
+  if (share.user_id === userId) {
+    return c.json({ map_id: share.map_id });
+  }
+
+  // Owner clicking their own invite — just redirect, don't create a redundant share
+  const map = await c.env.DB.prepare('SELECT owner_id FROM maps WHERE id = ?')
+    .bind(share.map_id).first<{ owner_id: string }>();
+  if (map && map.owner_id === userId) {
+    return c.json({ map_id: share.map_id });
+  }
+
+  // Already claimed by another user
+  if (share.user_id !== null) {
+    return c.json({ error: 'This invite has already been claimed' }, 403);
+  }
+
+  // Check if the user already has a different share for the same map.
+  // If so, keep the higher-privilege role (editor > viewer), delete the other,
+  // and return success without creating a duplicate (UNIQUE(map_id, user_id)).
+  const existingShare = await c.env.DB.prepare(
+    'SELECT id, role FROM map_shares WHERE map_id = ? AND user_id = ?',
+  ).bind(share.map_id, userId).first<{ id: string; role: string }>();
+
+  if (existingShare) {
+    const roleRank: Record<string, number> = { editor: 2, viewer: 1 };
+    const existingRank = roleRank[existingShare.role] ?? 1;
+    const incomingRank = roleRank[share.role] ?? 1;
+
+    if (incomingRank > existingRank) {
+      // Incoming share has higher privilege — replace the existing one
+      await c.env.DB.batch([
+        c.env.DB.prepare('DELETE FROM map_shares WHERE id = ?').bind(existingShare.id),
+        c.env.DB.prepare(
+          'UPDATE map_shares SET user_id = ?, claim_token = NULL WHERE id = ?',
+        ).bind(userId, share.id),
+      ]);
+    } else {
+      // Existing share has equal or higher privilege — just nullify the incoming token
+      await c.env.DB.prepare(
+        'UPDATE map_shares SET claim_token = NULL WHERE id = ?',
+      ).bind(share.id).run();
+    }
+    return c.json({ map_id: share.map_id });
+  }
+
+  // Claim it and nullify the token so it cannot be reused.
+  // Include user_id IS NULL and claim_token = ? in the WHERE clause to guard
+  // against a race condition where two requests try to claim the same token.
+  const claimResult = await c.env.DB.prepare(
+    'UPDATE map_shares SET user_id = ?, claim_token = NULL WHERE id = ? AND user_id IS NULL AND claim_token = ?',
+  ).bind(userId, share.id, share.claim_token).run();
+
+  if (claimResult.meta.changes === 0) {
+    return c.json({ error: 'This invite has already been claimed' }, 409);
+  }
+
+  return c.json({ map_id: share.map_id });
+}
 
 export default sharing;

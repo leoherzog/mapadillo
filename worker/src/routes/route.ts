@@ -12,6 +12,7 @@
  */
 import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
+import { sha256Hex } from '../lib/hash.js';
 
 const VALID_PROFILES = new Set([
   'driving-car',
@@ -50,7 +51,7 @@ export async function routeHandler(c: Context<AppEnv>) {
   }
 
   // KV cache lookup
-  const cacheKey = `route:${profile}:${await hashCoords(start!, end!)}`;
+  const cacheKey = `route:${profile}:${await sha256Hex(`${start![0]},${start![1]},${end![0]},${end![1]}`)}`;
   const cached = await c.env.API_CACHE.get(cacheKey);
   if (cached) {
     try {
@@ -127,18 +128,3 @@ function isValidCoord(coord: unknown): coord is [number, number] {
   );
 }
 
-/** SHA-256 hash of coordinates, truncated to 32 hex chars. */
-async function hashCoords(
-  start: [number, number],
-  end: [number, number],
-): Promise<string> {
-  const input = `${start[0]},${start[1]},${end[0]},${end[1]}`;
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(input),
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 32);
-}

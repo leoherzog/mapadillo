@@ -4,7 +4,7 @@
  * Shows icon picker, name input, label input, and coordinates.
  * No travel mode (points are standalone, not part of a route).
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Stop } from '../services/maps.js';
 import type { GeocodingResult } from '../services/geocoding.js';
@@ -28,10 +28,6 @@ export class PointCard extends LitElement {
   static styles = [waUtilities, cardSharedStyles, css`
     :host {
       display: block;
-    }
-
-    wa-card {
-      --spacing: var(--wa-space-xs) var(--wa-space-s);
     }
 
     wa-card::part(base) {
@@ -66,7 +62,7 @@ export class PointCard extends LitElement {
             <wa-icon name=${this.item.icon ?? 'location-dot'} style="color: var(--wa-color-brand-60);"></wa-icon>
             <span class="name-input" style="font-weight: 600; font-size: var(--wa-font-size-s);">${this.item.name}</span>
           </div>
-          ${this.item.label ? html`<div class="label-row" style="font-size: var(--wa-font-size-s); color: var(--wa-color-neutral-600);">${this.item.label}</div>` : ''}
+          ${this.item.label ? html`<div class="label-row" style="font-size: var(--wa-font-size-s); color: var(--wa-color-neutral-600);">${this.item.label}</div>` : nothing}
           <div class="coords">
             ${this.item.latitude.toFixed(5)}, ${this.item.longitude.toFixed(5)}
           </div>

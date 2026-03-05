@@ -14,24 +14,48 @@ import { formatDistance, haversineDistance, isDraftCoord, sanitizeFilename } fro
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-export const DEFAULT_DPI: DPIType = DPI[200];
+const DEFAULT_DPI: DPIType = DPI[200];
 const MAX_CANVAS_DIM = 5400;
 const RENDER_TIMEOUT_MS = 30_000;
+
+/** Paper dimensions in mm (portrait: width × height). */
+const PAPER_SIZES: Record<string, [number, number]> = {
+  letter: [215.9, 279.4],
+  a4: [210, 297],
+  a3: [297, 420],
+  tabloid: [279.4, 431.8],
+};
 
 const checklistIcons = ['circle', 'square', 'circle-check', 'circle-plus', 'circle-info', 'circle-xmark'];
 
 // ── MapExporter (subclass of MapGeneratorBase) ──────────────────────────────
 
 class MapExporter extends MapGeneratorBase {
-  constructor(map: maplibregl.Map, dpi: DPIType = DEFAULT_DPI) {
+  constructor(
+    map: maplibregl.Map,
+    dpi: DPIType = DEFAULT_DPI,
+    paperSize: PaperSize = 'auto',
+    orientation: Orientation = 'landscape',
+  ) {
     super(map, Size.A3, dpi, 'png' as never, Unit.mm, 'map');
 
-    // Override width/height to use viewport-based pixel dimensions instead of
-    // the library's paper-size-based mm dimensions.
-    const scaleFactor = dpi / 96;
-    const container = map.getContainer();
-    let w = Math.round(container.clientWidth * scaleFactor);
-    let h = Math.round(container.clientHeight * scaleFactor);
+    let w: number;
+    let h: number;
+
+    if (paperSize === 'auto') {
+      // Use viewport dimensions scaled by DPI
+      const scaleFactor = dpi / 96;
+      const container = map.getContainer();
+      w = Math.round(container.clientWidth * scaleFactor);
+      h = Math.round(container.clientHeight * scaleFactor);
+    } else {
+      // Compute pixel dimensions from paper size at export DPI
+      const [pw, ph] = PAPER_SIZES[paperSize];
+      const mmW = orientation === 'landscape' ? ph : pw;
+      const mmH = orientation === 'landscape' ? pw : ph;
+      w = Math.round((mmW / 25.4) * dpi);
+      h = Math.round((mmH / 25.4) * dpi);
+    }
 
     // Cap max canvas dimension — scale down proportionally if either exceeds limit
     if (w > MAX_CANVAS_DIM || h > MAX_CANVAS_DIM) {
@@ -251,8 +275,11 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
 
 // ── PNG export ───────────────────────────────────────────────────────────────
 
-export async function downloadPNG(map: maplibregl.Map, stops: Stop[], filename = 'mapadillo-map.png'): Promise<void> {
-  const exporter = new MapExporter(map);
+async function downloadPNG(
+  map: maplibregl.Map, stops: Stop[], paperSize: PaperSize, orientation: Orientation,
+  filename = 'mapadillo-map.png',
+): Promise<void> {
+  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
   const canvas = await exporter.renderCanvas(stops);
   const blob = await canvasToBlob(canvas, 'image/png');
   triggerDownload(blob, filename);
@@ -260,8 +287,11 @@ export async function downloadPNG(map: maplibregl.Map, stops: Stop[], filename =
 
 // ── JPEG export ──────────────────────────────────────────────────────────────
 
-export async function downloadJPEG(map: maplibregl.Map, stops: Stop[], filename = 'mapadillo-map.jpg'): Promise<void> {
-  const exporter = new MapExporter(map);
+async function downloadJPEG(
+  map: maplibregl.Map, stops: Stop[], paperSize: PaperSize, orientation: Orientation,
+  filename = 'mapadillo-map.jpg',
+): Promise<void> {
+  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
   const canvas = await exporter.renderCanvas(stops);
   const blob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
   triggerDownload(blob, filename);
@@ -269,22 +299,25 @@ export async function downloadJPEG(map: maplibregl.Map, stops: Stop[], filename 
 
 // ── PDF export (decorative layout) ──────────────────────────────────────────
 
-export async function downloadPDF(
+async function downloadPDF(
   map: maplibregl.Map,
   mapData: MapData,
   stops: Stop[],
   units: string,
+  paperSize: PaperSize,
+  orientation: Orientation,
   routeDistances?: Map<string, number>,
 ): Promise<void> {
-  const exporter = new MapExporter(map);
+  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
   const canvas = await exporter.renderCanvas(stops);
   const imgData = canvas.toDataURL('image/jpeg', 0.92);
 
-  // A3 landscape: 420 x 297 mm
-  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+  const pdfFormat = paperSize === 'auto' ? 'a3' : paperSize;
+  const pdfOrientation = paperSize === 'auto' ? 'landscape' : orientation;
+  const pdf = new jsPDF({ orientation: pdfOrientation, unit: 'mm', format: pdfFormat });
 
-  const pageW = 420;
-  const pageH = 297;
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
   const margin = 10;
   const innerW = pageW - margin * 2;
   const innerH = pageH - margin * 2;
@@ -461,6 +494,8 @@ export async function downloadPDF(
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export type ExportFormat = 'png' | 'jpeg' | 'pdf';
+export type PaperSize = 'auto' | 'letter' | 'a4' | 'a3' | 'tabloid';
+export type Orientation = 'landscape' | 'portrait';
 
 export async function exportMap(
   map: maplibregl.Map,
@@ -468,17 +503,19 @@ export async function exportMap(
   mapData: MapData,
   stops: Stop[],
   units: string,
+  paperSize: PaperSize,
+  orientation: Orientation,
   routeDistances?: Map<string, number>,
 ): Promise<void> {
   const baseName = sanitizeFilename(mapData.name);
 
   switch (format) {
     case 'png':
-      return downloadPNG(map, stops, `${baseName}.png`);
+      return downloadPNG(map, stops, paperSize, orientation, `${baseName}.png`);
     case 'jpeg':
-      return downloadJPEG(map, stops, `${baseName}.jpg`);
+      return downloadJPEG(map, stops, paperSize, orientation, `${baseName}.jpg`);
     case 'pdf':
-      return downloadPDF(map, mapData, stops, units, routeDistances);
+      return downloadPDF(map, mapData, stops, units, paperSize, orientation, routeDistances);
     default:
       throw new Error(`Unsupported export format: ${format as string}`);
   }

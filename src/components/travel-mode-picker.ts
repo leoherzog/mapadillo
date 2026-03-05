@@ -6,20 +6,13 @@
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { TRAVEL_MODES } from '../config/travel-modes.js';
 
-interface ModeInfo {
-  icon: string;
-  mode: string;
-  color: string;
-}
-
-const MODES: ModeInfo[] = [
-  { icon: 'car', mode: 'drive', color: 'var(--wa-color-brand-50)' },
-  { icon: 'plane', mode: 'plane', color: 'var(--wa-color-blue-50)' },
-  { icon: 'ship', mode: 'boat', color: 'var(--wa-color-indigo-70)' },
-  { icon: 'person-biking', mode: 'bike', color: 'var(--wa-color-cyan-50)' },
-  { icon: 'compass', mode: 'walk', color: 'var(--wa-color-green-50)' },
-];
+const MODES = TRAVEL_MODES.map((m) => ({
+  icon: m.icon,
+  mode: m.mode,
+  color: m.cssColor,
+}));
 
 @customElement('travel-mode-picker')
 export class TravelModePicker extends LitElement {

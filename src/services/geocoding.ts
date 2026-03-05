@@ -5,6 +5,8 @@
  * Requires an authenticated session (cookie sent automatically).
  */
 
+import { apiGet, ApiError } from './api-client.js';
+
 export interface GeocodingResult {
   /** Place name (e.g. "Berlin") */
   name: string;
@@ -37,10 +39,13 @@ export async function searchPlaces(
   });
   if (layer) params.set('layer', layer);
 
-  const res = await fetch(`/api/geocode?${params}`);
-  if (!res.ok) return [];
-
-  const data = (await res.json()) as PhotonResponse;
+  let data: PhotonResponse;
+  try {
+    data = await apiGet<PhotonResponse>(`/api/geocode?${params}`);
+  } catch (e) {
+    if (e instanceof ApiError) return [];
+    throw e;
+  }
   if (!data.features) return [];
 
   return data.features

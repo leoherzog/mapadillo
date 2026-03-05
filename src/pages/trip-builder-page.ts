@@ -3,25 +3,24 @@
  *
  * M7: Unified map items — points (standalone markers) and routes (A→B pairs).
  */
-import { LitElement, html, css } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { html, css, type PropertyValues } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
-import type { MapData, Stop } from '../services/maps.js';
+import { pageLayoutStyles } from '../styles/page-layout.js';
 import {
   createMap,
-  getMap,
   updateMap,
   addStop,
   updateStop,
   deleteStop,
   reorderStops,
   duplicateMap,
+  type MapWithRole,
 } from '../services/maps.js';
-import { ApiError } from '../services/api-client.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
-import { MapController } from '../map/map-controller.js';
 import { formatDistance } from '../utils/geo.js';
+import { MapPageBase } from './map-page-base.js';
 import '../components/map-view.js';
 import '../components/item-list.js';
 import '../components/save-indicator.js';
@@ -36,62 +35,21 @@ const API_TO_MODEL: Record<string, string> = {
 };
 
 @customElement('trip-builder-page')
-export class TripBuilderPage extends LitElement {
-  @property() mapId = '';
-
-  @state() private _map: MapData | null = null;
-  @state() private _items: Stop[] = [];
-  @state() private _loading = true;
+export class TripBuilderPage extends MapPageBase {
   @state() private _saveStatus: SaveStatus = 'idle';
-  @state() private _error = '';
-  @state() private _mapReady = false;
-  @state() private _routeDistances = new Map<string, number>();
   @state() private _routeLoading = false;
   @state() private _role: 'owner' | 'editor' | 'viewer' | 'public' = 'owner';
   @state() private _duplicating = false;
 
-  private get _totalDistance(): number {
-    let sum = 0;
-    for (const d of this._routeDistances.values()) sum += d;
-    return sum;
-  }
-
   private _saveTimer?: ReturnType<typeof setTimeout>;
   private _itemUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private _pendingSync = false;
-  private _mapController?: MapController;
   private _creatingMap = false;
   private _routeDebounceTimer?: ReturnType<typeof setTimeout>;
 
-  static styles = [waUtilities, css`
-    :host {
-      display: flex;
-      flex: 1;
-      min-height: 0;
-    }
-
-    .sidebar {
-      width: 380px;
-      min-width: 300px;
-      flex-shrink: 0;
-      padding: var(--wa-space-l);
-      overflow-y: auto;
-      border-right: 1px solid var(--wa-color-neutral-200);
-      background: var(--wa-color-surface-default);
-    }
-
+  static styles = [waUtilities, pageLayoutStyles, css`
     h1 {
       flex: 1;
-      font-size: var(--wa-font-size-xl);
-      font-weight: 900;
-      margin: 0;
-      color: var(--wa-color-brand-60, #e05e00);
     }
-
-    h1 wa-icon {
-      font-size: 1.3rem;
-    }
-
 
     wa-details::part(base) {
       border-radius: var(--wa-border-radius-m);
@@ -118,24 +76,6 @@ export class TripBuilderPage extends LitElement {
       margin-left: auto;
     }
 
-    .stat-row {
-      font-size: 0.9rem;
-    }
-
-    .stat-row wa-icon {
-      color: var(--wa-color-brand-60, #e05e00);
-      font-size: 1rem;
-    }
-
-    .stat-value {
-      font-weight: 700;
-      color: var(--wa-color-neutral-900);
-    }
-
-    .stat-label {
-      color: var(--wa-color-neutral-500);
-    }
-
     .route-loading {
       font-size: 0.85rem;
       color: var(--wa-color-neutral-500);
@@ -148,38 +88,7 @@ export class TripBuilderPage extends LitElement {
       color: var(--wa-color-neutral-700);
       margin-bottom: var(--wa-space-2xs);
     }
-
-    .map-panel {
-      flex: 1;
-      min-width: 0;
-      position: relative;
-    }
-
-
-    /* Responsive: stack on narrow viewports */
-    @media (max-width: 700px) {
-      :host {
-        flex-direction: column;
-      }
-
-      .sidebar {
-        width: 100%;
-        min-width: 0;
-        border-right: none;
-        border-bottom: 1px solid var(--wa-color-neutral-200);
-        max-height: 40vh;
-      }
-
-      .map-panel {
-        min-height: 300px;
-      }
-    }
   `];
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this._loadMap();
-  }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
@@ -187,67 +96,57 @@ export class TripBuilderPage extends LitElement {
     clearTimeout(this._routeDebounceTimer);
     for (const t of this._itemUpdateTimers.values()) clearTimeout(t);
     this._itemUpdateTimers.clear();
-    this._mapController?.destroy();
   }
 
-  willUpdate(changed: Map<string, unknown>): void {
+  willUpdate(changed: PropertyValues): void {
     if (changed.has('mapId') && changed.get('mapId') !== undefined && !this._creatingMap) {
       this._loadMap();
     }
   }
 
-  private async _loadMap() {
-    // Task #5: Destroy the old controller before loading a new map to prevent
-    // leaking layers, markers, and abort controllers.
-    this._mapController?.destroy();
-    this._mapController = undefined;
-    this._loading = true;
-    this._error = '';
-
-    try {
-      if (!this.mapId) {
-        // New trip — create on server, then update URL.
-        // Set flag to prevent willUpdate from triggering a redundant _loadMap
-        // when mapId is assigned below.
-        this._creatingMap = true;
-        try {
-          const newMap = await createMap({ name: 'Untitled Trip' });
-          this._map = newMap;
-          this._items = [];
-          this._role = 'owner';
-          this.mapId = newMap.id;
-          window.history.replaceState(null, '', `/map/${newMap.id}`);
-        } finally {
-          this._creatingMap = false;
+  protected async _loadMap() {
+    if (!this.mapId) {
+      // New trip — create on server, then update URL.
+      // Set flag to prevent willUpdate from triggering a redundant _loadMap
+      // when mapId is assigned below.
+      this._mapController?.destroy();
+      this._mapController = undefined;
+      this._loading = true;
+      this._error = '';
+      this._creatingMap = true;
+      try {
+        const newMap = await createMap({ name: 'Untitled Trip' });
+        this._map = newMap;
+        this._items = [];
+        this._role = 'owner';
+        this.mapId = newMap.id;
+        window.history.replaceState(null, '', `/map/${newMap.id}`);
+      } catch (err) {
+        this._error = err instanceof Error ? err.message : 'Failed to create map';
+      } finally {
+        this._creatingMap = false;
+        this._loading = false;
+        if (this._mapReady) {
+          this.updateComplete.then(() => { if (this.isConnected) this._syncMap(); });
+        } else {
+          this._pendingSync = true;
         }
-      } else {
-        const data = await getMap(this.mapId);
-        this._map = data;
-        this._items = data.stops;
-        this._role = (data.role ?? 'owner') as typeof this._role;
       }
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401 && !isAuthenticated()) {
-        const returnTo = encodeURIComponent(window.location.pathname);
-        navigateTo(`/sign-in?returnTo=${returnTo}`);
-        return;
-      }
-      this._error = err instanceof Error ? err.message : 'Failed to load map';
-    } finally {
-      this._loading = false;
-      if (this._mapReady) {
-        // Task #8: Guard against _syncMap running after the component is removed.
-        this.updateComplete.then(() => { if (this.isConnected) this._syncMap(); });
-      } else {
-        this._pendingSync = true;
-      }
+      return;
+    }
+
+    // Existing map — delegate to base class
+    await super._loadMap();
+    // Extract role from the loaded data (getMap returns MapWithRole)
+    if (this._map) {
+      this._role = (this._map as MapWithRole).role ?? 'owner';
     }
   }
 
   render() {
     if (this._loading) {
       return html`
-        <div class="sidebar">
+        <div class="sidebar sidebar-left">
           <div class="wa-cluster wa-align-items-center wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>
         </div>
         <div class="map-panel"><map-view></map-view></div>
@@ -256,7 +155,7 @@ export class TripBuilderPage extends LitElement {
 
     if (this._error) {
       return html`
-        <div class="sidebar">
+        <div class="sidebar sidebar-left">
           <wa-callout variant="danger">
             <wa-icon slot="icon" name="circle-xmark"></wa-icon>
             ${this._error}
@@ -272,8 +171,8 @@ export class TripBuilderPage extends LitElement {
     const isReadOnly = !canEdit;
 
     return html`
-      <div class="sidebar wa-stack wa-gap-m">
-        <div class="wa-flank wa-gap-xs">
+      <div class="sidebar sidebar-left wa-stack wa-gap-m">
+        <div class="wa-split wa-gap-xs">
           <h1>
             <wa-icon name="compass"></wa-icon>
             Trip Builder
@@ -462,21 +361,6 @@ export class TripBuilderPage extends LitElement {
         ></share-dialog>
       ` : ''}
     `;
-  }
-
-  private _onMapReady() {
-    this._mapReady = true;
-
-    // Initialize map controller with the MapLibre instance
-    const mapView = this.shadowRoot?.querySelector('map-view');
-    if (mapView?.map) {
-      this._mapController = new MapController(mapView.map);
-    }
-
-    if (this._pendingSync) {
-      this._pendingSync = false;
-      this._syncMap();
-    }
   }
 
   private _onStatusIdle() {
@@ -692,9 +576,9 @@ export class TripBuilderPage extends LitElement {
   }
 
   /**
-   * Draw points and routes on the map.
+   * Draw points and routes on the map, with loading indicator.
    */
-  private async _syncMap() {
+  protected async _syncMap() {
     if (!this._mapReady || !this._mapController) return;
 
     this._routeLoading = true;
@@ -702,6 +586,21 @@ export class TripBuilderPage extends LitElement {
       this._routeDistances = new Map();
       const result = await this._mapController.drawItems(this._items);
       this._routeDistances = result.distances;
+
+      // Fire-and-forget: cache route geometry to D1 for dashboard map cards
+      if (this._map && result.geometries.size > 0) {
+        let updated = false;
+        const next = this._items.map(s => {
+          if (s.route_geometry) return s;
+          const geometry = result.geometries.get(s.id);
+          if (!geometry) return s;
+          const encoded = JSON.stringify(geometry);
+          updated = true;
+          updateStop(this._map!.id, s.id, { route_geometry: encoded }).catch(() => {});
+          return { ...s, route_geometry: encoded };
+        });
+        if (updated) this._items = next;
+      }
     } catch (err) {
       console.warn('Map drawing failed:', err);
     } finally {

@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types.js';
 import type { MapRow, StopRow } from '../db/types.js';
+import type { MapRole } from '../../../shared/types.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ const VALID_ICONS = new Set([
   'circle-plus', 'circle-info', 'circle-xmark',
 ]);
 
+// Source of truth: src/config/travel-modes.ts — keep in sync
 const VALID_TRAVEL_MODES = new Set(['drive', 'walk', 'bike', 'plane', 'boat']);
 const VALID_TYPES = new Set(['point', 'route']);
 const VALID_UNITS = new Set(['km', 'mi']);
@@ -33,8 +35,6 @@ function isValidLng(v: number): boolean {
 }
 
 // ── Role-based access control ────────────────────────────────────────────────
-
-export type MapRole = 'owner' | 'editor' | 'viewer' | 'public' | null;
 
 export async function getMapWithRole(
   db: D1Database,
@@ -359,11 +359,11 @@ maps.post('/:id/stops', async (c) => {
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare(
-      'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, route_geometry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ).bind(
       stopId, result.map.id, position, type, body.name.trim(), body.label?.trim() ?? null,
       body.lat, body.lng, body.icon ?? null, travelMode,
-      body.dest_name?.trim() ?? null, body.dest_lat ?? null, body.dest_lng ?? null,
+      body.dest_name?.trim() ?? null, body.dest_lat ?? null, body.dest_lng ?? null, null,
     ),
     c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
       .bind(now, result.map.id),
@@ -465,6 +465,20 @@ maps.put('/:id/stops/:stopId', async (c) => {
     }
     updates.push('dest_longitude = ?');
     values.push(body.dest_lng ?? null);
+  }
+  if ('route_geometry' in body) {
+    if (body.route_geometry !== null && typeof body.route_geometry !== 'string') {
+      return c.json({ error: 'route_geometry must be a string or null' }, 400);
+    }
+    updates.push('route_geometry = ?');
+    values.push(body.route_geometry ?? null);
+  }
+
+  // Auto-invalidate cached geometry when coordinates or travel_mode change
+  const geoFields = ['lat', 'lng', 'dest_lat', 'dest_lng', 'travel_mode'];
+  if (geoFields.some((f) => f in body) && !('route_geometry' in body)) {
+    updates.push('route_geometry = ?');
+    values.push(null);
   }
 
   if (updates.length === 0) {

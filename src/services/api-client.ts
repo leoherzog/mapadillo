@@ -38,8 +38,8 @@ async function request<T>(path: string, init?: RequestInit, signal?: AbortSignal
   return (await res.json()) as T;
 }
 
-export function apiGet<T>(path: string): Promise<T> {
-  return request<T>(path);
+export function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, undefined, signal);
 }
 
 export function apiPost<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {

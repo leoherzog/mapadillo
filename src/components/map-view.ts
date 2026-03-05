@@ -8,11 +8,11 @@ import { LitElement, html, css, unsafeCSS } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
+import { MAP_STYLE_URL } from '../config/map.js';
 
 @customElement('map-view')
 export class MapView extends LitElement {
   private _map?: maplibregl.Map;
-  private _markers: maplibregl.Marker[] = [];
   private _resizeObserver?: ResizeObserver;
 
   static styles = [
@@ -40,7 +40,7 @@ export class MapView extends LitElement {
 
     this._map = new maplibregl.Map({
       container,
-      style: 'https://tiles.openfreemap.org/styles/bright',
+      style: MAP_STYLE_URL,
       center: [0, 20],
       zoom: 2,
     });
@@ -61,40 +61,6 @@ export class MapView extends LitElement {
     this._resizeObserver?.disconnect();
     this._map?.remove();
     this._map = undefined;
-  }
-
-  /** Fly the camera to a position. */
-  flyTo(lng: number, lat: number, zoom = 12): void {
-    this._map?.flyTo({ center: [lng, lat], zoom });
-  }
-
-  /** Drop a marker. Returns the Marker instance, or undefined if the map is not ready. */
-  addMarker(lng: number, lat: number, label?: string): maplibregl.Marker | undefined {
-    if (!this._map) return undefined;
-
-    const marker = new maplibregl.Marker({ color: '#ff6b00' }).setLngLat([
-      lng,
-      lat,
-    ]);
-
-    if (label) {
-      marker.setPopup(
-        new maplibregl.Popup({ offset: 25, closeButton: false }).setText(label),
-      );
-    }
-
-    marker.addTo(this._map);
-    this._markers.push(marker);
-
-    if (label) marker.togglePopup();
-
-    return marker;
-  }
-
-  /** Remove all markers from the map. */
-  clearMarkers(): void {
-    for (const m of this._markers) m.remove();
-    this._markers = [];
   }
 
   /** Access the underlying MapLibre map (for advanced use in later milestones). */

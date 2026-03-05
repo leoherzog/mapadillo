@@ -136,7 +136,7 @@ export class SignInPage extends LitElement {
         </wa-button>
       </div>
 
-      <div class="wa-cluster wa-align-items-center wa-gap-s" style="width: 100%"><wa-divider style="flex:1"></wa-divider><span>or</span><wa-divider style="flex:1"></wa-divider></div>
+      ${this._renderDivider()}
 
       <wa-button
         class="mode-toggle"
@@ -182,30 +182,9 @@ export class SignInPage extends LitElement {
         </wa-button>
       </div>
 
-      <div class="wa-cluster wa-align-items-center wa-gap-s" style="width: 100%"><wa-divider style="flex:1"></wa-divider><span>or</span><wa-divider style="flex:1"></wa-divider></div>
+      ${this._renderDivider()}
 
-      <div class="auth-buttons wa-stack wa-gap-s" style="width: 100%">
-        <wa-button
-          variant="neutral"
-          appearance="outlined"
-          @click=${() => this._signInSocial('google')}
-          ?disabled=${this._loading}
-          ?loading=${this._loading}
-        >
-          <wa-icon slot="start" name="google" family="brands"></wa-icon>
-          Sign up with Google
-        </wa-button>
-        <wa-button
-          variant="neutral"
-          appearance="outlined"
-          @click=${() => this._signInSocial('facebook')}
-          ?disabled=${this._loading}
-          ?loading=${this._loading}
-        >
-          <wa-icon slot="start" name="facebook" family="brands"></wa-icon>
-          Sign up with Facebook
-        </wa-button>
-      </div>
+      ${this._renderSocialButtons('Sign up with')}
 
       <wa-button
         class="mode-toggle"
@@ -215,6 +194,39 @@ export class SignInPage extends LitElement {
       >
         Already have an account? Sign in
       </wa-button>
+    `;
+  }
+
+  private _renderSocialButtons(prefix: string) {
+    return html`
+      <div class="auth-buttons wa-stack wa-gap-s" style="width: 100%">
+        <wa-button
+          variant="neutral"
+          appearance="outlined"
+          @click=${() => this._signInSocial('google')}
+          ?disabled=${this._loading}
+          ?loading=${this._loading}
+        >
+          <wa-icon slot="start" name="google" family="brands"></wa-icon>
+          ${prefix} Google
+        </wa-button>
+        <wa-button
+          variant="neutral"
+          appearance="outlined"
+          @click=${() => this._signInSocial('facebook')}
+          ?disabled=${this._loading}
+          ?loading=${this._loading}
+        >
+          <wa-icon slot="start" name="facebook" family="brands"></wa-icon>
+          ${prefix} Facebook
+        </wa-button>
+      </div>
+    `;
+  }
+
+  private _renderDivider() {
+    return html`
+      <div class="wa-cluster wa-align-items-center wa-gap-s" style="width: 100%"><wa-divider style="flex:1"></wa-divider><span>or</span><wa-divider style="flex:1"></wa-divider></div>
     `;
   }
 

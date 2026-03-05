@@ -48,9 +48,6 @@ describe('auth-state', () => {
       expect(mod.isAuthenticated()).toBe(false);
     });
 
-    it('isInitialized() returns false', () => {
-      expect(mod.isInitialized()).toBe(false);
-    });
   });
 
   describe('initAuth()', () => {
@@ -86,14 +83,6 @@ describe('auth-state', () => {
       expect(mod.getUser()!.image).toBeNull();
     });
 
-    it('sets isInitialized to true', async () => {
-      mockGetSession.mockResolvedValue(sessionWith(testUser));
-
-      await mod.initAuth();
-
-      expect(mod.isInitialized()).toBe(true);
-    });
-
     it('sets isAuthenticated to true when session has user', async () => {
       mockGetSession.mockResolvedValue(sessionWith(testUser));
 
@@ -119,12 +108,11 @@ describe('auth-state', () => {
       expect(mod.getUser()).toBeNull();
     });
 
-    it('sets isInitialized true even on getSession error', async () => {
+    it('sets user to null on getSession error', async () => {
       mockGetSession.mockRejectedValue(new Error('network'));
 
       await mod.initAuth();
 
-      expect(mod.isInitialized()).toBe(true);
       expect(mod.getUser()).toBeNull();
     });
   });
@@ -208,16 +196,6 @@ describe('auth-state', () => {
       expect(mod.isAuthenticated()).toBe(false);
     });
 
-    it('resets isInitialized to false', async () => {
-      mockGetSession.mockResolvedValue(sessionWith(testUser));
-      await mod.initAuth();
-
-      mockSignOut.mockResolvedValue(undefined);
-      await mod.signOut();
-
-      expect(mod.isInitialized()).toBe(false);
-    });
-
     it('clears initPromise so next initAuth re-fetches', async () => {
       mockGetSession.mockResolvedValue(sessionWith(testUser));
       await mod.initAuth();
@@ -240,7 +218,6 @@ describe('auth-state', () => {
 
       expect(mod.getUser()).toBeNull();
       expect(mod.isAuthenticated()).toBe(false);
-      expect(mod.isInitialized()).toBe(false);
     });
 
     it('notifies listeners when user is cleared', async () => {

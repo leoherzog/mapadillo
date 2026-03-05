@@ -8,6 +8,7 @@
  */
 import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
+import { sha256Hex } from '../lib/hash.js';
 
 export async function geocodeHandler(c: Context<AppEnv>) {
   const q = c.req.query('q')?.trim();
@@ -35,7 +36,7 @@ export async function geocodeHandler(c: Context<AppEnv>) {
     : '';
 
   // KV cache lookup
-  const cacheKey = `geocode:${await hashText(`${q.toLowerCase()}:${lang}:${limit}:${layer}`)}`;
+  const cacheKey = `geocode:${await sha256Hex(`${q.toLowerCase()}:${lang}:${limit}:${layer}`)}`;
   const cached = await c.env.API_CACHE.get(cacheKey);
   if (cached) {
     try {
@@ -51,7 +52,11 @@ export async function geocodeHandler(c: Context<AppEnv>) {
   url.searchParams.set('q', q);
   url.searchParams.set('lang', lang);
   url.searchParams.set('limit', String(limit));
-  if (layer) url.searchParams.set('layer', layer);
+  if (layer) {
+    for (const l of layer.split(',')) {
+      url.searchParams.append('layer', l);
+    }
+  }
 
   let upstream: Response;
   try {
@@ -90,14 +95,3 @@ export async function geocodeHandler(c: Context<AppEnv>) {
   return c.json(parsed);
 }
 
-/** SHA-256 hash, truncated to first 32 hex chars (128 bits). */
-async function hashText(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(input),
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 32);
-}

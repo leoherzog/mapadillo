@@ -22,6 +22,13 @@ export class MapPageBase extends LitElement {
   @state() protected _loading = true;
   @state() protected _error = '';
   @state() protected _mapReady = false;
+  @state() protected _routeDistances = new Map<string, number>();
+
+  protected get _totalDistance(): number {
+    let sum = 0;
+    for (const d of this._routeDistances.values()) sum += d;
+    return sum;
+  }
 
   protected _pendingSync = false;
   protected _mapController?: MapController;
@@ -89,7 +96,8 @@ export class MapPageBase extends LitElement {
     if (!this._mapReady || !this._mapController) return;
 
     try {
-      await this._mapController.drawItems(this._items);
+      const result = await this._mapController.drawItems(this._items);
+      this._routeDistances = result.distances;
     } catch (err) {
       console.warn('Map drawing failed:', err);
     }

@@ -9,6 +9,8 @@ import type { Stop } from '../services/maps.js';
 import { getSegmentRoute, type SegmentGeometry } from '../services/routing.js';
 import { isDraftCoord } from '../utils/geo.js';
 
+import { TRAVEL_MODES } from '../config/travel-modes.js';
+
 // ── Mode-specific line styles ────────────────────────────────────────────────
 
 interface LineStyle {
@@ -18,23 +20,29 @@ interface LineStyle {
   lineCap?: CanvasLineCap;
 }
 
-const LINE_STYLES: Record<string, LineStyle> = {
-  drive: { color: '#e05e00', width: 5, lineCap: 'round' },
-  walk: { color: '#16a34a', width: 4, dasharray: [0, 2], lineCap: 'round' },
-  bike: { color: '#0d9488', width: 4, dasharray: [3, 2], lineCap: 'round' },
-  plane: { color: '#7c3aed', width: 3, dasharray: [1, 2], lineCap: 'round' },
-  boat: { color: '#1e3a5f', width: 3, dasharray: [5, 3], lineCap: 'round' },
+const LINE_STYLE_OVERRIDES: Record<string, Omit<LineStyle, 'color'>> = {
+  drive: { width: 5, lineCap: 'round' },
+  walk:  { width: 4, dasharray: [0, 2], lineCap: 'round' },
+  bike:  { width: 4, dasharray: [3, 2], lineCap: 'round' },
+  plane: { width: 3, dasharray: [1, 2], lineCap: 'round' },
+  boat:  { width: 3, dasharray: [5, 3], lineCap: 'round' },
 };
+
+const LINE_STYLES: Record<string, LineStyle> = Object.fromEntries(
+  TRAVEL_MODES.map((m) => [m.mode, { color: m.hexColor, ...LINE_STYLE_OVERRIDES[m.mode] }]),
+);
 
 const DEFAULT_STYLE: LineStyle = { color: '#999', width: 3 };
 
 // ── Result type ──────────────────────────────────────────────────────────────
 
-export interface DrawItemsResult {
+interface DrawItemsResult {
   /** Per-route distances keyed by item id */
   distances: Map<string, number>;
   /** Sum of all route distances in meters */
   totalDistance: number;
+  /** Per-route geometries keyed by item id (for caching to D1) */
+  geometries: Map<string, SegmentGeometry>;
 }
 
 // ── Map Controller ───────────────────────────────────────────────────────────
@@ -61,7 +69,8 @@ export class MapController {
     this.clear();
 
     const distances = new Map<string, number>();
-    if (items.length === 0) return { distances, totalDistance: 0 };
+    const geometries = new Map<string, SegmentGeometry>();
+    if (items.length === 0) return { distances, totalDistance: 0, geometries };
 
     // Separate points and complete routes (filter out drafts with 0/null coords)
     const points = items.filter((i) => i.type === 'point' && !isDraftCoord(i.latitude, i.longitude));
@@ -93,7 +102,7 @@ export class MapController {
         }
       }),
     );
-    if (signal.aborted) return { distances, totalDistance: 0 };
+    if (signal.aborted) return { distances, totalDistance: 0, geometries };
 
     // Render route line layers + collect distances
     let totalDistance = 0;
@@ -101,6 +110,7 @@ export class MapController {
       if (!result) continue;
       this._renderSegmentLayer(result.route.id, result.mode, result.geometry);
       distances.set(result.route.id, result.geometry.distance);
+      geometries.set(result.route.id, result.geometry);
       totalDistance += result.geometry.distance;
     }
 
@@ -127,7 +137,7 @@ export class MapController {
     // Fit bounds to all visible coordinates
     this._fitBounds(items, routeResults.filter((r) => r != null));
 
-    return { distances, totalDistance };
+    return { distances, totalDistance, geometries };
   }
 
   /** Remove all layers, sources, and markers. */

@@ -1,6 +1,10 @@
 import { css } from 'lit';
 
 export const cardSharedStyles = css`
+  wa-card {
+    --spacing: var(--wa-space-xs) var(--wa-space-s);
+  }
+
   .drag-handle {
     cursor: grab;
     color: var(--wa-color-neutral-400);

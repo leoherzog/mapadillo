@@ -32,12 +32,8 @@ export interface Env {
   ADMIN_SECRET: string;
 }
 
-export interface SessionUser {
-  id: string;
-  name: string;
-  email: string;
-  image?: string | null;
-}
+export type { SessionUser } from '../../shared/types.js';
+import type { SessionUser } from '../../shared/types.js';
 
 export type AppEnv = {
   Bindings: Env;

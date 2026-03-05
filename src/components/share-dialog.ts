@@ -2,7 +2,7 @@
  * Share dialog — allows map owners to manage visibility, invite collaborators,
  * and view/remove existing shares.
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { ShareData } from '../services/maps.js';
 import {
@@ -35,13 +35,13 @@ export class ShareDialog extends LitElement {
 
     .section-label {
       font-weight: 700;
-      font-size: 0.9rem;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-neutral-700);
       margin: 0;
     }
 
     .visibility-desc {
-      font-size: 0.85rem;
+      font-size: var(--wa-font-size-xs);
       color: var(--wa-color-neutral-500);
     }
 
@@ -52,22 +52,22 @@ export class ShareDialog extends LitElement {
 
     .collaborator-name {
       font-weight: 600;
-      font-size: 0.9rem;
+      font-size: var(--wa-font-size-s);
     }
 
     .collaborator-email {
-      font-size: 0.8rem;
+      font-size: var(--wa-font-size-xs);
       color: var(--wa-color-neutral-500);
     }
 
     .pending-label {
       font-style: italic;
       color: var(--wa-color-neutral-400);
-      font-size: 0.85rem;
+      font-size: var(--wa-font-size-xs);
     }
 
     .empty-collab {
-      font-size: 0.85rem;
+      font-size: var(--wa-font-size-xs);
       color: var(--wa-color-neutral-400);
       text-align: center;
       padding: var(--wa-space-m);
@@ -100,7 +100,7 @@ export class ShareDialog extends LitElement {
               <wa-icon slot="icon" name="circle-info" library="fa-jelly"></wa-icon>
               ${this._error}
             </wa-callout>
-          ` : ''}
+          ` : nothing}
 
           <!-- Visibility toggle -->
           <div class="wa-stack wa-gap-xs">
@@ -153,7 +153,7 @@ export class ShareDialog extends LitElement {
                   </wa-button>
                 </wa-tooltip>
               </div>
-            ` : ''}
+            ` : nothing}
           </div>
 
           <wa-divider></wa-divider>
@@ -186,7 +186,7 @@ export class ShareDialog extends LitElement {
           <wa-icon name="user" library="fa-jelly" style="font-size: 1.2rem; color: var(--wa-color-neutral-400);"></wa-icon>
           <div class="collaborator-info">
             <div class="pending-label">Pending invite</div>
-            ${claimUrl ? html`<div class="collaborator-email" style="word-break: break-all;">${claimUrl}</div>` : ''}
+            ${claimUrl ? html`<div class="collaborator-email" style="word-break: break-all;">${claimUrl}</div>` : nothing}
           </div>
           <wa-badge variant=${share.role === 'editor' ? 'brand' : 'neutral'}>${share.role}</wa-badge>
           ${claimUrl ? html`
@@ -195,7 +195,7 @@ export class ShareDialog extends LitElement {
                 <wa-icon name="clone"></wa-icon>
               </wa-button>
             </wa-tooltip>
-          ` : ''}
+          ` : nothing}
           <wa-tooltip content="Remove">
             <wa-button appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
               <wa-icon name="trash"></wa-icon>
@@ -210,7 +210,7 @@ export class ShareDialog extends LitElement {
         <wa-icon name="user" library="fa-jelly" style="font-size: 1.2rem; color: var(--wa-color-brand-60);"></wa-icon>
         <div class="collaborator-info">
           <div class="collaborator-name">${share.user_name ?? 'Unknown'}</div>
-          ${share.user_email ? html`<div class="collaborator-email">${share.user_email}</div>` : ''}
+          ${share.user_email ? html`<div class="collaborator-email">${share.user_email}</div>` : nothing}
         </div>
         <wa-select
           size="small"
@@ -243,7 +243,6 @@ export class ShareDialog extends LitElement {
       }));
     } catch {
       this._error = 'Failed to update visibility. Please try again.';
-      this.requestUpdate();
     }
   }
 

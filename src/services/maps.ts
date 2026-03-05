@@ -5,55 +5,18 @@
 import { apiDelete, apiGet, apiPost, apiPut } from './api-client';
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — base types from shared module, composite types local
 // ---------------------------------------------------------------------------
 
-export interface MapData {
-  id: string;
-  owner_id: string;
-  name: string;
-  family_name: string | null;
-  visibility: string;
-  style_preferences: string;
-  units: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Stop {
-  id: string;
-  map_id: string;
-  position: number;
-  type: 'point' | 'route';
-  name: string;
-  label: string | null;
-  latitude: number;
-  longitude: number;
-  icon: string | null;
-  travel_mode: string | null;
-  dest_name: string | null;
-  dest_latitude: number | null;
-  dest_longitude: number | null;
-  created_at: string;
-}
+export type { MapData, Stop, ShareData, MapRole } from '../../shared/types.js';
+import type { MapData, Stop, ShareData, MapRole } from '../../shared/types.js';
 
 export interface MapWithStops extends MapData {
   stops: Stop[];
 }
 
 export interface MapWithRole extends MapWithStops {
-  role: 'owner' | 'editor' | 'viewer' | 'public';
-}
-
-export interface ShareData {
-  id: string;
-  user_id: string | null;
-  user_name: string | null;
-  user_email: string | null;
-  role: 'viewer' | 'editor';
-  claim_token: string | null;
-  claimed: boolean;
-  created_at: string;
+  role: MapRole;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +82,7 @@ export function updateStop(
     dest_name?: string;
     dest_lat?: number;
     dest_lng?: number;
+    route_geometry?: string | null;
   },
 ): Promise<Stop> {
   return apiPut<Stop>(`${BASE}/${mapId}/stops/${stopId}`, data);

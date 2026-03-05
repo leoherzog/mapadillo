@@ -6,13 +6,15 @@
  * Bubbles `item-update`, `item-update-batch`, and `item-delete` events
  * from child cards.
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { PropertyValues } from 'lit';
 import type { Stop } from '../services/maps.js';
 import './point-card.js';
 import './route-card.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+
+const _dragBound = new WeakSet<HTMLElement>();
 
 @customElement('item-list')
 export class ItemList extends LitElement {
@@ -80,7 +82,7 @@ export class ItemList extends LitElement {
         ${this.items.map((item, i) => html`
           ${this._dropTargetIndex === i && this._draggedIndex !== i && this._draggedIndex !== i - 1
             ? html`<div class="drop-indicator"></div>`
-            : ''}
+            : nothing}
           <div
             class="card-wrapper ${this._draggedIndex === i ? 'dragging' : ''}"
           >
@@ -98,7 +100,7 @@ export class ItemList extends LitElement {
           </div>
           ${this._dropTargetIndex === this.items.length && i === this.items.length - 1
             ? html`<div class="drop-indicator"></div>`
-            : ''}
+            : nothing}
         `)}
       </div>
     `;
@@ -133,8 +135,8 @@ export class ItemList extends LitElement {
       if (!handle) return;
 
       // Avoid duplicate listeners by marking
-      if ((handle as HTMLElement & { __dragBound?: boolean }).__dragBound) return;
-      (handle as HTMLElement & { __dragBound?: boolean }).__dragBound = true;
+      if (_dragBound.has(handle)) return;
+      _dragBound.add(handle);
 
       handle.addEventListener('pointerdown', (e: PointerEvent) => {
         if (e.button !== 0) return; // left/primary button only

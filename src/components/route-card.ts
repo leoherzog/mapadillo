@@ -14,14 +14,11 @@ import './travel-mode-picker.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord, formatDistance } from '../utils/geo.js';
+import { TRAVEL_MODES } from '../config/travel-modes.js';
 
-const MODE_COLORS: Record<string, string> = {
-  drive: 'var(--wa-color-brand-50)',
-  walk: 'var(--wa-color-green-50)',
-  bike: 'var(--wa-color-cyan-50)',
-  plane: 'var(--wa-color-blue-50)',
-  boat: 'var(--wa-color-indigo-70)',
-};
+const MODE_COLORS: Record<string, string> = Object.fromEntries(
+  TRAVEL_MODES.map((m) => [m.mode, m.cssColor]),
+);
 
 @customElement('route-card')
 export class RouteCard extends LitElement {
@@ -36,10 +33,6 @@ export class RouteCard extends LitElement {
   static styles = [waUtilities, cardSharedStyles, css`
     :host {
       display: block;
-    }
-
-    wa-card {
-      --spacing: var(--wa-space-xs) var(--wa-space-s);
     }
 
     wa-card::part(base) {
@@ -114,7 +107,7 @@ export class RouteCard extends LitElement {
             <div class="distance wa-cluster wa-gap-xs wa-align-items-center">
               ${formatDistance(this.distance, this.units)}
             </div>
-          ` : ''}
+          ` : nothing}
         </wa-card>
       `;
     }
@@ -186,7 +179,7 @@ export class RouteCard extends LitElement {
           <div class="distance wa-cluster wa-gap-xs wa-align-items-center">
             ${formatDistance(this.distance, this.units)}
           </div>
-        ` : ''}
+        ` : nothing}
       </wa-card>
     `;
   }

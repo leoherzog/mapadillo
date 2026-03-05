@@ -12,7 +12,10 @@ import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import type { MapWithStops } from '../services/maps.js';
 import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
+import { MAP_STYLE_URL } from '../config/map.js';
+import { TRAVEL_MODES } from '../config/travel-modes.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
@@ -20,9 +23,11 @@ export class MapCard extends LitElement {
   @property() roleBadge: string | null = null;
 
   private _mapInstance?: maplibregl.Map;
+  private _resizeObserver?: ResizeObserver;
 
   static styles = [
     waUtilities,
+    cardSharedStyles,
     unsafeCSS(maplibreCss),
     css`
       :host {
@@ -64,14 +69,6 @@ export class MapCard extends LitElement {
         font-size: var(--wa-font-size-s);
         color: var(--wa-color-neutral-400);
       }
-
-      .meta wa-button::part(base) {
-        color: var(--wa-color-neutral-400);
-      }
-
-      .meta wa-button::part(base):hover {
-        color: var(--wa-color-danger-50);
-      }
     `,
   ];
 
@@ -81,7 +78,7 @@ export class MapCard extends LitElement {
 
     this._mapInstance = new maplibregl.Map({
       container,
-      style: 'https://tiles.openfreemap.org/styles/bright',
+      style: MAP_STYLE_URL,
       center: [0, 20],
       zoom: 2,
       interactive: false,
@@ -91,10 +88,17 @@ export class MapCard extends LitElement {
     this._mapInstance.on('load', () => {
       this._addMarkers();
     });
+
+    this._resizeObserver = new ResizeObserver(() => {
+      this._mapInstance?.resize();
+    });
+    this._resizeObserver.observe(container);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = undefined;
     this._mapInstance?.remove();
     this._mapInstance = undefined;
   }
@@ -104,6 +108,47 @@ export class MapCard extends LitElement {
 
     const bounds = new maplibregl.LngLatBounds();
     const color = getComputedStyle(this).getPropertyValue('--wa-color-brand-50').trim() || '#ff6b00';
+
+    // Build mode → hex color lookup
+    const modeColors: Record<string, string> = Object.fromEntries(
+      TRAVEL_MODES.map((m) => [m.mode, m.hexColor]),
+    );
+
+    // Render cached route geometry lines
+    for (const stop of this.map.stops) {
+      if (stop.type !== 'route' || !stop.route_geometry) continue;
+      try {
+        const geometry = JSON.parse(stop.route_geometry) as { coordinates: [number, number][] };
+        if (!geometry.coordinates?.length) continue;
+
+        const sourceId = `card-route-${stop.id}`;
+        this._mapInstance.addSource(sourceId, {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: geometry.coordinates },
+          },
+        });
+        this._mapInstance.addLayer({
+          id: sourceId,
+          type: 'line',
+          source: sourceId,
+          paint: {
+            'line-color': modeColors[stop.travel_mode ?? 'drive'] ?? color,
+            'line-width': 3,
+            'line-opacity': 0.7,
+          },
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+        });
+
+        for (const coord of geometry.coordinates) {
+          bounds.extend(coord);
+        }
+      } catch {
+        // Skip malformed geometry
+      }
+    }
 
     for (const stop of this.map.stops) {
       if (isDraftCoord(stop.latitude, stop.longitude)) continue;
@@ -152,7 +197,7 @@ export class MapCard extends LitElement {
         <div class="meta wa-split wa-align-items-center">
           <span>${itemCount} item${itemCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
           ${!this.roleBadge ? html`
-            <wa-button appearance="plain" size="small" @click=${this._onDelete}>
+            <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
               <wa-icon name="trash" label="Delete map"></wa-icon>
             </wa-button>
           ` : ''}

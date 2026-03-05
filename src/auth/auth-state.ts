@@ -17,7 +17,6 @@ export interface User {
 // ── Internal state ────────────────────────────────────────────────────────
 
 let _user: User | null = null;
-let _initialized = false;
 let _initPromise: Promise<User | null> | null = null;
 const _listeners = new Set<() => void>();
 
@@ -41,10 +40,6 @@ export function isAuthenticated(): boolean {
   return _user !== null;
 }
 
-export function isInitialized(): boolean {
-  return _initialized;
-}
-
 /**
  * Check the current session with the server.
  * Safe to call multiple times — deduplicates concurrent calls.
@@ -61,7 +56,6 @@ export function initAuth(): Promise<User | null> {
  */
 export async function refreshAuth(): Promise<User | null> {
   _initPromise = null;
-  _initialized = false;
   return initAuth();
 }
 
@@ -74,7 +68,6 @@ export async function signOut(): Promise<void> {
   }
   _setUser(null);
   _initPromise = null;
-  _initialized = false;
 }
 
 // ── Private ───────────────────────────────────────────────────────────────
@@ -95,6 +88,5 @@ async function _doInit(): Promise<User | null> {
   } catch {
     _setUser(null);
   }
-  _initialized = true;
   return _user;
 }

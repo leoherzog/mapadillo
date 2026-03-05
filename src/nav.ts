@@ -23,11 +23,21 @@ export function navigateTo(path: string): void {
 
 /**
  * Returns a click handler that prevents default and navigates via the router.
+ * Memoized per path so that Lit receives a stable function reference and
+ * does not re-bind the event listener on every render.
+ *
  * Usage: `@click=${navClick('/dashboard')}`
  */
-export function navClick(path: string) {
-  return (e: Event) => {
-    e.preventDefault();
-    navigateTo(path);
-  };
+const _navClickCache = new Map<string, (e: Event) => void>();
+
+export function navClick(path: string): (e: Event) => void {
+  let handler = _navClickCache.get(path);
+  if (!handler) {
+    handler = (e: Event) => {
+      e.preventDefault();
+      navigateTo(path);
+    };
+    _navClickCache.set(path, handler);
+  }
+  return handler;
 }

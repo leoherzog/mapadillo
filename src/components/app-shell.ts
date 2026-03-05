@@ -10,6 +10,7 @@ import { Router } from '../router.js';
 import { requireAuth } from '../auth/auth-guard.js';
 import { getUser, onAuthChange, type User } from '../auth/auth-state.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { navClick } from '../nav.js';
 
 // Page imports
 import '../pages/landing-page.js';
@@ -100,15 +101,6 @@ export class AppShell extends LitElement {
       color: var(--wa-color-neutral-500);
     }
 
-    .footer-inner a {
-      color: inherit;
-      text-underline-offset: 2px;
-    }
-
-    .footer-inner a:hover {
-      color: var(--wa-color-brand-60, #e05e00);
-    }
-
     wa-page::part(navigation-toggle),
     wa-page::part(navigation) {
       display: none;
@@ -132,7 +124,7 @@ export class AppShell extends LitElement {
     return html`
       <wa-page disable-sticky="header">
         <div slot="header" class="header-inner wa-cluster wa-align-items-center wa-gap-m">
-          <a class="logo wa-cluster wa-align-items-center wa-gap-xs" href="/" @click=${this._navHome}>
+          <a class="logo wa-cluster wa-align-items-center wa-gap-xs" href="/" @click=${navClick('/')}>
             <wa-icon name="map"></wa-icon>
             Mapadillo
           </a>
@@ -145,7 +137,7 @@ export class AppShell extends LitElement {
                     variant="neutral"
                     size="small"
                     href="/dashboard"
-                    @click=${this._navDashboard}
+                    @click=${navClick('/dashboard')}
                   >My Trips</wa-button>
                   <user-menu .user=${this._user}></user-menu>
                 `
@@ -155,7 +147,7 @@ export class AppShell extends LitElement {
                     variant="brand"
                     appearance="outlined"
                     href="/sign-in"
-                    @click=${this._navSignIn}
+                    @click=${navClick('/sign-in')}
                   >
                     Sign In
                   </wa-button>
@@ -166,28 +158,12 @@ export class AppShell extends LitElement {
         ${this.router.outlet}
 
         <div slot="footer" class="footer-inner">
-          &copy; ${new Date().getFullYear()} Mapadillo &mdash;
-          Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>
-          &middot; Tiles by <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>
+          &copy; ${new Date().getFullYear()} Mapadillo
         </div>
       </wa-page>
     `;
   }
 
-  private _navHome = (e: Event) => {
-    e.preventDefault();
-    this.router.navigate('/');
-  };
-
-  private _navDashboard = (e: Event) => {
-    e.preventDefault();
-    this.router.navigate('/dashboard');
-  };
-
-  private _navSignIn = (e: Event) => {
-    e.preventDefault();
-    this.router.navigate('/sign-in');
-  };
 }
 
 declare global {

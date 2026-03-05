@@ -9,7 +9,8 @@
  */
 
 import { apiPost } from './api-client.js';
-import { haversineDistance, toRad, toDeg } from '../utils/geo.js';
+import { haversineAngle, haversineDistance, toRad, toDeg } from '../utils/geo.js';
+import { TRAVEL_MODES } from '../config/travel-modes.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,12 +21,10 @@ export interface SegmentGeometry {
   distance: number;
 }
 
-/** ORS travel mode → ORS profile mapping */
-const MODE_TO_PROFILE: Record<string, string> = {
-  drive: 'driving-car',
-  walk: 'foot-walking',
-  bike: 'cycling-regular',
-};
+/** ORS travel mode -> ORS profile mapping (derived from shared config) */
+const MODE_TO_PROFILE: Record<string, string> = Object.fromEntries(
+  TRAVEL_MODES.filter((m) => m.orsProfile).map((m) => [m.mode, m.orsProfile!]),
+);
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -121,12 +120,7 @@ function greatCircleArc(
   const lat2 = toRad(end[1]);
 
   // Haversine distance (angular)
-  const d = 2 * Math.asin(
-    Math.sqrt(
-      Math.pow(Math.sin((lat2 - lat1) / 2), 2) +
-      Math.cos(lat1) * Math.cos(lat2) * Math.pow(Math.sin((lon2 - lon1) / 2), 2),
-    ),
-  );
+  const d = haversineAngle(start, end);
 
   if (d < 1e-10) {
     // Points are essentially the same
