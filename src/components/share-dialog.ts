@@ -116,7 +116,7 @@ export class ShareDialog extends LitElement {
               </div>
               <wa-switch
                 .checked=${this.visibility === 'public'}
-                @wa-change=${this._onVisibilityToggle}
+                @change=${this._onVisibilityToggle}
               ></wa-switch>
             </div>
           </div>
@@ -128,7 +128,7 @@ export class ShareDialog extends LitElement {
             <p class="section-label">Invite Link</p>
             <wa-radio-group
               .value=${this._linkRole}
-              @wa-change=${this._onLinkRoleChange}
+              @change=${this._onLinkRoleChange}
             >
               <wa-radio appearance="button" value="viewer">Viewer</wa-radio>
               <wa-radio appearance="button" value="editor">Editor</wa-radio>
@@ -215,7 +215,7 @@ export class ShareDialog extends LitElement {
         <wa-select
           size="small"
           .value=${share.role}
-          @wa-change=${(e: Event) => this._onRoleChange(share.id, (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor')}
+          @change=${(e: Event) => this._onRoleChange(share.id, (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor')}
           style="width: 110px;"
         >
           <wa-option value="viewer">Viewer</wa-option>

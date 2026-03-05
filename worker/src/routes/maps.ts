@@ -24,6 +24,14 @@ const VALID_TRAVEL_MODES = new Set(['drive', 'walk', 'bike', 'plane', 'boat']);
 const VALID_TYPES = new Set(['point', 'route']);
 const VALID_UNITS = new Set(['km', 'mi']);
 
+function isValidLat(v: number): boolean {
+  return isFinite(v) && v >= -90 && v <= 90;
+}
+
+function isValidLng(v: number): boolean {
+  return isFinite(v) && v >= -180 && v <= 180;
+}
+
 // ── Role-based access control ────────────────────────────────────────────────
 
 export type MapRole = 'owner' | 'editor' | 'viewer' | 'public' | null;
@@ -71,7 +79,7 @@ const maps = new Hono<AppEnv>();
 
 // POST / — create map
 maps.post('/', async (c) => {
-  const body = await c.req.json<{ name?: string; family_name?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ name?: string; family_name?: string }>().catch((): { name?: string; family_name?: string } => ({}));
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
@@ -154,7 +162,7 @@ maps.put('/:id', async (c) => {
   if (!result) return c.json({ error: 'Map not found' }, 404);
   if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
-  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+  const body = await c.req.json<Record<string, unknown>>().catch((): Record<string, unknown> => ({}));
 
   const allowed = ['name', 'family_name', 'style_preferences', 'units'] as const;
   const updates: string[] = [];
@@ -222,7 +230,7 @@ maps.put('/:id/stops/reorder', async (c) => {
   if (!result) return c.json({ error: 'Map not found' }, 404);
   if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
-  const body = await c.req.json<{ order?: string[] }>().catch(() => ({}));
+  const body = await c.req.json<{ order?: string[] }>().catch((): { order?: string[] } => ({}));
   if (!body.order || !Array.isArray(body.order)) {
     return c.json({ error: 'order must be an array of stop IDs' }, 400);
   }
@@ -250,6 +258,12 @@ maps.put('/:id/stops/reorder', async (c) => {
     c.env.DB.prepare('UPDATE stops SET position = ? WHERE id = ?').bind(i, sid),
   );
 
+  // Enforce first-stop invariant: position 0 must never have a travel_mode
+  stmts.push(
+    c.env.DB.prepare('UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0')
+      .bind(result.map.id),
+  );
+
   // Include updated_at in the same atomic batch
   stmts.push(
     c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
@@ -273,7 +287,7 @@ maps.post('/:id/stops', async (c) => {
   if (!result) return c.json({ error: 'Map not found' }, 404);
   if (!canEdit(result.role)) return c.json({ error: 'Forbidden' }, 403);
 
-  const body = await c.req.json<{
+  type StopBody = {
     type?: string;
     name?: string;
     lat?: number;
@@ -284,7 +298,8 @@ maps.post('/:id/stops', async (c) => {
     dest_name?: string;
     dest_lat?: number;
     dest_lng?: number;
-  }>().catch(() => ({}));
+  };
+  const body = await c.req.json<StopBody>().catch((): StopBody => ({}));
 
   const type = body.type ?? 'point';
   if (!VALID_TYPES.has(type)) {
@@ -295,6 +310,12 @@ maps.post('/:id/stops', async (c) => {
   }
   if (typeof body.lat !== 'number' || typeof body.lng !== 'number') {
     return c.json({ error: 'lat and lng are required numbers' }, 400);
+  }
+  if (!isValidLat(body.lat)) {
+    return c.json({ error: 'lat must be a finite number between -90 and 90' }, 400);
+  }
+  if (!isValidLng(body.lng)) {
+    return c.json({ error: 'lng must be a finite number between -180 and 180' }, 400);
   }
   if (body.icon && !VALID_ICONS.has(body.icon)) {
     return c.json({ error: `Invalid icon: ${body.icon}` }, 400);
@@ -318,6 +339,12 @@ maps.post('/:id/stops', async (c) => {
   if (body.dest_lng != null && typeof body.dest_lng !== 'number') {
     return c.json({ error: 'dest_lng must be a number' }, 400);
   }
+  if (typeof body.dest_lat === 'number' && !isValidLat(body.dest_lat)) {
+    return c.json({ error: 'dest_lat must be a finite number between -90 and 90' }, 400);
+  }
+  if (typeof body.dest_lng === 'number' && !isValidLng(body.dest_lng)) {
+    return c.json({ error: 'dest_lng must be a finite number between -180 and 180' }, 400);
+  }
 
   // Auto-increment position
   const maxPos = await c.env.DB.prepare(
@@ -325,7 +352,8 @@ maps.post('/:id/stops', async (c) => {
   ).bind(result.map.id).first<{ max_pos: number }>();
   const position = (maxPos?.max_pos ?? -1) + 1;
 
-  const travelMode = type === 'route' ? (body.travel_mode ?? 'drive') : null;
+  // First-stop invariant: position 0 must never have a travel_mode
+  const travelMode = type === 'route' && position > 0 ? (body.travel_mode ?? 'drive') : null;
 
   const stopId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -381,11 +409,13 @@ maps.put('/:id/stops/:stopId', async (c) => {
   }
   if ('lat' in body) {
     if (typeof body.lat !== 'number') return c.json({ error: 'lat must be a number' }, 400);
+    if (!isValidLat(body.lat as number)) return c.json({ error: 'lat must be a finite number between -90 and 90' }, 400);
     updates.push('latitude = ?');
     values.push(body.lat);
   }
   if ('lng' in body) {
     if (typeof body.lng !== 'number') return c.json({ error: 'lng must be a number' }, 400);
+    if (!isValidLng(body.lng as number)) return c.json({ error: 'lng must be a finite number between -180 and 180' }, 400);
     updates.push('longitude = ?');
     values.push(body.lng);
   }
@@ -403,6 +433,9 @@ maps.put('/:id/stops/:stopId', async (c) => {
     if (stop.type === 'point' && body.travel_mode !== null) {
       return c.json({ error: 'Points cannot have a travel_mode' }, 400);
     }
+    if (stop.position === 0 && body.travel_mode !== null) {
+      return c.json({ error: 'First stop cannot have a travel_mode' }, 400);
+    }
     updates.push('travel_mode = ?');
     values.push(body.travel_mode ?? null);
   }
@@ -417,12 +450,18 @@ maps.put('/:id/stops/:stopId', async (c) => {
     if (body.dest_lat !== null && typeof body.dest_lat !== 'number') {
       return c.json({ error: 'dest_lat must be a number' }, 400);
     }
+    if (typeof body.dest_lat === 'number' && !isValidLat(body.dest_lat)) {
+      return c.json({ error: 'dest_lat must be a finite number between -90 and 90' }, 400);
+    }
     updates.push('dest_latitude = ?');
     values.push(body.dest_lat ?? null);
   }
   if ('dest_lng' in body) {
     if (body.dest_lng !== null && typeof body.dest_lng !== 'number') {
       return c.json({ error: 'dest_lng must be a number' }, 400);
+    }
+    if (typeof body.dest_lng === 'number' && !isValidLng(body.dest_lng)) {
+      return c.json({ error: 'dest_lng must be a finite number between -180 and 180' }, 400);
     }
     updates.push('dest_longitude = ?');
     values.push(body.dest_lng ?? null);
@@ -464,13 +503,16 @@ maps.delete('/:id/stops/:stopId', async (c) => {
     return c.json({ error: 'Stop not found' }, 404);
   }
 
-  // Atomic: delete, re-compact positions, touch map
+  // Atomic: delete, re-compact positions, null first-stop travel_mode, touch map
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM stops WHERE id = ?').bind(stopId),
     c.env.DB.prepare(
       'UPDATE stops SET position = position - 1 WHERE map_id = ? AND position > ?',
     ).bind(result.map.id, stop.position),
+    c.env.DB.prepare(
+      'UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0',
+    ).bind(result.map.id),
     c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
       .bind(now, result.map.id),
   ]);

@@ -12,7 +12,7 @@ beforeAll(async () => {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS "verification" (id TEXT PRIMARY KEY NOT NULL, identifier TEXT NOT NULL, value TEXT NOT NULL, expiresAt INTEGER NOT NULL, createdAt INTEGER, updatedAt INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS "passkey" (id TEXT PRIMARY KEY NOT NULL, name TEXT, publicKey TEXT NOT NULL, userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE, counter INTEGER NOT NULL DEFAULT 0, deviceType TEXT, backedUp INTEGER NOT NULL DEFAULT 0, transports TEXT, credentialID TEXT NOT NULL UNIQUE, createdAt INTEGER, aaguid TEXT)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS maps (id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE, name TEXT NOT NULL, family_name TEXT, visibility TEXT NOT NULL DEFAULT \'private\', style_preferences TEXT DEFAULT \'{}\', units TEXT NOT NULL DEFAULT \'km\', created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), updated_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'),
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS stops (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, label TEXT, latitude REAL NOT NULL, longitude REAL NOT NULL, icon TEXT, travel_mode TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS stops (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, label TEXT, latitude REAL NOT NULL, longitude REAL NOT NULL, icon TEXT, travel_mode TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), type TEXT NOT NULL DEFAULT \'point\', dest_name TEXT, dest_latitude REAL, dest_longitude REAL)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS map_shares (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE, user_id TEXT REFERENCES "user"(id), role TEXT NOT NULL DEFAULT \'viewer\', claim_token TEXT UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), UNIQUE(map_id, user_id))'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_stops_map_id ON stops(map_id)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_maps_owner_id ON maps(owner_id)'),
@@ -24,6 +24,12 @@ beforeAll(async () => {
  * Returns the Hono Response directly (no real HTTP round-trip).
  */
 function request(path: string, init?: RequestInit) {
+  // Inject Origin header for state-changing requests (CSRF protection)
+  if (init?.method && init.method !== 'GET' && init.method !== 'HEAD') {
+    const headers = new Headers(init.headers);
+    if (!headers.has('origin')) headers.set('origin', 'http://localhost');
+    init = { ...init, headers };
+  }
   return app.request(path, init, env);
 }
 
@@ -91,7 +97,7 @@ async function createMap(cookie: string, name = 'Test Map'): Promise<string> {
 /** Create a stop via the API and return its id */
 async function createStop(
   cookie: string, mapId: string,
-  data: { name: string; lat: number; lng: number; travel_mode?: string; icon?: string },
+  data: { name: string; lat: number; lng: number; travel_mode?: string; icon?: string; type?: string },
 ): Promise<string> {
   const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', data, cookie);
   const body = (await res.json()) as { id: string };
@@ -111,10 +117,10 @@ describe('GET /api/health', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
   });
 
-  it('returns status ok with milestone 6', async () => {
+  it('returns status ok with milestone 7', async () => {
     const res = await request('/api/health');
     const body = await res.json();
-    expect(body).toEqual({ status: 'ok', milestone: 6 });
+    expect(body).toEqual({ status: 'ok', milestone: 7 });
   });
 });
 
@@ -401,9 +407,9 @@ describe('Stop CRUD', () => {
       name: 'Berlin', lat: 52.52, lng: 13.405,
     }, cookie);
 
-    // Add second stop
+    // Add second stop (route type to allow travel_mode)
     const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
-      name: 'Munich', lat: 48.14, lng: 11.58, travel_mode: 'drive',
+      name: 'Munich', lat: 48.14, lng: 11.58, travel_mode: 'drive', type: 'route',
     }, cookie);
     expect(res.status).toBe(201);
     const body = (await res.json()) as { position: number; travel_mode: string };
@@ -492,8 +498,8 @@ describe('Stop CRUD', () => {
 
     // Add 3 stops
     await createStop(cookie, mapId, { name: 'A', lat: 50, lng: 10 });
-    const middleId = await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive' });
-    await createStop(cookie, mapId, { name: 'C', lat: 52, lng: 12, travel_mode: 'walk' });
+    const middleId = await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive', type: 'route' });
+    await createStop(cookie, mapId, { name: 'C', lat: 52, lng: 12, travel_mode: 'walk', type: 'route' });
 
     // Verify 3 stops
     const beforeRes = await request(`/api/maps/${mapId}`, { headers: { cookie } });
@@ -536,7 +542,7 @@ describe('Stop reorder', () => {
     for (const [i, city] of ['A', 'B', 'C'].entries()) {
       const sid = await createStop(cookie, mapId, {
         name: city, lat: 50 + i, lng: 10 + i,
-        travel_mode: i === 0 ? undefined : 'drive',
+        ...(i > 0 ? { travel_mode: 'drive', type: 'route' } : {}),
       });
       ids.push(sid);
     }
@@ -557,7 +563,7 @@ describe('Stop reorder', () => {
     const mapId = await createMap(cookie);
 
     const id1 = await createStop(cookie, mapId, { name: 'A', lat: 50, lng: 10 });
-    const id2 = await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive' });
+    const id2 = await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive', type: 'route' });
 
     // Reverse: B becomes first
     await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', {
@@ -594,7 +600,7 @@ describe('Stop reorder', () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
     const id1 = await createStop(cookie, mapId, { name: 'A', lat: 50, lng: 10 });
-    await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive' });
+    await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive', type: 'route' });
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', {
       order: [id1],
@@ -629,8 +635,9 @@ describe('First stop travel_mode nulling', () => {
     const mapId = await createMap(cookie);
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
-      name: 'First', lat: 50, lng: 10, travel_mode: 'drive',
+      name: 'First', lat: 50, lng: 10, travel_mode: 'drive', type: 'route',
     }, cookie);
+    expect(res.status).toBe(201);
     const stop = (await res.json()) as { travel_mode: string | null };
     expect(stop.travel_mode).toBeNull();
   });
@@ -640,7 +647,7 @@ describe('First stop travel_mode nulling', () => {
     const mapId = await createMap(cookie);
 
     const s1Id = await createStop(cookie, mapId, { name: 'First', lat: 50, lng: 10 });
-    await createStop(cookie, mapId, { name: 'Second', lat: 51, lng: 11, travel_mode: 'drive' });
+    await createStop(cookie, mapId, { name: 'Second', lat: 51, lng: 11, travel_mode: 'drive', type: 'route' });
 
     // Delete first stop
     await request(`/api/maps/${mapId}/stops/${s1Id}`, { method: 'DELETE', headers: { cookie } });

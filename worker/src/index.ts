@@ -8,7 +8,7 @@
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 6: sharing & access control.
+ * Milestone 7: export (PDF / image).
  */
 
 import { Hono } from 'hono';
@@ -39,7 +39,7 @@ app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 6 });
+  return c.json({ status: 'ok', milestone: 7 });
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
@@ -59,7 +59,38 @@ app.use('/api/auth/*', async (c, next) => {
 // Use app.all so PUT/DELETE/OPTIONS (passkey plugin, sign-out) are handled.
 app.all('/api/auth/*', async (c) => {
   const auth = getAuth(c.env);
-  return auth.handler(c.req.raw);
+  return auth!.handler(c.req.raw);
+});
+
+// ── CSRF protection (Origin header check) ────────────────────────────────
+// Validate Origin header on state-changing requests to prevent cross-site
+// request forgery. Skips webhooks (external services) and auth routes
+// (Better Auth handles its own CSRF).
+app.use('/api/*', async (c, next) => {
+  const method = c.req.method;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return next();
+  }
+  if (c.req.path.startsWith('/api/webhooks/') || c.req.path.startsWith('/api/auth/')) {
+    return next();
+  }
+
+  const expectedOrigin = new URL(c.env.BETTER_AUTH_URL).origin;
+  const origin = c.req.header('origin');
+  if (origin) {
+    if (origin !== expectedOrigin) return c.json({ error: 'Forbidden' }, 403);
+    return next();
+  }
+  const referer = c.req.header('referer');
+  if (referer) {
+    try {
+      if (new URL(referer).origin !== expectedOrigin) return c.json({ error: 'Forbidden' }, 403);
+      return next();
+    } catch {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+  }
+  return c.json({ error: 'Forbidden' }, 403);
 });
 
 // ── Claim share route (requires auth, outside /api/maps) ─────────────────
@@ -76,7 +107,7 @@ app.post('/api/shares/claim/:token', requireAuth, async (c) => {
 
   const share = await c.env.DB.prepare(
     'SELECT * FROM map_shares WHERE claim_token = ?',
-  ).bind(token).first<{ id: string; map_id: string; user_id: string | null; role: string }>();
+  ).bind(token).first<{ id: string; map_id: string; user_id: string | null; role: string; claim_token: string | null }>();
 
   if (!share) {
     return c.json({ error: 'Invalid or expired invite link' }, 404);
@@ -151,6 +182,15 @@ app.use('/api/maps/*', async (c, next) => {
   const method = c.req.method;
   // Match GET /api/maps/<uuid> but not /api/maps/<uuid>/stops etc.
   if (method === 'GET' && /^\/api\/maps\/[^/]+$/.test(path)) {
+    // Rate limit unauthenticated public map access: 60 req/min per IP
+    const ip =
+      c.req.header('cf-connecting-ip') ??
+      c.req.header('x-forwarded-for') ??
+      'unknown';
+    const { success } = await c.env.RATE_LIMITER_PUBLIC.limit({ key: `public-map:${ip}` });
+    if (!success) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
     return optionalAuth(c, next);
   }
   return requireAuth(c, next);

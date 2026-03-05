@@ -24,8 +24,8 @@ import { passkey } from '@better-auth/passkey';
 import { D1Dialect } from 'kysely-d1';
 import type { Env } from './types.js';
 
-type AuthInstance = ReturnType<typeof betterAuth>;
-let _auth: AuthInstance | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _auth: any = null;
 // Tracks the DB binding reference used to create _auth. In a normal Workers
 // isolate, env.DB is a stable binding object: the same reference is passed to
 // every request within a single isolate lifetime, so _cachedDB === env.DB will
@@ -52,15 +52,30 @@ export function getAuth(env: Env) {
       basePath: '/api/auth',
       trustedOrigins: [url.origin],
       /**
-       * Email + password is enabled to support the passkey registration
-       * flow: signUp.email creates the account, then passkey.addPasskey
-       * binds a WebAuthn credential to it.
+       * Email + password is enabled ONLY to support the passkey registration
+       * flow: signUp.email() creates the account, then passkey.addPasskey()
+       * binds a WebAuthn credential to it. It is NOT intended as a standalone
+       * login method.
        *
-       * No email verification is required — accepted risk for MVP.
-       * TODO: Consider adding requireEmailVerification in a future
-       * milestone to prevent account-enumeration and reduce spam.
+       * autoSignIn must remain true because the passkey registration flow
+       * (signUp.email -> addPasskey) requires an active session — addPasskey()
+       * needs to know which user to bind the credential to. The password is a
+       * random UUID generated client-side, so it is unguessable, and no
+       * password-reset flow is exposed.
+       *
+       * TODO: Enable requireEmailVerification: true once an email service
+       * (e.g. Mailchannels, SES) is integrated. This closes the email-based
+       * account-linking attack path.
        */
-      emailAndPassword: { enabled: true },
+      emailAndPassword: { enabled: true, autoSignIn: true },
+      emailVerification: {
+        sendOnSignUp: false,
+        requireEmailVerification: false, // TODO: set true once email service is wired up
+        sendVerificationEmail: async () => {
+          // No-op: email service not yet integrated. Wire this to a real
+          // provider (Mailchannels, SES) before setting sendOnSignUp and requireEmailVerification to true.
+        },
+      },
       socialProviders: {
         google: {
           clientId: env.GOOGLE_CLIENT_ID,

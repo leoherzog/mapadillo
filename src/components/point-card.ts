@@ -88,7 +88,7 @@ export class PointCard extends LitElement {
               size="small"
               .value=${this.item.name}
               placeholder="Point name"
-              @wa-input=${this._onNameInput}
+              @input=${this._onNameInput}
             ></wa-input>
           ` : html`
             <span class="name-input" style="font-weight: 600; font-size: var(--wa-font-size-s); color: var(--wa-color-neutral-400);">New Point</span>
@@ -103,7 +103,7 @@ export class PointCard extends LitElement {
               size="small"
               .value=${this.item.label ?? ''}
               placeholder="Add a label..."
-              @wa-input=${this._onLabelInput}
+              @input=${this._onLabelInput}
             ></wa-input>
           </div>
           <div class="coords wa-cluster wa-align-items-center wa-gap-xs">

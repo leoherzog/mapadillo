@@ -40,6 +40,9 @@ import '@web.awesome.me/webawesome-pro/dist/components/details/details.js';
 import '@web.awesome.me/webawesome-pro/dist/components/radio/radio.js';
 import '@web.awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js';
 import '@web.awesome.me/webawesome-pro/dist/components/relative-time/relative-time.js';
+import '@web.awesome.me/webawesome-pro/dist/components/select/select.js';
+import '@web.awesome.me/webawesome-pro/dist/components/switch/switch.js';
+import '@web.awesome.me/webawesome-pro/dist/components/tooltip/tooltip.js';
 
 // Kit code comes from the package @awesome.me/kit-781a3c6be3
 setKitCode('781a3c6be3');

@@ -1405,18 +1405,18 @@ mapadillo/
 4. **`_totalDistance` is a derived getter.** Changed from `@state()` property to a getter that sums `_routeDistances`, eliminating redundant state.
 
 **Deferred to later milestones:**
-- Export/print (M7–M8)
+- Print ordering (M8)
 - Browser locale-based units default (M9 polish)
 
 ---
 
-### Milestone 7: Export (PDF / Image)
+### Milestone 7: Export (PDF / Image) ✅ COMPLETE
 
 **Goal:** Users can download print-quality maps.
 
 **Build:**
 1. Build `map-preview-page.ts` — full-screen styled map with all stops + route
-2. Integrate `@watergis/maplibre-gl-export` for 150 DPI rendering (cap max canvas at 5400px, graceful error if device can't allocate)
+2. Integrate `@watergis/maplibre-gl-export` for 200 DPI rendering (cap max canvas at 5400px, graceful error if device can't allocate)
 3. Build `map-export.ts` — PNG/JPEG download
 4. Build decorative PDF layout with jsPDF (title, family name, stop list, border, road trip stats)
 5. Build `export-options.ts` — format selection UI
@@ -1424,8 +1424,85 @@ mapadillo/
 
 **Verify:**
 - Export PDF — opens with trip title, map image, stop list, decorative border
-- Export PNG — correct resolution (150 DPI, within canvas limits)
+- Export PNG — correct resolution (200 DPI, within canvas limits)
 - Both formats include all stops and route
+
+#### Implementation Notes (M7)
+
+**Core export architecture (`src/map/map-export.ts`):** Subclasses `MapGeneratorBase` from `@watergis/maplibre-gl-export` to create `MapExporter`. Overrides `getRenderedMap()` to produce an offscreen MapLibre map at the computed pixel dimensions. `renderCanvas()` creates a hidden DOM container, renders the map at high-res, waits for `'idle'` event, clones the canvas data, draws custom markers on top (since DOM-based MapLibre markers are not captured by `getStyle()`), then cleans up the temp map. Has a 30-second timeout guard to prevent hanging promises.
+
+**Marker drawing on export canvas:** Since MapLibre DOM markers don't appear in style-based canvas rendering, `drawMarkersOnCanvas()` projects each stop's lngLat to pixel coords on the temp map and draws branded circles (white fill, orange border, center dot). Checklist-type icons get an open square instead of a dot.
+
+**PDF layout:** A3 landscape (420×297mm). Left 2/3 is the map image (aspect-ratio preserved), right 1/3 is an info panel with: trip title (orange, bold), family name (gray), horizontal rule, numbered stops list (bullet points, truncated with `...` if panel overflows), horizontal rule, trip stats (total distance using routed distances when available with haversine fallback, stop count, route count), and footer with "Made with Mapadillo" + OSM attribution.
+
+**Page architecture — `MapPageBase` (`src/pages/map-page-base.ts`):** Shared base class for `map-preview-page` and `export-page`. Handles: map data loading via `getMap()`, `MapController` lifecycle (create on `map-ready`, destroy on disconnect), pending-sync coordination (if data loads before map is ready, defers `_syncMap()` until `map-ready` fires), auth redirect for 401 errors.
+
+**New routes:** `/preview/:id` (full-screen read-only map with overlay showing trip name + Back/Export buttons) and `/export/:id` (split layout: map left, sidebar right with trip info + export controls). Export route requires auth; preview does not.
+
+**Trip builder integration:** Added Preview and Export buttons to `trip-builder-page.ts` below the map details section, linking to `/preview/:id` and `/export/:id`.
+
+**Files created (5 new):**
+
+```
+mapadillo/
+├── src/
+│   ├── components/
+│   │   └── export-options.ts      [NEW]  # Format picker (PDF/PNG/JPEG radio group) + download button
+│   ├── map/
+│   │   └── map-export.ts          [NEW]  # MapExporter class, PNG/JPEG/PDF download, marker rendering
+│   └── pages/
+│       ├── map-page-base.ts       [NEW]  # Shared base: map loading, MapController lifecycle, sync
+│       ├── map-preview-page.ts    [NEW]  # Full-screen read-only map view with overlay controls
+│       └── export-page.ts         [NEW]  # Split layout: map panel + sidebar with export options
+└── worker/
+    └── src/
+        └── env.d.ts               [NEW]  # Module declaration for cloudflare:test ProvidedEnv
+```
+
+**Files modified (17 existing):**
+
+```
+src/
+├── components/
+│   ├── app-shell.ts                      # Added /preview/:id and /export/:id routes
+│   ├── point-card.ts                     # Fixed: wa-input → @input (native event)
+│   └── share-dialog.ts                   # Fixed: wa-change → @change, wa-switch/wa-select events
+├── index.ts                              # Added WA component imports: select, switch, tooltip
+├── pages/
+│   ├── sign-in-page.ts                   # Passkey failure now signs out half-auth session
+│   └── trip-builder-page.ts              # Added Preview/Export buttons; wa-input/wa-change → native events
+├── services/
+│   └── routing.ts                        # Moved haversineDistance/toRad/toDeg to utils/geo.ts (imports)
+└── utils/
+    └── geo.ts                            # Added: toRad(), toDeg(), haversineDistance(), sanitizeFilename()
+worker/src/
+├── auth.ts                               # autoSignIn: true, emailVerification config, any-typed cache
+├── index.ts                              # Milestone 7, CSRF protection, rate limiting, claim_token fix
+├── index.test.ts                         # Unified items in test schema, CSRF Origin headers, type: 'route'
+├── middleware/optional-auth.ts           # Auth type compatibility fix
+├── middleware/require-auth.ts            # Auth type compatibility fix
+└── routes/
+    ├── maps.ts                           # Typed .catch() callbacks to fix TS union narrowing
+    └── sharing.ts                        # Typed .catch() callbacks to fix TS union narrowing
+```
+
+**Deliberate deviations from plan:**
+
+1. **200 DPI instead of 150 DPI.** Plan calls for 150 DPI. Implementation uses 200 DPI as the default — better print quality while still within canvas limits on most devices. The 5400px cap ensures graceful degradation.
+
+2. **CSRF protection added.** Not in M7 plan scope. Origin header validation on all state-changing `/api/*` requests (skips webhooks and auth routes which handle their own CSRF). Added because export page is accessible to authenticated users navigating from external links.
+
+3. **Web Awesome event name fixes.** Changed `@wa-input` → `@input`, `@wa-change` → `@change` across point-card, share-dialog, trip-builder-page, sign-in-page. Web Awesome Pro components fire native DOM events, not prefixed custom events.
+
+4. **Passkey failure now signs out.** `sign-in-page.ts` now calls `authClient.signOut()` when passkey registration fails after account creation, preventing half-authenticated sessions with no usable credential.
+
+5. **Geo utilities consolidated in `utils/geo.ts`.** `haversineDistance()`, `toRad()`, `toDeg()` moved from `routing.ts` to `utils/geo.ts` (alongside existing `isDraftCoord`, `formatDistance`). Added `sanitizeFilename()` for export filenames. Single source of truth for geo math.
+
+6. **`worker/src/env.d.ts` added for test type safety.** Augments `cloudflare:test`'s `ProvidedEnv` to extend the project's `Env` interface, resolving 18 TS errors on `env.DB`, `env.BETTER_AUTH_SECRET`, etc. in test files.
+
+**Deferred to later milestones:**
+- Print ordering (M8)
+- Browser locale-based units default (M9 polish)
 
 ---
 

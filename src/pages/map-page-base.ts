@@ -1,0 +1,97 @@
+/**
+ * Shared base class for pages that display a read-only map with stops.
+ *
+ * Extracts the common map-loading, MapController lifecycle, and sync logic
+ * used by both map-preview-page and export-page.
+ */
+import { LitElement, type PropertyValues } from 'lit';
+import { property, state } from 'lit/decorators.js';
+import type { MapData, Stop } from '../services/maps.js';
+import { getMap } from '../services/maps.js';
+import { ApiError } from '../services/api-client.js';
+import { isAuthenticated } from '../auth/auth-state.js';
+import { MapController } from '../map/map-controller.js';
+import { navigateTo } from '../nav.js';
+import type { MapView } from '../components/map-view.js';
+
+export class MapPageBase extends LitElement {
+  @property() mapId = '';
+
+  @state() protected _map: MapData | null = null;
+  @state() protected _items: Stop[] = [];
+  @state() protected _loading = true;
+  @state() protected _error = '';
+  @state() protected _mapReady = false;
+
+  protected _pendingSync = false;
+  protected _mapController?: MapController;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this._loadMap();
+  }
+
+  willUpdate(changed: PropertyValues): void {
+    if (changed.has('mapId') && changed.get('mapId') !== undefined) {
+      this._loadMap();
+    }
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._mapController?.destroy();
+  }
+
+  protected async _loadMap() {
+    if (!this.mapId) return;
+    this._mapController?.destroy();
+    this._mapController = undefined;
+    this._mapReady = false;
+    this._loading = true;
+    this._error = '';
+
+    try {
+      const data = await getMap(this.mapId);
+      this._map = data;
+      this._items = data.stops;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401 && !isAuthenticated()) {
+        const returnTo = encodeURIComponent(window.location.pathname);
+        navigateTo(`/sign-in?returnTo=${returnTo}`);
+        return;
+      }
+      this._error = err instanceof Error ? err.message : 'Failed to load map';
+    } finally {
+      this._loading = false;
+      if (this._mapReady) {
+        this.updateComplete.then(() => { if (this.isConnected) this._syncMap(); });
+      } else {
+        this._pendingSync = true;
+      }
+    }
+  }
+
+  protected _onMapReady() {
+    this._mapReady = true;
+
+    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+    if (mapView?.map) {
+      this._mapController = new MapController(mapView.map);
+    }
+
+    if (this._pendingSync) {
+      this._pendingSync = false;
+      this._syncMap();
+    }
+  }
+
+  protected async _syncMap() {
+    if (!this._mapReady || !this._mapController) return;
+
+    try {
+      await this._mapController.drawItems(this._items);
+    } catch (err) {
+      console.warn('Map drawing failed:', err);
+    }
+  }
+}

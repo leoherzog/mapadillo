@@ -71,7 +71,7 @@ sharing.post('/:id/shares', async (c) => {
   const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
-  const body = await c.req.json<{ role?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ role?: string }>().catch((): { role?: string } => ({}));
   if (!body.role || !VALID_ROLES.has(body.role)) {
     return c.json({ error: 'role must be "viewer" or "editor"' }, 400);
   }
@@ -93,7 +93,7 @@ sharing.put('/:id/shares/:shareId', async (c) => {
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
   const shareId = c.req.param('shareId');
-  const body = await c.req.json<{ role?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ role?: string }>().catch((): { role?: string } => ({}));
   if (!body.role || !VALID_ROLES.has(body.role)) {
     return c.json({ error: 'role must be "viewer" or "editor"' }, 400);
   }
@@ -133,7 +133,7 @@ sharing.put('/:id/visibility', async (c) => {
   const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
-  const body = await c.req.json<{ visibility?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ visibility?: string }>().catch((): { visibility?: string } => ({}));
   if (!body.visibility || !['public', 'private'].includes(body.visibility)) {
     return c.json({ error: 'visibility must be "public" or "private"' }, 400);
   }

@@ -160,7 +160,7 @@ export class SignInPage extends LitElement {
           autocomplete="name"
           required
           .value=${this._name}
-          @wa-input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
         ></wa-input>
         <wa-input
           label="Email"
@@ -169,7 +169,7 @@ export class SignInPage extends LitElement {
           autocomplete="email"
           required
           .value=${this._email}
-          @wa-input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
         ></wa-input>
         <wa-button
           variant="brand"
@@ -317,9 +317,18 @@ export class SignInPage extends LitElement {
       // 2. Register a passkey for the new account.
       // If addPasskey() fails (user cancels biometric prompt, authenticator
       // unavailable), the account exists with only a random UUID password
-      // the user doesn't know. We must catch this and show an error.
-      const passkeyResult = await authClient.passkey.addPasskey();
+      // the user doesn't know. Sign out to clear the half-authenticated state.
+      // TODO: Add server-side cleanup job to garbage-collect accounts with no
+      // passkeys and no OAuth links.
+      let passkeyResult;
+      try {
+        passkeyResult = await authClient.passkey.addPasskey();
+      } catch (passkeyErr) {
+        try { await authClient.signOut(); } catch { /* best-effort */ }
+        throw passkeyErr;
+      }
       if (passkeyResult?.error) {
+        try { await authClient.signOut(); } catch { /* best-effort */ }
         this._error = passkeyResult.error.message ?? 'Passkey registration failed. Please try again.';
         this._loading = false;
         return;

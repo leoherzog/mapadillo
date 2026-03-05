@@ -210,13 +210,16 @@ export class TripBuilderPage extends LitElement {
         // Set flag to prevent willUpdate from triggering a redundant _loadMap
         // when mapId is assigned below.
         this._creatingMap = true;
-        const newMap = await createMap({ name: 'Untitled Trip' });
-        this._map = newMap;
-        this._items = [];
-        this._role = 'owner';
-        this.mapId = newMap.id;
-        this._creatingMap = false;
-        window.history.replaceState(null, '', `/map/${newMap.id}`);
+        try {
+          const newMap = await createMap({ name: 'Untitled Trip' });
+          this._map = newMap;
+          this._items = [];
+          this._role = 'owner';
+          this.mapId = newMap.id;
+          window.history.replaceState(null, '', `/map/${newMap.id}`);
+        } finally {
+          this._creatingMap = false;
+        }
       } else {
         const data = await getMap(this.mapId);
         this._map = data;
@@ -326,12 +329,12 @@ export class TripBuilderPage extends LitElement {
             <wa-input
               placeholder="Trip name"
               .value=${this._map?.name ?? ''}
-              @wa-input=${this._onNameInput}
+              @input=${this._onNameInput}
             ></wa-input>
             <wa-input
               placeholder="Family name (optional)"
               .value=${this._map?.family_name ?? ''}
-              @wa-input=${this._onFamilyInput}
+              @input=${this._onFamilyInput}
             ></wa-input>
           ` : html`
             <h2 style="margin: 0; font-size: var(--wa-font-size-l); font-weight: 700;">${this._map?.name ?? 'Untitled Trip'}</h2>
@@ -395,6 +398,28 @@ export class TripBuilderPage extends LitElement {
             </div>
           </wa-details>
 
+          ${this._map?.id ? html`
+            <div class="wa-cluster wa-gap-xs wa-justify-content-center">
+              <wa-button
+                variant="brand"
+                appearance="outlined"
+                size="small"
+                @click=${() => navigateTo(`/preview/${this._map!.id}`)}
+              >
+                <wa-icon slot="start" name="eye"></wa-icon>
+                Preview
+              </wa-button>
+              <wa-button
+                variant="brand"
+                size="small"
+                @click=${() => navigateTo(`/export/${this._map!.id}`)}
+              >
+                <wa-icon slot="start" name="file-export"></wa-icon>
+                Export
+              </wa-button>
+            </div>
+          ` : ''}
+
           ${canEdit ? html`
             <wa-details>
               <span slot="summary" class="section-summary">
@@ -406,7 +431,7 @@ export class TripBuilderPage extends LitElement {
                   <label>Units</label>
                   <wa-radio-group
                     .value=${units}
-                    @wa-change=${this._onUnitsChange}
+                    @change=${this._onUnitsChange}
                   >
                     <wa-radio appearance="button" value="km">Kilometers</wa-radio>
                     <wa-radio appearance="button" value="mi">Miles</wa-radio>
