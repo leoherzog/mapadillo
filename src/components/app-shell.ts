@@ -105,6 +105,15 @@ export class AppShell extends LitElement {
     wa-page::part(navigation) {
       display: none;
     }
+
+    /* Pin layout to viewport height so map pages don't overflow */
+    wa-page::part(base) {
+      height: 100dvh;
+    }
+
+    wa-page::part(body) {
+      align-items: stretch;
+    }
   `];
 
   connectedCallback() {

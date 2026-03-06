@@ -5,7 +5,7 @@
  * Body: { profile: "driving-car"|"foot-walking"|"cycling-regular", start: [lon,lat], end: [lon,lat] }
  *
  * Returns the ORS GeoJSON response (FeatureCollection with LineString geometry).
- * KV-cached per {profile, start, end} with 24-hour TTL.
+ * KV-cached per {profile, start, end} with 7-day TTL.
  *
  * Requires authentication. Rate-limited at 30 req/min per user
  * via RATE_LIMITER_PROXY binding (applied in index.ts).
@@ -103,9 +103,9 @@ export async function routeHandler(c: Context<AppEnv>) {
     return c.json({ error: 'Routing service returned invalid response' }, 502);
   }
 
-  // Cache for 24 hours (86 400 seconds). Best-effort — failures don't block response.
+  // Cache for 7 days (604 800 seconds). Best-effort — failures don't block response.
   try {
-    await c.env.API_CACHE.put(cacheKey, responseBody, { expirationTtl: 86_400 });
+    await c.env.API_CACHE.put(cacheKey, responseBody, { expirationTtl: 604_800 });
   } catch {
     // KV write can fail in test environments. Non-critical.
   }

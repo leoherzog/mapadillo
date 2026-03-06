@@ -10,7 +10,8 @@ import { jsPDF } from 'jspdf';
 import { MapGeneratorBase, DPI, Size, Unit } from '@watergis/maplibre-gl-export';
 import type { DPIType } from '@watergis/maplibre-gl-export';
 import type { MapData, Stop } from '../services/maps.js';
-import { formatDistance, haversineDistance, isDraftCoord, sanitizeFilename } from '../utils/geo.js';
+import { formatDistance, haversineDistance, sanitizeFilename } from '../utils/geo.js';
+import { renderMarkerCanvas } from './map-controller.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -25,8 +26,6 @@ const PAPER_SIZES: Record<string, [number, number]> = {
   a3: [297, 420],
   tabloid: [279.4, 431.8],
 };
-
-const checklistIcons = ['circle', 'square', 'circle-check', 'circle-plus', 'circle-info', 'circle-xmark'];
 
 // ── MapExporter (subclass of MapGeneratorBase) ──────────────────────────────
 
@@ -70,11 +69,19 @@ class MapExporter extends MapGeneratorBase {
 
   protected getRenderedMap(container: HTMLElement, style: StyleSpecification): maplibregl.Map {
     const sourceMap = this.map as maplibregl.Map;
+
+    // The export container is larger than the source (DPI scaling). At the same
+    // zoom a bigger container shows more geographic area, appearing "zoomed out".
+    // Increase zoom to compensate so the exported extent matches the live view.
+    const srcContainer = sourceMap.getContainer();
+    const scaleFactor = Math.min(this.width / srcContainer.clientWidth, this.height / srcContainer.clientHeight);
+    const zoomAdjust = Math.log2(scaleFactor);
+
     return new maplibregl.Map({
       container,
       style,
       center: sourceMap.getCenter(),
-      zoom: sourceMap.getZoom(),
+      zoom: sourceMap.getZoom() + zoomAdjust,
       bearing: sourceMap.getBearing(),
       pitch: sourceMap.getPitch(),
       pixelRatio: 1, // Prevent HiDPI doubling — container dimensions ARE the pixel dimensions
@@ -88,7 +95,7 @@ class MapExporter extends MapGeneratorBase {
    * Render the current map view at high resolution into a canvas with
    * custom markers drawn on top.
    */
-  renderCanvas(stops: Stop[]): Promise<HTMLCanvasElement> {
+  renderCanvas(markerFeatures: GeoJSON.Feature<GeoJSON.Point>[]): Promise<HTMLCanvasElement> {
     const sourceMap = this.map as maplibregl.Map;
 
     return new Promise<HTMLCanvasElement>((resolve, reject) => {
@@ -151,11 +158,10 @@ class MapExporter extends MapGeneratorBase {
             }
             ctx.drawImage(canvas, 0, 0);
 
-            // Draw DOM-based markers onto the output canvas (they are not part of the style)
-            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, stops);
-
-            cleanup();
-            resolve(outputCanvas);
+            // Draw composite marker images onto the output canvas (they are not part of the style)
+            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures)
+              .then(() => { cleanup(); resolve(outputCanvas); })
+              .catch(() => { cleanup(); reject(new Error('Unable to render map at this resolution. Try on a desktop browser.')); });
           } catch {
             cleanup();
             reject(new Error('Unable to render map at this resolution. Try on a desktop browser.'));
@@ -182,61 +188,43 @@ class MapExporter extends MapGeneratorBase {
 // ── Marker rendering ────────────────────────────────────────────────────────
 
 /**
- * Draw marker circles onto the export canvas. MapLibre DOM markers are not
- * captured in getStyle(), so we project each marker's lngLat to pixel coords
- * on the temp map and draw a branded circle + icon placeholder.
+ * Draw composite marker images onto the export canvas. Pre-renders each unique
+ * icon via renderMarkerCanvas (same images as the live map), then draws them
+ * at the projected offset coordinates.
  */
-function drawMarkersOnCanvas(
+async function drawMarkersOnCanvas(
   ctx: CanvasRenderingContext2D,
   tempMap: maplibregl.Map,
   canvasW: number,
   canvasH: number,
-  stops: Stop[],
-): void {
-  const radius = Math.max(12, canvasW / 120);
-  const borderWidth = Math.max(2, radius / 5);
+  markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
+): Promise<void> {
+  const markerSize = Math.max(24, Math.round(canvasW / 60));
+  const halfSize = markerSize / 2;
 
-  // MapLibre doesn't give us the markers directly, but we have the stops
-  // which contain the geographic coordinates.
-  for (const stop of stops) {
-    if (isDraftCoord(stop.latitude, stop.longitude)) continue;
+  // Pre-render each unique icon once
+  const iconCanvases = new Map<string, HTMLCanvasElement>();
+  const uniqueIcons = new Set<string>();
+  for (const f of markerFeatures) {
+    const iconId = f.properties?.icon as string | undefined;
+    const iconName = iconId?.replace(/^marker-/, '') ?? 'location-dot';
+    uniqueIcons.add(iconName);
+  }
+  await Promise.all([...uniqueIcons].map(async (name) => {
+    iconCanvases.set(name, await renderMarkerCanvas(name, markerSize));
+  }));
 
-    const coords: [number, number][] = [[stop.longitude, stop.latitude]];
-    if (stop.type === 'route' && stop.dest_longitude != null && stop.dest_latitude != null
-      && !isDraftCoord(stop.dest_latitude, stop.dest_longitude)) {
-      coords.push([stop.dest_longitude, stop.dest_latitude]);
-    }
+  for (const feature of markerFeatures) {
+    const [lng, lat] = feature.geometry.coordinates;
+    const tempPt = tempMap.project([lng, lat]);
 
-    for (const [lng, lat] of coords) {
-      const tempPt = tempMap.project([lng, lat]);
+    if (tempPt.x < -halfSize || tempPt.y < -halfSize || tempPt.x > canvasW + halfSize || tempPt.y > canvasH + halfSize) continue;
 
-      // Skip markers outside the canvas bounds
-      if (tempPt.x < -radius || tempPt.y < -radius || tempPt.x > canvasW + radius || tempPt.y > canvasH + radius) continue;
-
-      const isChecklist = stop.icon && checklistIcons.includes(stop.icon);
-
-      // White filled circle with orange border
-      ctx.beginPath();
-      ctx.arc(tempPt.x, tempPt.y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.lineWidth = borderWidth;
-      ctx.strokeStyle = '#ff6b00';
-      ctx.stroke();
-
-      if (isChecklist) {
-        // Draw an open square (checkbox)
-        const size = radius * 0.8;
-        ctx.strokeStyle = '#ff6b00';
-        ctx.lineWidth = borderWidth * 0.8;
-        ctx.strokeRect(tempPt.x - size / 2, tempPt.y - size / 2, size, size);
-      } else {
-        // Draw a small dot in the center
-        ctx.beginPath();
-        ctx.arc(tempPt.x, tempPt.y, radius * 0.3, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff6b00';
-        ctx.fill();
-      }
+    const iconId = feature.properties?.icon as string | undefined;
+    const iconName = iconId?.replace(/^marker-/, '') ?? 'location-dot';
+    const iconCanvas = iconCanvases.get(iconName);
+    if (iconCanvas) {
+      ctx.drawImage(iconCanvas, tempPt.x - halfSize, tempPt.y - halfSize, markerSize, markerSize);
     }
   }
 }
@@ -276,11 +264,11 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
 // ── PNG export ───────────────────────────────────────────────────────────────
 
 async function downloadPNG(
-  map: maplibregl.Map, stops: Stop[], paperSize: PaperSize, orientation: Orientation,
+  map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
   filename = 'mapadillo-map.png',
 ): Promise<void> {
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(stops);
+  const canvas = await exporter.renderCanvas(markerFeatures);
   const blob = await canvasToBlob(canvas, 'image/png');
   triggerDownload(blob, filename);
 }
@@ -288,11 +276,11 @@ async function downloadPNG(
 // ── JPEG export ──────────────────────────────────────────────────────────────
 
 async function downloadJPEG(
-  map: maplibregl.Map, stops: Stop[], paperSize: PaperSize, orientation: Orientation,
+  map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
   filename = 'mapadillo-map.jpg',
 ): Promise<void> {
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(stops);
+  const canvas = await exporter.renderCanvas(markerFeatures);
   const blob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
   triggerDownload(blob, filename);
 }
@@ -303,13 +291,14 @@ async function downloadPDF(
   map: maplibregl.Map,
   mapData: MapData,
   stops: Stop[],
+  markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
   units: string,
   paperSize: PaperSize,
   orientation: Orientation,
   routeDistances?: Map<string, number>,
 ): Promise<void> {
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(stops);
+  const canvas = await exporter.renderCanvas(markerFeatures);
   const imgData = canvas.toDataURL('image/jpeg', 0.92);
 
   const pdfFormat = paperSize === 'auto' ? 'a3' : paperSize;
@@ -418,7 +407,7 @@ async function downloadPDF(
       label = `${stop.name} \u2192 ${endName}`;
     } else {
       const iconPrefix = stop.icon ? `${stop.icon}  ` : '';
-      label = iconPrefix + (stop.label || stop.name);
+      label = iconPrefix + stop.name;
     }
 
     const stopLines = pdf.splitTextToSize(`\u2022 ${label}`, panelW - 8);
@@ -502,6 +491,7 @@ export async function exportMap(
   format: ExportFormat,
   mapData: MapData,
   stops: Stop[],
+  markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
   units: string,
   paperSize: PaperSize,
   orientation: Orientation,
@@ -511,11 +501,11 @@ export async function exportMap(
 
   switch (format) {
     case 'png':
-      return downloadPNG(map, stops, paperSize, orientation, `${baseName}.png`);
+      return downloadPNG(map, markerFeatures, paperSize, orientation, `${baseName}.png`);
     case 'jpeg':
-      return downloadJPEG(map, stops, paperSize, orientation, `${baseName}.jpg`);
+      return downloadJPEG(map, markerFeatures, paperSize, orientation, `${baseName}.jpg`);
     case 'pdf':
-      return downloadPDF(map, mapData, stops, units, paperSize, orientation, routeDistances);
+      return downloadPDF(map, mapData, stops, markerFeatures, units, paperSize, orientation, routeDistances);
     default:
       throw new Error(`Unsupported export format: ${format as string}`);
   }

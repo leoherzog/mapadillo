@@ -2,7 +2,7 @@
  * Typed API wrappers for map and stop operations.
  */
 
-import { apiDelete, apiGet, apiPost, apiPut } from './api-client';
+import { apiDelete, apiGet, apiPost, apiPut } from './api-client.js';
 
 // ---------------------------------------------------------------------------
 // Types — base types from shared module, composite types local

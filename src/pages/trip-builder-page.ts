@@ -3,7 +3,7 @@
  *
  * M7: Unified map items — points (standalone markers) and routes (A→B pairs).
  */
-import { html, css, type PropertyValues } from 'lit';
+import { html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { pageLayoutStyles } from '../styles/page-layout.js';
@@ -42,6 +42,7 @@ export class TripBuilderPage extends MapPageBase {
   @state() private _duplicating = false;
 
   private _saveTimer?: ReturnType<typeof setTimeout>;
+  private _pendingSaves = 0;
   private _itemUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private _creatingMap = false;
   private _routeDebounceTimer?: ReturnType<typeof setTimeout>;
@@ -49,6 +50,22 @@ export class TripBuilderPage extends MapPageBase {
   static styles = [waUtilities, pageLayoutStyles, css`
     h1 {
       flex: 1;
+    }
+
+    /* Desktop: pin header/footer, scroll items */
+    @media (min-width: 701px) {
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-m);
+        overflow-y: hidden;
+      }
+
+      .sidebar-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
     }
 
     wa-details::part(base) {
@@ -120,7 +137,11 @@ export class TripBuilderPage extends MapPageBase {
         this._items = [];
         this._role = 'owner';
         this.mapId = newMap.id;
-        window.history.replaceState(null, '', `/map/${newMap.id}`);
+        if ('navigation' in window) {
+          (window as unknown as { navigation: { navigate: (url: string, opts?: { history?: string }) => void } }).navigation.navigate(`/map/${newMap.id}`, { history: 'replace' });
+        } else {
+          window.history.replaceState(null, '', `/map/${newMap.id}`);
+        }
       } catch (err) {
         this._error = err instanceof Error ? err.message : 'Failed to create map';
       } finally {
@@ -171,14 +192,15 @@ export class TripBuilderPage extends MapPageBase {
     const isReadOnly = !canEdit;
 
     return html`
-      <div class="sidebar sidebar-left wa-stack wa-gap-m">
+      <div class="sidebar sidebar-left">
+        <!-- Fixed top: header + inputs -->
         <div class="wa-split wa-gap-xs">
           <h1>
             <wa-icon name="compass"></wa-icon>
             Trip Builder
           </h1>
           <div class="wa-cluster wa-gap-xs wa-align-items-center">
-            ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : ''}
+            ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : nothing}
             ${isOwner ? html`
               <wa-button
                 appearance="outlined"
@@ -221,7 +243,7 @@ export class TripBuilderPage extends MapPageBase {
               </wa-button>
             `}
           </wa-callout>
-        ` : ''}
+        ` : nothing}
 
         <div class="wa-stack wa-gap-xs">
           ${canEdit ? html`
@@ -241,14 +263,15 @@ export class TripBuilderPage extends MapPageBase {
           `}
         </div>
 
-        <div class="wa-stack wa-gap-xs">
+        <!-- Scrollable: map items -->
+        <div class="sidebar-scroll">
           <wa-details open>
             <span slot="summary" class="section-summary">
               <wa-icon name="map"></wa-icon>
               Map Items
               ${this._items.length > 0
                 ? html`<wa-badge variant="brand">${this._items.length}</wa-badge>`
-                : ''}
+                : nothing}
             </span>
             <div class="wa-stack wa-gap-s">
               <item-list
@@ -279,7 +302,7 @@ export class TripBuilderPage extends MapPageBase {
                     </wa-dropdown-item>
                   </wa-dropdown>
                 </div>
-              ` : ''}
+              ` : nothing}
 
               ${this._totalDistance ? html`
                 <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
@@ -296,7 +319,10 @@ export class TripBuilderPage extends MapPageBase {
               ` : ''}
             </div>
           </wa-details>
+        </div>
 
+        <!-- Fixed bottom: actions + settings -->
+        <div class="wa-stack wa-gap-xs">
           ${this._map?.id ? html`
             <div class="wa-cluster wa-gap-xs wa-justify-content-center">
               <wa-button
@@ -313,8 +339,8 @@ export class TripBuilderPage extends MapPageBase {
                 size="small"
                 @click=${() => navigateTo(`/export/${this._map!.id}`)}
               >
-                <wa-icon slot="start" name="file-export"></wa-icon>
-                Export
+                <wa-icon slot="start" name="print"></wa-icon>
+                Print
               </wa-button>
             </div>
           ` : ''}
@@ -448,16 +474,16 @@ export class TripBuilderPage extends MapPageBase {
     const { itemId, field, value } = e.detail;
 
     // Update local state immediately (optimistic)
+    // Clear cached route_geometry when travel_mode changes (server invalidates it too)
+    const extra = field === 'travel_mode' ? { route_geometry: null } : {};
     this._items = this._items.map((s) =>
-      s.id === itemId ? { ...s, [field]: value } : s,
+      s.id === itemId ? { ...s, [field]: value, ...extra } : s,
     );
 
     // Icon and travel_mode save immediately; text fields debounce
     if (field === 'icon' || field === 'travel_mode') {
       this._flushItemUpdate(this._map.id, itemId, { [field]: value });
-      if (field === 'travel_mode') {
-        this._debounceSyncMap();
-      }
+      this._debounceSyncMap();
     } else {
       const mapId = this._map.id;
       const timerKey = `${itemId}:${field}`;
@@ -493,11 +519,13 @@ export class TripBuilderPage extends MapPageBase {
   }
 
   private async _flushItemUpdate(mapId: string, itemId: string, fields: Record<string, unknown>) {
+    this._pendingSaves++;
+    this._saveStatus = 'saving';
     try {
-      this._saveStatus = 'saving';
       await updateStop(mapId, itemId, fields);
-      this._saveStatus = 'saved';
+      if (--this._pendingSaves === 0) this._saveStatus = 'saved';
     } catch {
+      this._pendingSaves--;
       this._saveStatus = 'error';
     }
   }
@@ -531,8 +559,7 @@ export class TripBuilderPage extends MapPageBase {
     this._debounceSyncMap();
 
     try {
-      const stops = await reorderStops(this._map.id, order);
-      this._items = stops;
+      await reorderStops(this._map.id, order);
     } catch {
       this._saveStatus = 'error';
     }
@@ -558,7 +585,7 @@ export class TripBuilderPage extends MapPageBase {
       const newMap = await duplicateMap(this._map.id);
       navigateTo(`/map/${newMap.id}`);
     } catch {
-      // Could show error
+      this._saveStatus = 'error';
     } finally {
       this._duplicating = false;
     }

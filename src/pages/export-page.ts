@@ -68,7 +68,7 @@ export class ExportPage extends MapPageBase {
           </wa-callout>
         ` : html`
           <h1>
-            <wa-icon name="file-export"></wa-icon>
+            <wa-icon name="print"></wa-icon>
             Export
           </h1>
 
@@ -90,7 +90,7 @@ export class ExportPage extends MapPageBase {
               </div>
               ${this._totalDistance ? html`
                 <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
-                  <wa-icon name="route"></wa-icon>
+                  <wa-icon name="location-arrow"></wa-icon>
                   <span class="stat-label">Total distance:</span>
                   <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
                 </div>
@@ -134,7 +134,7 @@ export class ExportPage extends MapPageBase {
     this._exportError = '';
 
     try {
-      await exportMap(mapView.map, format, this._map, this._items, this._map.units ?? 'km', paperSize, orientation, this._routeDistances);
+      await exportMap(mapView.map, format, this._map, this._items, this._mapController!.markerFeatures, this._map.units ?? 'km', paperSize, orientation, this._routeDistances);
     } catch (err) {
       this._exportError = err instanceof Error ? err.message : 'Export failed';
     } finally {

@@ -9,7 +9,7 @@
  */
 
 import { apiPost } from './api-client.js';
-import { haversineAngle, haversineDistance, toRad, toDeg } from '../utils/geo.js';
+import { haversineDistance } from '../utils/geo.js';
 import { TRAVEL_MODES } from '../config/travel-modes.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -104,46 +104,51 @@ async function fetchORSRoute(
 // ── Client-side geometry ─────────────────────────────────────────────────────
 
 /**
- * Great-circle arc between two points, interpolated into ~64 segments.
- * Uses spherical interpolation (slerp on unit sphere).
+ * Flight arc between two points — a quadratic Bézier curve that arcs
+ * perpendicular to the straight line, giving the classic airline-route-map look.
+ * Distance is still the haversine (great-circle) distance.
  */
 function greatCircleArc(
   start: [number, number],
   end: [number, number],
 ): SegmentGeometry {
   const NUM_POINTS = 64;
-  const coords: [number, number][] = [];
+  const distance = haversineDistance(start, end);
 
-  const lon1 = toRad(start[0]);
-  const lat1 = toRad(start[1]);
-  const lon2 = toRad(end[0]);
-  const lat2 = toRad(end[1]);
-
-  // Haversine distance (angular)
-  const d = haversineAngle(start, end);
-
-  if (d < 1e-10) {
-    // Points are essentially the same
+  if (distance < 1) {
     return { coordinates: [start, end], distance: 0 };
   }
 
+  // Correct for longitude compression at the mid-latitude
+  const midLatRad = ((start[1] + end[1]) / 2) * (Math.PI / 180);
+  const cosLat = Math.max(Math.cos(midLatRad), 0.01); // avoid division by zero at poles
+
+  // Direction vector in approximately equidistant space
+  const dLon = (end[0] - start[0]) * cosLat;
+  const dLat = end[1] - start[1];
+  const len = Math.sqrt(dLon * dLon + dLat * dLat);
+
+  // Perpendicular unit vector (90° CCW), converted back to degree offsets
+  const perpLon = -dLat / (len * cosLat);
+  const perpLat = dLon / len;
+
+  // Arc height scales with angular separation (20% of corrected span)
+  const arcHeight = len * 0.2;
+
+  // Quadratic Bézier control point: midpoint offset along the perpendicular
+  const ctrlLon = (start[0] + end[0]) / 2 + perpLon * arcHeight;
+  const ctrlLat = (start[1] + end[1]) / 2 + perpLat * arcHeight;
+
+  // Interpolate quadratic Bézier
+  const coords: [number, number][] = [];
   for (let i = 0; i <= NUM_POINTS; i++) {
-    const f = i / NUM_POINTS;
-    const A = Math.sin((1 - f) * d) / Math.sin(d);
-    const B = Math.sin(f * d) / Math.sin(d);
-
-    const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
-    const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
-    const z = A * Math.sin(lat1) + B * Math.sin(lat2);
-
-    const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
-    const lon = Math.atan2(y, x);
-
-    coords.push([toDeg(lon), toDeg(lat)]);
+    const t = i / NUM_POINTS;
+    const u = 1 - t;
+    coords.push([
+      u * u * start[0] + 2 * u * t * ctrlLon + t * t * end[0],
+      u * u * start[1] + 2 * u * t * ctrlLat + t * t * end[1],
+    ]);
   }
-
-  // Distance in meters (Earth radius ≈ 6371 km)
-  const distance = d * 6_371_000;
 
   return { coordinates: coords, distance };
 }

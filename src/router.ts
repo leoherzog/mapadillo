@@ -114,11 +114,6 @@ export class Router implements ReactiveController {
     }
   }
 
-  /** Programmatic navigation */
-  navigate(path: string): void {
-    navigateTo(path);
-  }
-
   private _onNavigate = (rawEvent: Event): void => {
     const event = rawEvent as NavigateEvent;
 
@@ -154,7 +149,7 @@ export class Router implements ReactiveController {
             return;
           }
           this._redirectDepth++;
-          this.navigate(redirect);
+          navigateTo(redirect);
           return;
         }
       }

@@ -14,11 +14,7 @@ import './travel-mode-picker.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord, formatDistance } from '../utils/geo.js';
-import { TRAVEL_MODES } from '../config/travel-modes.js';
-
-const MODE_COLORS: Record<string, string> = Object.fromEntries(
-  TRAVEL_MODES.map((m) => [m.mode, m.cssColor]),
-);
+import { CSS_COLOR_BY_MODE } from '../config/travel-modes.js';
 
 @customElement('route-card')
 export class RouteCard extends LitElement {
@@ -81,6 +77,12 @@ export class RouteCard extends LitElement {
     }
   `];
 
+  private get _title(): string {
+    const start = this._hasStart ? this.item.name : '…';
+    const end = this._hasEnd ? (this.item.dest_name ?? '…') : '…';
+    return `${start} to ${end}`;
+  }
+
   private get _hasStart(): boolean {
     return !isDraftCoord(this.item.latitude, this.item.longitude);
   }
@@ -91,7 +93,7 @@ export class RouteCard extends LitElement {
   }
 
   render() {
-    const borderColor = MODE_COLORS[this.item.travel_mode ?? ''] ?? 'var(--wa-color-neutral-300)';
+    const borderColor = CSS_COLOR_BY_MODE[this.item.travel_mode ?? ''] ?? 'var(--wa-color-neutral-300)';
 
     if (this.readonly) {
       return html`
@@ -116,8 +118,7 @@ export class RouteCard extends LitElement {
       <wa-card style="--border-color: ${borderColor}">
         <div class="wa-cluster wa-align-items-center wa-gap-xs" style="margin-bottom: var(--wa-space-3xs);">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
-          <wa-icon name="compass" style="color: ${borderColor}; font-size: 1rem;"></wa-icon>
-          <span style="font-weight: 600; font-size: var(--wa-font-size-s); flex: 1;">Route</span>
+          <span style="font-weight: 600; font-size: var(--wa-font-size-s); flex: 1;">${this._title}</span>
           <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
             <wa-icon name="xmark" label="Delete route"></wa-icon>
           </wa-button>

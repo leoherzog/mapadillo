@@ -144,8 +144,9 @@ describe('Router', () => {
     });
   });
 
-  describe('navigate (popstate fallback)', () => {
+  describe('navigateTo (popstate fallback)', () => {
     it('pushes state and re-renders', async () => {
+      const { navigateTo } = await import('./nav.js');
       const host = createMockHost();
       const dashRender = vi.fn(() => html`<p>Dashboard</p>`);
       const pushSpy = vi.spyOn(window.history, 'pushState');
@@ -158,7 +159,7 @@ describe('Router', () => {
       router.hostConnected();
       await vi.waitFor(() => expect(host.requestUpdate).toHaveBeenCalled());
 
-      router.navigate('/dashboard');
+      navigateTo('/dashboard');
 
       expect(pushSpy).toHaveBeenCalledWith(null, '', '/dashboard');
       await vi.waitFor(() => expect(dashRender).toHaveBeenCalled());
@@ -244,6 +245,7 @@ describe('Router', () => {
     });
 
     it('uses navigation.navigate() for programmatic navigation', async () => {
+      const { navigateTo } = await import('./nav.js');
       const { navigation } = setupNavigation();
       const host = createMockHost();
       const routes: RouteDefinition[] = [
@@ -253,7 +255,7 @@ describe('Router', () => {
       const router = new Router(host, routes);
 
       router.hostConnected();
-      router.navigate('/dashboard');
+      navigateTo('/dashboard');
 
       expect(navigation.navigate).toHaveBeenCalledWith('/dashboard');
     });

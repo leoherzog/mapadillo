@@ -57,13 +57,13 @@ export class ExportOptions extends LitElement {
       <wa-card>
         <div class="wa-stack wa-gap-m">
           <div class="heading">
-            <wa-icon name="download" library="fa-jelly"></wa-icon>
+            <wa-icon name="arrow-down-to-line" library="default"></wa-icon>
             Export Map
           </div>
 
           ${this.error ? html`
             <wa-callout variant="danger">
-              <wa-icon slot="icon" name="circle-info" library="fa-jelly"></wa-icon>
+              <wa-icon slot="icon" name="circle-info" library="default"></wa-icon>
               ${this.error}
             </wa-callout>
           ` : nothing}
@@ -116,7 +116,7 @@ export class ExportOptions extends LitElement {
             ?disabled=${this.exporting}
             @click=${this._onDownload}
           >
-            <wa-icon slot="start" name="download" library="fa-jelly"></wa-icon>
+            <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
             Download
           </wa-button>
         </div>

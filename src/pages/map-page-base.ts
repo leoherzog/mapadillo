@@ -17,6 +17,8 @@ import type { MapView } from '../components/map-view.js';
 export class MapPageBase extends LitElement {
   @property() mapId = '';
 
+  private _loadGeneration = 0;
+
   @state() protected _map: MapData | null = null;
   @state() protected _items: Stop[] = [];
   @state() protected _loading = true;
@@ -57,11 +59,15 @@ export class MapPageBase extends LitElement {
     this._loading = true;
     this._error = '';
 
+    const gen = ++this._loadGeneration;
+
     try {
       const data = await getMap(this.mapId);
+      if (gen !== this._loadGeneration) return; // stale — discard
       this._map = data;
       this._items = data.stops;
     } catch (err) {
+      if (gen !== this._loadGeneration) return;
       if (err instanceof ApiError && err.status === 401 && !isAuthenticated()) {
         const returnTo = encodeURIComponent(window.location.pathname);
         navigateTo(`/sign-in?returnTo=${returnTo}`);
@@ -69,6 +75,7 @@ export class MapPageBase extends LitElement {
       }
       this._error = err instanceof Error ? err.message : 'Failed to load map';
     } finally {
+      if (gen !== this._loadGeneration) return;
       this._loading = false;
       if (this._mapReady) {
         this.updateComplete.then(() => { if (this.isConnected) this._syncMap(); });

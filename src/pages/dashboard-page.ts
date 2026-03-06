@@ -19,6 +19,7 @@ export class DashboardPage extends LitElement {
 
   @state() private _maps: MapWithRole[] = [];
   @state() private _loading = true;
+  @state() private _fetchError = false;
   @state() private _deleteMapId: string | null = null;
 
   private get _myMaps(): MapWithRole[] {
@@ -37,6 +38,7 @@ export class DashboardPage extends LitElement {
       padding: var(--wa-space-xl) var(--wa-space-m);
       max-width: 1000px;
       margin: 0 auto;
+      overflow-y: auto;
     }
 
     h1 {
@@ -71,10 +73,6 @@ export class DashboardPage extends LitElement {
       color: var(--wa-color-neutral-600);
     }
 
-    .empty-state wa-icon {
-      font-size: 3rem;
-    }
-
     .empty-state p {
       margin: 0;
     }
@@ -87,11 +85,12 @@ export class DashboardPage extends LitElement {
 
   private async _fetchMaps() {
     this._loading = true;
+    this._fetchError = false;
     try {
       this._maps = await listMaps();
     } catch {
-      // Silent fail — show empty state
       this._maps = [];
+      this._fetchError = true;
     } finally {
       this._loading = false;
     }
@@ -106,10 +105,16 @@ export class DashboardPage extends LitElement {
 
       ${this._loading
         ? html`<div class="wa-cluster wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>`
-        : this._myMaps.length === 0
+        : this._fetchError
+          ? html`
+              <wa-callout variant="danger">
+                <wa-icon slot="icon" name="circle-xmark"></wa-icon>
+                Failed to load your trips. Please try refreshing the page.
+              </wa-callout>
+            `
+          : this._myMaps.length === 0
           ? html`
               <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
-                <wa-icon name="map" style="color: var(--wa-color-neutral-400);"></wa-icon>
                 <p>No trips yet! Create your first adventure to get started.</p>
                 <wa-button variant="brand" href="/map/new" @click=${navClick('/map/new')}>
                   <wa-icon slot="start" name="plus"></wa-icon>
@@ -139,7 +144,6 @@ export class DashboardPage extends LitElement {
         : this._sharedMaps.length === 0
           ? html`
               <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
-                <wa-icon name="share-nodes" style="color: var(--wa-color-neutral-400);"></wa-icon>
                 <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
               </div>
             `

@@ -83,6 +83,12 @@ maps.post('/', async (c) => {
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
+  if (body.name.trim().length > 200) {
+    return c.json({ error: 'name must be 200 characters or fewer' }, 400);
+  }
+  if (body.family_name && typeof body.family_name === 'string' && body.family_name.trim().length > 200) {
+    return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
+  }
 
   const id = crypto.randomUUID();
   const userId = c.get('user')!.id;
@@ -102,7 +108,7 @@ maps.get('/', async (c) => {
 
   // Fetch owned maps
   const ownedRows = await c.env.DB.prepare(
-    'SELECT * FROM maps WHERE owner_id = ? ORDER BY updated_at DESC',
+    'SELECT * FROM maps WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 100',
   ).bind(userId).all<MapRow>();
 
   // Fetch shared maps
@@ -111,7 +117,8 @@ maps.get('/', async (c) => {
      FROM map_shares ms
      JOIN maps m ON ms.map_id = m.id
      WHERE ms.user_id = ?
-     ORDER BY m.updated_at DESC`,
+     ORDER BY m.updated_at DESC
+     LIMIT 100`,
   ).bind(userId).all<MapRow & { share_role: string }>();
 
   const allMaps = [
@@ -176,6 +183,12 @@ maps.put('/:id', async (c) => {
           return c.json({ error: 'name cannot be empty' }, 400);
         }
         val = (val as string).trim();
+        if ((val as string).length > 200) {
+          return c.json({ error: 'name must be 200 characters or fewer' }, 400);
+        }
+      }
+      if (key === 'family_name' && typeof val === 'string' && val.trim().length > 200) {
+        return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
       }
       if (key === 'units' && !VALID_UNITS.has(val as string)) {
         return c.json({ error: 'units must be "km" or "mi"' }, 400);
@@ -258,9 +271,9 @@ maps.put('/:id/stops/reorder', async (c) => {
     c.env.DB.prepare('UPDATE stops SET position = ? WHERE id = ?').bind(i, sid),
   );
 
-  // Enforce first-stop invariant: position 0 must never have a travel_mode
+  // Points at position 0 must never have a travel_mode (routes keep theirs)
   stmts.push(
-    c.env.DB.prepare('UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0')
+    c.env.DB.prepare("UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0 AND type = 'point'")
       .bind(result.map.id),
   );
 
@@ -308,6 +321,15 @@ maps.post('/:id/stops', async (c) => {
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
+  if (body.name.trim().length > 200) {
+    return c.json({ error: 'name must be 200 characters or fewer' }, 400);
+  }
+  if (body.label && typeof body.label === 'string' && body.label.trim().length > 500) {
+    return c.json({ error: 'label must be 500 characters or fewer' }, 400);
+  }
+  if (body.dest_name && typeof body.dest_name === 'string' && body.dest_name.trim().length > 200) {
+    return c.json({ error: 'dest_name must be 200 characters or fewer' }, 400);
+  }
   if (typeof body.lat !== 'number' || typeof body.lng !== 'number') {
     return c.json({ error: 'lat and lng are required numbers' }, 400);
   }
@@ -352,8 +374,7 @@ maps.post('/:id/stops', async (c) => {
   ).bind(result.map.id).first<{ max_pos: number }>();
   const position = (maxPos?.max_pos ?? -1) + 1;
 
-  // First-stop invariant: position 0 must never have a travel_mode
-  const travelMode = type === 'route' && position > 0 ? (body.travel_mode ?? 'drive') : null;
+  const travelMode = type === 'route' ? (body.travel_mode ?? 'drive') : null;
 
   const stopId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -400,12 +421,21 @@ maps.put('/:id/stops/:stopId', async (c) => {
     if (!body.name || typeof body.name !== 'string' || !(body.name as string).trim()) {
       return c.json({ error: 'name cannot be empty' }, 400);
     }
+    if ((body.name as string).trim().length > 200) {
+      return c.json({ error: 'name must be 200 characters or fewer' }, 400);
+    }
     updates.push('name = ?');
     values.push((body.name as string).trim());
   }
   if ('label' in body) {
+    if (body.label !== null && typeof body.label !== 'string') {
+      return c.json({ error: 'label must be a string or null' }, 400);
+    }
+    if (typeof body.label === 'string' && body.label.trim().length > 500) {
+      return c.json({ error: 'label must be 500 characters or fewer' }, 400);
+    }
     updates.push('label = ?');
-    values.push(body.label ?? null);
+    values.push(typeof body.label === 'string' ? body.label.trim() : null);
   }
   if ('lat' in body) {
     if (typeof body.lat !== 'number') return c.json({ error: 'lat must be a number' }, 400);
@@ -433,9 +463,6 @@ maps.put('/:id/stops/:stopId', async (c) => {
     if (stop.type === 'point' && body.travel_mode !== null) {
       return c.json({ error: 'Points cannot have a travel_mode' }, 400);
     }
-    if (stop.position === 0 && body.travel_mode !== null) {
-      return c.json({ error: 'First stop cannot have a travel_mode' }, 400);
-    }
     updates.push('travel_mode = ?');
     values.push(body.travel_mode ?? null);
   }
@@ -443,8 +470,14 @@ maps.put('/:id/stops/:stopId', async (c) => {
     return c.json({ error: 'type cannot be changed after creation' }, 400);
   }
   if ('dest_name' in body) {
+    if (body.dest_name !== null && typeof body.dest_name !== 'string') {
+      return c.json({ error: 'dest_name must be a string or null' }, 400);
+    }
+    if (typeof body.dest_name === 'string' && body.dest_name.trim().length > 200) {
+      return c.json({ error: 'dest_name must be 200 characters or fewer' }, 400);
+    }
     updates.push('dest_name = ?');
-    values.push(body.dest_name ?? null);
+    values.push(typeof body.dest_name === 'string' ? body.dest_name.trim() : null);
   }
   if ('dest_lat' in body) {
     if (body.dest_lat !== null && typeof body.dest_lat !== 'number') {
@@ -517,7 +550,7 @@ maps.delete('/:id/stops/:stopId', async (c) => {
     return c.json({ error: 'Stop not found' }, 404);
   }
 
-  // Atomic: delete, re-compact positions, null first-stop travel_mode, touch map
+  // Atomic: delete, re-compact positions, null point travel_mode at pos 0, touch map
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM stops WHERE id = ?').bind(stopId),
@@ -525,7 +558,7 @@ maps.delete('/:id/stops/:stopId', async (c) => {
       'UPDATE stops SET position = position - 1 WHERE map_id = ? AND position > ?',
     ).bind(result.map.id, stop.position),
     c.env.DB.prepare(
-      'UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0',
+      "UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0 AND type = 'point'",
     ).bind(result.map.id),
     c.env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?')
       .bind(now, result.map.id),

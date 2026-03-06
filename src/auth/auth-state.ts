@@ -55,8 +55,8 @@ export function initAuth(): Promise<User | null> {
  * Unlike `initAuth`, always makes a fresh server call.
  */
 export async function refreshAuth(): Promise<User | null> {
-  _initPromise = null;
-  return initAuth();
+  _initPromise = _doInit();
+  return _initPromise;
 }
 
 export async function signOut(): Promise<void> {

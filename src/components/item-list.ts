@@ -14,8 +14,6 @@ import './point-card.js';
 import './route-card.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 
-const _dragBound = new WeakSet<HTMLElement>();
-
 @customElement('item-list')
 export class ItemList extends LitElement {
   @property({ type: Array }) items: Stop[] = [];
@@ -31,6 +29,8 @@ export class ItemList extends LitElement {
   private _dragClone: HTMLElement | null = null;
   private _dragStartY = 0;
   private _dragOriginalY = 0;
+  private _dragRafId = 0;
+  private _boundHandles = new WeakSet<HTMLElement>();
 
   static styles = [waUtilities, css`
     :host {
@@ -111,37 +111,42 @@ export class ItemList extends LitElement {
   }
 
   protected updated(changed: PropertyValues): void {
-    // Only re-attach drag listeners when items or readonly change (new DOM nodes)
     if (changed.has('items') || changed.has('readonly')) {
-      this._setupPointerDrag();
+      // Defer to next frame so child card shadow DOMs are rendered
+      cancelAnimationFrame(this._dragRafId);
+      this._dragRafId = requestAnimationFrame(() => {
+        this._dragRafId = requestAnimationFrame(() => this._setupPointerDrag());
+      });
     }
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    cancelAnimationFrame(this._dragRafId);
     this._cleanupDrag();
   }
 
   private _setupPointerDrag() {
     if (this.readonly) return;
 
-    const handles = this.shadowRoot!.querySelectorAll('.card-wrapper');
-    handles.forEach((wrapper, index) => {
-      // Find the drag handle (bars icon) inside the card's shadow DOM
+    const wrappers = this.shadowRoot!.querySelectorAll('.card-wrapper');
+    wrappers.forEach((wrapper) => {
       const card = wrapper.querySelector('point-card, route-card');
       if (!card?.shadowRoot) return;
 
       const handle = card.shadowRoot.querySelector('.drag-handle') as HTMLElement | null;
       if (!handle) return;
 
-      // Avoid duplicate listeners by marking
-      if (_dragBound.has(handle)) return;
-      _dragBound.add(handle);
+      if (this._boundHandles.has(handle)) return;
+      this._boundHandles.add(handle);
 
       handle.addEventListener('pointerdown', (e: PointerEvent) => {
-        if (e.button !== 0) return; // left/primary button only
+        if (e.button !== 0) return;
         e.preventDefault();
-        this._startDrag(e, index, wrapper as HTMLElement);
+        // Resolve the current index at event time, not closure time
+        const currentIndex = [...this.shadowRoot!.querySelectorAll('.card-wrapper')].indexOf(wrapper);
+        if (currentIndex < 0) return;
+        this._startDrag(e, currentIndex, wrapper as HTMLElement);
       });
     });
   }

@@ -15,7 +15,7 @@ A family-oriented web app where a parent/organizer enters road trip locations, a
 | Layer | Technology | Why |
 |-------|-----------|-----|
 | **Framework** | Vite + Lit (TypeScript) | Web Awesome Pro is built on Lit — zero impedance mismatch, same component model throughout |
-| **UI Components** | Web Awesome Pro (`@awesome.me/webawesome`) v3.2.x | 50+ web components, playful theme + bright color palette for kid-friendly out-of-the-box look |
+| **UI Components** | Web Awesome Pro (`@web.awesome.me/webawesome-pro`) v3.x | 50+ web components, playful theme + bright color palette for kid-friendly out-of-the-box look |
 | **Icons** | Font Awesome Pro+ Jelly icons (via Kit code) | Rounded, bubbly icon style perfect for children's UI (requires Pro+ subscription) |
 | **Map Renderer** | MapLibre GL JS v5.x | Open-source, WebGL vector maps, great styling control, print export support |
 | **Map Tiles** | OpenFreeMap (free, no API key, unlimited) | Free OpenStreetMap vector tiles, commercial use allowed |
@@ -59,7 +59,7 @@ A family-oriented web app where a parent/organizer enters road trip locations, a
    - Share controls: set public/private, generate invite links for collaborators (Viewer or Editor)
    - Share link: /map/{id} (public maps viewable by anyone, with "Duplicate this trip" to fork)
 6. Export Page (requires auth)
-   - Download as PDF (print-quality 150 DPI)
+   - Download as PDF (print-quality 200 DPI)
    - Download as PNG/JPEG image
    - "Order a Print!" → select poster size, enter shipping address → Stripe Checkout
 7. Order Confirmation
@@ -259,8 +259,8 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 - Custom markers at each stop with numbered badges + chosen Jelly icon
 
 ### PDF Export
-- `@watergis/maplibre-gl-export` renders map at **150 DPI** (sufficient for poster-size prints viewed at arm's length or further; 300 DPI is unnecessary for wall posters and exceeds WebGL canvas limits on many devices)
-- **Canvas size limits:** 18x24" at 150 DPI = 2700x3600px (~10 MP), 24x36" at 150 DPI = 3600x5400px (~19 MP). Both are within safe WebGL limits for most devices. Cap max canvas dimension at 5400px as a safety net — if the device can't allocate the canvas, show an error with a "try on desktop" message
+- `@watergis/maplibre-gl-export` renders map at **200 DPI** (better print quality while within canvas limits; 300 DPI is unnecessary for wall posters and exceeds WebGL canvas limits on many devices)
+- **Canvas size limits:** Cap max canvas dimension at 5400px as a safety net — if the device can't allocate the canvas, show an error with a "try on desktop" message
 - jsPDF wraps the map image in a decorative print layout:
   - Trip title in playful font
   - Family name
@@ -274,7 +274,7 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
   - 24x36" — **$29.99**
 - Shipping: **separate line item** — Worker calls **Prodigi quote API** before creating Stripe Checkout session to get exact shipping cost for the customer's address + poster size. Shipping cost is passed to Stripe as a separate line item
 - Paper: Enhanced Matte or Budget Poster
-- **Image delivery to Prodigi:** Client renders 150 DPI map image via `maplibre-gl-export`, uploads to Cloudflare R2 via Worker, then passes the public R2 URL to Prodigi
+- **Image delivery to Prodigi:** Client renders 200 DPI map image via `maplibre-gl-export`, uploads to Cloudflare R2 via Worker, then passes the public R2 URL to Prodigi
 - **R2 public access:** Custom domain (e.g., `prints.kidsroadtripmap.com`) pointing to the `roadtrip-prints` R2 bucket. Image URLs are unguessable UUIDs
 - Flow: Client uploads image to R2 → Worker calls Prodigi quote API for shipping cost → Stripe Checkout (poster price + shipping) → webhook confirms payment → backend places Prodigi order (with R2 image URL) → Prodigi ships direct to customer
 - Prodigi sandbox for development (free, orders not fulfilled)
@@ -469,7 +469,7 @@ CREATE TABLE orders (
 - **D1 Database:** `DB` → `roadtrip-db`
 - **KV Namespace:** `API_CACHE`
 - **R2 Bucket:** `roadtrip-prints`
-- **Rate Limiter:** `RATE_LIMITER` → `rate_limit` binding
+- **Rate Limiters:** `RATE_LIMITER_PUBLIC` (60/min), `RATE_LIMITER_PROXY` (30/min), `RATE_LIMITER_AUTH` (10/min)
 
 ### Secrets (via `wrangler secret put`)
 - `BETTER_AUTH_SECRET` — session signing key
@@ -488,7 +488,7 @@ The client attempts a high-res WebGL canvas render before checkout. Whether it s
 
 ```
 Authenticated user clicks "Order Print"
-  → Client attempts 150 DPI map render via maplibre-gl-export
+  → Client attempts 200 DPI map render via maplibre-gl-export
   → [SUCCESS PATH] Client uploads image to R2 → gets public URL, passes it to /api/checkout
   → [FAILURE PATH] Canvas allocation fails → client proceeds to checkout without image_url
   → Frontend calls POST /api/print-quote (poster size, shipping address) → Worker calls Prodigi quote API → returns exact shipping cost
@@ -1488,7 +1488,7 @@ worker/src/
 
 **Deliberate deviations from plan:**
 
-1. **200 DPI instead of 150 DPI.** Plan calls for 150 DPI. Implementation uses 200 DPI as the default — better print quality while still within canvas limits on most devices. The 5400px cap ensures graceful degradation.
+1. **200 DPI instead of originally planned 150 DPI.** Implementation uses 200 DPI as the default — better print quality while still within canvas limits on most devices. The 5400px cap ensures graceful degradation.
 
 2. **CSRF protection added.** Not in M7 plan scope. Origin header validation on all state-changing `/api/*` requests (skips webhooks and auth routes which handle their own CSRF). Added because export page is accessible to authenticated users navigating from external links.
 
@@ -1514,7 +1514,7 @@ worker/src/
 
 **Build:**
 1. Implement R2 image upload route in Worker (`POST /api/images/:map_id`) + `services/image-upload.ts`
-2. Build client-side 150 DPI image render + upload flow — attempt render, upload on success, proceed to checkout regardless; pass `image_url` to checkout only if upload succeeded
+2. Build client-side 200 DPI image render + upload flow — attempt render, upload on success, proceed to checkout regardless; pass `image_url` to checkout only if upload succeeded
 3. Build `print-order-form.ts` — poster size selection ($19.99 / $29.99), shipping address form, shipping cost display (fetched from Prodigi quote)
 4. Implement Prodigi quote route in Worker (`POST /api/print-quote`) — calls Prodigi quote API with poster size + shipping address → returns exact shipping cost
 5. Implement Stripe Checkout session creation in Worker (`POST /api/checkout`) — poster price + quoted shipping as separate line items, user ID in metadata; `image_url` is optional

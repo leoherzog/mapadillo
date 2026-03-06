@@ -558,7 +558,7 @@ describe('Stop reorder', () => {
     expect(body[2].position).toBe(2);
   });
 
-  it('reorder nulls travel_mode for new first stop', async () => {
+  it('reorder preserves travel_mode for route at position 0', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
 
@@ -574,7 +574,7 @@ describe('Stop reorder', () => {
     const map = (await res.json()) as { stops: Array<{ position: number; travel_mode: string | null; id: string }> };
     const firstStop = map.stops.find((s) => s.position === 0)!;
     expect(firstStop.id).toBe(id2);
-    expect(firstStop.travel_mode).toBeNull();
+    expect(firstStop.travel_mode).toBe('drive');
   });
 
   it('PUT /:id/stops/reorder returns 400 with missing order', async () => {
@@ -629,8 +629,8 @@ describe('Cascade delete', () => {
 
 // ── First stop travel_mode edge cases ────────────────────────────────────────
 
-describe('First stop travel_mode nulling', () => {
-  it('forces travel_mode null on first stop creation even if provided', async () => {
+describe('Route travel_mode at position 0', () => {
+  it('preserves travel_mode on route at position 0', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
 
@@ -639,24 +639,24 @@ describe('First stop travel_mode nulling', () => {
     }, cookie);
     expect(res.status).toBe(201);
     const stop = (await res.json()) as { travel_mode: string | null };
-    expect(stop.travel_mode).toBeNull();
+    expect(stop.travel_mode).toBe('drive');
   });
 
-  it('nulls travel_mode when deleting first stop promotes second', async () => {
+  it('preserves travel_mode when deleting first stop promotes route', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
 
     const s1Id = await createStop(cookie, mapId, { name: 'First', lat: 50, lng: 10 });
     await createStop(cookie, mapId, { name: 'Second', lat: 51, lng: 11, travel_mode: 'drive', type: 'route' });
 
-    // Delete first stop
+    // Delete first stop — route is promoted to position 0
     await request(`/api/maps/${mapId}/stops/${s1Id}`, { method: 'DELETE', headers: { cookie } });
 
-    // Check promoted first stop
+    // Route at position 0 keeps its travel_mode
     const mapRes = await request(`/api/maps/${mapId}`, { headers: { cookie } });
     const mapData = (await mapRes.json()) as { stops: Array<{ position: number; travel_mode: string | null }> };
     expect(mapData.stops[0].position).toBe(0);
-    expect(mapData.stops[0].travel_mode).toBeNull();
+    expect(mapData.stops[0].travel_mode).toBe('drive');
   });
 });
 

@@ -58,18 +58,21 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 
 ### Shared types
 
-`shared/types.ts` is imported by both frontend (`tsconfig.json` includes `"shared"`) and worker (relative import `../../shared/types.js`). Contains `MapData`, `Stop`, `ShareData`, `ShareRow`, `MapRole`, `SessionUser`.
+`shared/types.ts` is imported by both frontend (`tsconfig.json` includes `"shared"`) and worker (relative import `../../shared/types.js`). Contains `MapData`, `Stop` (includes `route_geometry` field), `ShareData`, `ShareRow`, `MapRole`, `SessionUser`.
 
 ### Frontend: `src/`
 
 - **Entry:** `src/index.ts` sets up the Lit `<app-shell>` and initializes auth
-- **Router:** `src/router.ts` — DIY Lit reactive controller using `URLPattern` + Navigation API (no library). Routes defined as `{ path, render, enter? }` objects. `enter()` returns a redirect path string or `void`
+- **Router:** `src/router.ts` — DIY Lit reactive controller using `URLPattern` + Navigation API (no library). Routes defined as `{ path, render, enter? }` objects. `enter()` returns a redirect path string or `void`. Routes: `/`, `/sign-in`, `/dashboard` (guarded), `/map/new` (guarded), `/map/:id` (no guard — public maps), `/preview/:id`, `/export/:id` (guarded), `/claim/:token` (guarded)
 - **Auth state:** `src/auth/auth-state.ts` — module-level singleton (`_user`, `_listeners`). Call `initAuth()` on load; `onAuthChange(fn)` for reactive components; `refreshAuth()` after passkey sign-in
 - **Auth client:** `src/auth/auth-client.ts` — `createAuthClient()` from `better-auth/client`. Methods: `signIn.social({ provider })`, `signIn.passkey()`, `signUp.email()`, `signOut()`, `getSession()`
 - **Auth guard:** `src/auth/auth-guard.ts` — used as `enter()` in route definitions
 - **Services:** `src/services/` — `api-client.ts` base fetch wrapper (same-origin, no CORS); `maps.ts` typed CRUD wrappers; `geocoding.ts` → `/api/geocode`; `routing.ts` → `/api/route`
 - **Map:** `src/map/map-controller.ts` manages MapLibre instance, draws stops + route segments; `src/map/map-export.ts` handles PDF/image export via `@watergis/maplibre-gl-export` + jsPDF
 - **Config:** `src/config/travel-modes.ts`, `src/config/map.ts` — travel mode definitions and map constants
+- **Styles:** `src/styles/card-shared.ts` (shared CSS for point-card + route-card), `src/styles/page-layout.ts` (shared page layout CSS), `src/styles/wa-utilities.ts` (Web Awesome utility classes)
+- **Utils:** `src/utils/geo.ts` — `isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `sanitizeFilename()`
+- **Pages:** `landing-page.ts`, `sign-in-page.ts`, `dashboard-page.ts`, `trip-builder-page.ts`, `claim-page.ts`, `map-preview-page.ts`, `map-page-base.ts` (shared base class), `export-page.ts`
 
 ### Worker: `worker/src/`
 
@@ -80,7 +83,7 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 - **Lib:** `worker/src/lib/` — `hash.ts` (crypto hashing helpers). *Note: Prodigi and Stripe helpers are planned but not yet implemented.*
 - **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic)
 - **DB types:** `worker/src/db/types.ts` re-exports from `shared/types.ts`
-- **Migrations:** `worker/src/db/migrations/` — 4 migrations (0001–0004)
+- **Migrations:** `worker/src/db/migrations/` — 5 migrations (0001–0005)
 
 ### Cloudflare bindings (`worker/wrangler.toml`)
 
@@ -99,7 +102,7 @@ Secrets set via `wrangler secret put`: `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, 
 
 Two stop types stored in the `stops` table:
 - **`point`** — standalone map marker (name, lat/lng, icon, label)
-- **`route`** — A→B segment (start lat/lng/name + `dest_*` fields + `travel_mode`)
+- **`route`** — A→B segment (start lat/lng/name + `dest_*` fields + `travel_mode` + `route_geometry` for cached GeoJSON)
 
 `travel_mode` is stored on the destination stop (NULL on the first stop). Five modes: `drive`, `walk`, `bike`, `plane`, `boat`. Plane = great-circle arc (client-computed, no ORS call). Boat = straight line.
 

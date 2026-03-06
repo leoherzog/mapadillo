@@ -9,8 +9,9 @@ import { css } from 'lit';
 export const pageLayoutStyles = css`
   :host {
     display: flex;
-    flex: 1;
+    height: 100%;
     min-height: 0;
+    overflow: hidden;
   }
 
   .sidebar {

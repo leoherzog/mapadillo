@@ -65,7 +65,6 @@ export class LocationSearch extends LitElement {
   render() {
     return html`
       <wa-combobox
-        label="Search for a place"
         autocomplete="none"
         placeholder=${this.placeholder}
         with-clear
@@ -131,6 +130,10 @@ export class LocationSearch extends LitElement {
       if (gen !== this._searchGeneration) return; // stale response
       this._results = results;
       this._searched = true;
+      if (results.length) {
+        await this.updateComplete;
+        this.shadowRoot!.querySelector<any>('wa-combobox')!.show();
+      }
     } catch {
       if (gen !== this._searchGeneration) return;
       this._results = [];

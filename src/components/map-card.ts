@@ -5,7 +5,7 @@
  * fitted to bounds. Below the map: trip name, family name, stop count,
  * and relative update time. Click navigates to the map detail view.
  */
-import { LitElement, html, css, unsafeCSS } from 'lit';
+import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
@@ -189,18 +189,18 @@ export class MapCard extends LitElement {
         </div>
         <div class="wa-cluster wa-align-items-center wa-gap-xs">
           <h3>${this.map.name}</h3>
-          ${this.roleBadge ? html`<wa-badge variant=${this.roleBadge === 'editor' ? 'brand' : 'neutral'}>${this.roleBadge}</wa-badge>` : ''}
+          ${this.roleBadge ? html`<wa-badge variant=${this.roleBadge === 'editor' ? 'brand' : 'neutral'}>${this.roleBadge}</wa-badge>` : nothing}
         </div>
         ${this.map.family_name
           ? html`<div class="family">${this.map.family_name}</div>`
-          : ''}
+          : nothing}
         <div class="meta wa-split wa-align-items-center">
           <span>${itemCount} item${itemCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
           ${!this.roleBadge ? html`
             <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
               <wa-icon name="trash" label="Delete map"></wa-icon>
             </wa-button>
-          ` : ''}
+          ` : nothing}
         </div>
       </wa-card>
     `;
