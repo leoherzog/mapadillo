@@ -4,7 +4,7 @@
  *
  * Header shows "Sign In" when unauthenticated, user-menu when authenticated.
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Router } from '../router.js';
 import { requireAuth } from '../auth/auth-guard.js';
@@ -105,6 +105,30 @@ export class AppShell extends LitElement {
       display: none;
     }
 
+    :host([no-footer]) wa-page::part(base) {
+      height: 100dvh;
+    }
+
+    :host([no-footer]) wa-page::part(footer) {
+      display: none;
+    }
+
+    :host([no-footer]) wa-page::part(body) {
+      min-height: 0;
+      align-items: stretch;
+    }
+
+    :host([no-footer]) wa-page::part(main) {
+      min-height: 0;
+    }
+
+    :host([no-footer]) wa-page::part(main-content) {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
     @media (max-width: 700px) {
       .header-inner {
         padding: var(--wa-space-xs) var(--wa-space-s);
@@ -133,7 +157,15 @@ export class AppShell extends LitElement {
     this._unsubAuth?.();
   }
 
+  private get _isFullHeight() {
+    const p = location.pathname;
+    return p.startsWith('/map/') || p === '/map/new';
+  }
+
   render() {
+    const fullHeight = this._isFullHeight;
+    this.toggleAttribute('no-footer', fullHeight);
+
     return html`
       <wa-page disable-sticky="header">
         <div slot="header" class="header-inner wa-cluster wa-align-items-center wa-gap-m">
@@ -170,9 +202,11 @@ export class AppShell extends LitElement {
 
         ${this.router.outlet}
 
-        <div slot="footer" class="footer-inner">
-          &copy; ${new Date().getFullYear()} Mapadillo
-        </div>
+        ${fullHeight ? nothing : html`
+          <div slot="footer" class="footer-inner">
+            &copy; ${new Date().getFullYear()} Mapadillo
+          </div>
+        `}
       </wa-page>
     `;
   }
