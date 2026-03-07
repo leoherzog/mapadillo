@@ -42,22 +42,22 @@ export function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   return request<T>(path, undefined, signal);
 }
 
-export function apiPost<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+function jsonRequest<T>(method: string, path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
   return request<T>(path, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: data !== undefined ? JSON.stringify(data) : undefined,
   }, signal);
 }
 
-export function apiPut<T>(path: string, data?: unknown): Promise<T> {
-  return request<T>(path, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: data !== undefined ? JSON.stringify(data) : undefined,
-  });
+export function apiPost<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  return jsonRequest<T>('POST', path, data, signal);
 }
 
-export function apiDelete<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'DELETE' });
+export function apiPut<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  return jsonRequest<T>('PUT', path, data, signal);
+}
+
+export function apiDelete<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, { method: 'DELETE' }, signal);
 }

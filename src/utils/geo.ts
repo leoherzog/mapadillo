@@ -16,17 +16,12 @@ export function formatDistance(meters: number, units: string): string {
 }
 
 /** Convert degrees to radians. */
-export function toRad(deg: number): number {
+function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
-/** Convert radians to degrees. */
-export function toDeg(rad: number): number {
-  return (rad * 180) / Math.PI;
-}
-
 /** Haversine angular distance in radians between two [lon, lat] points. */
-export function haversineAngle(
+function haversineAngle(
   a: [number, number],
   b: [number, number],
 ): number {
@@ -59,9 +54,14 @@ export function getDefaultUnits(): 'km' | 'mi' {
   const lang = navigator.language ?? '';
   const region = lang.split('-')[1]?.toUpperCase();
   if (region === 'US' || region === 'GB' || region === 'MM') return 'mi';
-  // Also check primary language tags without region
-  if (lang.startsWith('en-US') || lang.startsWith('en-GB') || lang.startsWith('my')) return 'mi';
+  // Myanmar language tag without region suffix
+  if (lang.startsWith('my')) return 'mi';
   return 'km';
+}
+
+/** Format a lat/lng pair as a display string. */
+export function formatCoords(lat: number, lng: number): string {
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 /** Sanitize a string for use as a filename. */

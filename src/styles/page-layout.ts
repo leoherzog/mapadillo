@@ -6,10 +6,19 @@ import { css } from 'lit';
  * Use `.sidebar-left` or `.sidebar-right` on the sidebar element
  * to control which side gets the border.
  */
+/** Reusable .family-name subtitle style (quiet, small text). */
+export const familyNameStyles = css`
+  .family-name {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    margin: 0;
+  }
+`;
+
 export const pageLayoutStyles = css`
   :host {
     display: flex;
-    height: calc(100dvh - var(--header-height, 0px));
+    flex: 1;
     min-height: 0;
     overflow: hidden;
   }
@@ -39,9 +48,6 @@ export const pageLayoutStyles = css`
 
   h1 {
     font-size: var(--wa-font-size-xl);
-    font-weight: var(--wa-font-weight-bold);
-    margin: 0;
-    color: var(--wa-color-brand-60);
   }
 
   h1 wa-icon {
@@ -64,6 +70,12 @@ export const pageLayoutStyles = css`
 
   .stat-label {
     color: var(--wa-color-text-quiet);
+  }
+
+  .loading-center {
+    display: flex;
+    justify-content: center;
+    padding: var(--wa-space-2xl);
   }
 
   /* Responsive: stack on narrow viewports */

@@ -6,7 +6,7 @@
  * rudimentary palette + theme.css overrides.
  */
 
-export interface TravelModeConfig {
+interface TravelModeConfig {
   mode: string;
   icon: string;
   cssColor: string;
@@ -21,9 +21,6 @@ export const TRAVEL_MODES: TravelModeConfig[] = [
   { mode: 'bike',  icon: 'person-biking',  cssColor: 'var(--wa-color-cyan-50)',   hexColor: '#008098', orsProfile: 'cycling-regular' },
   { mode: 'walk',  icon: 'compass',        cssColor: 'var(--wa-color-green-50)',  hexColor: '#0f881d', orsProfile: 'foot-walking' },
 ];
-
-/** Set of valid travel mode names (useful for validation). */
-export const VALID_TRAVEL_MODES = new Set(TRAVEL_MODES.map((m) => m.mode));
 
 /** Pre-built lookup: mode → CSS custom property color (for component styles). */
 export const CSS_COLOR_BY_MODE: Record<string, string> = Object.fromEntries(

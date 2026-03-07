@@ -12,6 +12,7 @@ import { authClient } from '../auth/auth-client.js';
 import { refreshAuth } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { headingStyles } from '../styles/heading-shared.js';
 
 @customElement('sign-in-page')
 export class SignInPage extends LitElement {
@@ -21,7 +22,7 @@ export class SignInPage extends LitElement {
   @state() private _error = '';
   @state() private _loading = false;
 
-  static styles = [waUtilities, css`
+  static styles = [waUtilities, headingStyles, css`
     :host {
       display: flex;
       align-items: center;
@@ -46,9 +47,6 @@ export class SignInPage extends LitElement {
 
     h1 {
       font-size: var(--wa-font-size-xl);
-      font-weight: var(--wa-font-weight-bold);
-      margin: 0;
-      color: var(--wa-color-brand-60);
     }
 
     p {
@@ -115,38 +113,18 @@ export class SignInPage extends LitElement {
 
   private _renderSignIn() {
     return html`
-      <div class="auth-buttons wa-stack wa-gap-s full-width">
-        <wa-button
-          variant="neutral"
-          appearance="outlined"
-          @click=${() => this._signInSocial('google')}
-          ?disabled=${this._loading}
-          ?loading=${this._loading}
-        >
-          <wa-icon slot="start" name="google" family="brands"></wa-icon>
-          Continue with Google
-        </wa-button>
-        <wa-button
-          variant="neutral"
-          appearance="outlined"
-          @click=${() => this._signInSocial('facebook')}
-          ?disabled=${this._loading}
-          ?loading=${this._loading}
-        >
-          <wa-icon slot="start" name="facebook" family="brands"></wa-icon>
-          Continue with Facebook
-        </wa-button>
-        <wa-button
-          variant="brand"
-          appearance="outlined"
-          @click=${this._signInPasskey}
-          ?disabled=${this._loading}
-          ?loading=${this._loading}
-        >
-          <wa-icon slot="start" name="fingerprint" family="duotone"></wa-icon>
-          Sign in with Passkey
-        </wa-button>
-      </div>
+      ${this._renderSocialButtons('Continue with')}
+      <wa-button
+        class="full-width"
+        variant="brand"
+        appearance="outlined"
+        @click=${this._signInPasskey}
+        ?disabled=${this._loading}
+        ?loading=${this._loading}
+      >
+        <wa-icon slot="start" name="fingerprint" family="duotone"></wa-icon>
+        Sign in with Passkey
+      </wa-button>
 
       ${this._renderDivider()}
 

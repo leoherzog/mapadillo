@@ -7,6 +7,7 @@ import { html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { pageLayoutStyles } from '../styles/page-layout.js';
+import { headingStyles } from '../styles/heading-shared.js';
 import {
   createMap,
   updateMap,
@@ -46,7 +47,7 @@ export class TripBuilderPage extends MapPageBase {
   private _creatingMap = false;
   private _routeDebounceTimer?: ReturnType<typeof setTimeout>;
 
-  static styles = [waUtilities, pageLayoutStyles, css`
+  static styles = [waUtilities, headingStyles, pageLayoutStyles, css`
     h1 {
       flex: 1;
     }
@@ -73,10 +74,6 @@ export class TripBuilderPage extends MapPageBase {
 
     wa-details::part(content) {
       padding-top: var(--wa-space-s);
-    }
-
-    .loading-spinner {
-      padding: var(--wa-space-2xl);
     }
 
     .section-heading {
@@ -186,11 +183,7 @@ export class TripBuilderPage extends MapPageBase {
         this._items = [];
         this._role = 'owner';
         this.mapId = newMap.id;
-        if ('navigation' in window) {
-          (window as unknown as { navigation: { navigate: (url: string, opts?: { history?: string }) => void } }).navigation.navigate(`/map/${newMap.id}`, { history: 'replace' });
-        } else {
-          window.history.replaceState(null, '', `/map/${newMap.id}`);
-        }
+        navigateTo(`/map/${newMap.id}`, { replace: true });
       } catch (err) {
         this._error = err instanceof Error ? err.message : 'Failed to create map';
       } finally {
@@ -217,7 +210,7 @@ export class TripBuilderPage extends MapPageBase {
     if (this._loading) {
       return html`
         <div class="sidebar sidebar-left">
-          <div class="wa-cluster wa-align-items-center wa-justify-content-center loading-spinner"><wa-spinner></wa-spinner></div>
+          <div class="loading-center"><wa-spinner></wa-spinner></div>
         </div>
         <div class="map-panel"><map-view></map-view></div>
       `;
@@ -317,7 +310,7 @@ export class TripBuilderPage extends MapPageBase {
             ></wa-input>
           ` : html`
             <h2 class="section-heading">${this._map?.name ?? 'Untitled Trip'}</h2>
-            ${this._map?.family_name ? html`<p class="section-subtitle">${this._map.family_name}</p>` : ''}
+            ${this._map?.family_name ? html`<p class="section-subtitle">${this._map.family_name}</p>` : nothing}
           `}
         </div>
 
@@ -357,14 +350,14 @@ export class TripBuilderPage extends MapPageBase {
                 <span class="stat-label">Total distance:</span>
                 <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
               </div>
-            ` : ''}
+            ` : nothing}
 
             ${this._routeLoading ? html`
               <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
                 <wa-spinner></wa-spinner>
                 Calculating routes...
               </div>
-            ` : ''}
+            ` : nothing}
           </div>
         </div>
 
@@ -396,7 +389,7 @@ export class TripBuilderPage extends MapPageBase {
                 </div>
               </div>
             </wa-details>
-          ` : ''}
+          ` : nothing}
         </div>
       </div>
 
@@ -410,7 +403,7 @@ export class TripBuilderPage extends MapPageBase {
           .visibility=${(this._map?.visibility ?? 'private') as 'public' | 'private'}
           @visibility-changed=${this._onVisibilityChanged}
         ></share-dialog>
-      ` : ''}
+      ` : nothing}
     `;
   }
 
@@ -439,7 +432,7 @@ export class TripBuilderPage extends MapPageBase {
   }
 
   private _onUnitsChange(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
+    const value = (e.target as HTMLInputElement).value as 'km' | 'mi';
     if (this._map) this._map = { ...this._map, units: value };
     this._debounceSave();
     // Distance display updates reactively (re-render)
@@ -556,7 +549,7 @@ export class TripBuilderPage extends MapPageBase {
       await updateStop(mapId, itemId, fields);
       if (--this._pendingSaves === 0) this._setSaveStatus('saved');
     } catch {
-      this._pendingSaves--;
+      --this._pendingSaves;
       this._setSaveStatus('error');
     }
   }
@@ -610,7 +603,7 @@ export class TripBuilderPage extends MapPageBase {
     dialog?.show();
   }
 
-  private _onVisibilityChanged(e: CustomEvent<{ visibility: string }>) {
+  private _onVisibilityChanged(e: CustomEvent<{ visibility: 'public' | 'private' }>) {
     if (this._map) {
       this._map = { ...this._map, visibility: e.detail.visibility };
     }

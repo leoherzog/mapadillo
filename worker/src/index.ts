@@ -8,14 +8,13 @@
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 7: export (PDF / image).
+ * Milestone 8: polish & launch prep.
  */
 
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { getAuth } from './auth.js';
-import { requireAuth } from './middleware/require-auth.js';
-import { optionalAuth } from './middleware/optional-auth.js';
+import { requireAuth, optionalAuth } from './middleware/auth.js';
 import { rateLimit } from './middleware/rate-limit.js';
 import { geocodeHandler } from './routes/geocode.js';
 import { routeHandler } from './routes/route.js';
@@ -46,7 +45,7 @@ app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 7 });
+  return c.json({ status: 'ok', milestone: 8 });
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
@@ -56,7 +55,7 @@ app.use('/api/auth/*', rateLimit('RATE_LIMITER_AUTH', getClientIp));
 // Use app.all so PUT/DELETE/OPTIONS (passkey plugin, sign-out) are handled.
 app.all('/api/auth/*', async (c) => {
   const auth = getAuth(c.env);
-  return auth!.handler(c.req.raw);
+  return auth.handler(c.req.raw);
 });
 
 // ── CSRF protection (Origin header check) ────────────────────────────────
@@ -111,12 +110,9 @@ app.use('/api/maps/*', async (c, next) => {
   }
   return requireAuth(c, next);
 });
-app.use('/api/maps', async (c, next) => {
-  // Only apply requireAuth to the exact /api/maps path (list + create).
-  // Sub-routes like /api/maps/:id are already handled by the /api/maps/* middleware above.
-  if (c.req.path === '/api/maps') return requireAuth(c, next);
-  return next();
-});
+// Hono's app.use('/api/maps', ...) matches only the exact path, not sub-paths.
+// Sub-paths like /api/maps/:id are handled by the /api/maps/* middleware above.
+app.use('/api/maps', requireAuth);
 app.route('/api/maps', maps);
 app.route('/api/maps', sharing);
 

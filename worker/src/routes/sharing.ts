@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
-import type { MapRow, StopRow, ShareRow } from '../db/types.js';
+import type { MapData, Stop, ShareRow } from '../../../shared/types.js';
 import { getMapWithRole } from './maps.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ async function getOwnedMap(
   db: D1Database,
   mapId: string,
   userId: string,
-): Promise<MapRow | null> {
+): Promise<MapData | null> {
   const result = await getMapWithRole(db, mapId, userId);
   if (!result || result.role !== 'owner') return null;
   return result.map;
@@ -72,7 +72,12 @@ sharing.post('/:id/shares', async (c) => {
   const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
-  const body = await c.req.json<{ role?: string }>().catch((): { role?: string } => ({}));
+  let body: { role?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
   if (!body.role || !VALID_ROLES.has(body.role)) {
     return c.json({ error: 'role must be "viewer" or "editor"' }, 400);
   }
@@ -94,7 +99,12 @@ sharing.put('/:id/shares/:shareId', async (c) => {
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
   const shareId = c.req.param('shareId');
-  const body = await c.req.json<{ role?: string }>().catch((): { role?: string } => ({}));
+  let body: { role?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
   if (!body.role || !VALID_ROLES.has(body.role)) {
     return c.json({ error: 'role must be "viewer" or "editor"' }, 400);
   }
@@ -134,7 +144,12 @@ sharing.put('/:id/visibility', async (c) => {
   const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
-  const body = await c.req.json<{ visibility?: string }>().catch((): { visibility?: string } => ({}));
+  let body: { visibility?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
   if (!body.visibility || !['public', 'private'].includes(body.visibility)) {
     return c.json({ error: 'visibility must be "public" or "private"' }, 400);
   }
@@ -170,28 +185,31 @@ sharing.post('/:id/duplicate', async (c) => {
   // Copy all stops with new IDs
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(mapId).all<StopRow>();
+  ).bind(mapId).all<Stop>();
 
+  const newStops: Stop[] = [];
   if (stops.results.length > 0) {
-    const stmts = stops.results.map((stop) =>
-      c.env.DB.prepare(
-        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, route_geometry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    const stmts = stops.results.map((stop) => {
+      const newId = crypto.randomUUID();
+      newStops.push({ ...stop, id: newId, map_id: newMapId, created_at: now });
+      return c.env.DB.prepare(
+        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(
-        crypto.randomUUID(), newMapId, stop.position, stop.type, stop.name,
+        newId, newMapId, stop.position, stop.type, stop.name,
         stop.label, stop.latitude, stop.longitude, stop.icon, stop.travel_mode,
-        stop.dest_name, stop.dest_latitude, stop.dest_longitude, stop.route_geometry,
-      ),
-    );
+        stop.dest_name, stop.dest_latitude, stop.dest_longitude, stop.route_geometry, now,
+      );
+    });
     await c.env.DB.batch(stmts);
   }
 
-  const newMap = await c.env.DB.prepare('SELECT * FROM maps WHERE id = ?')
-    .bind(newMapId).first<MapRow>();
-  const newStops = await c.env.DB.prepare(
-    'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(newMapId).all<StopRow>();
-
-  return c.json({ ...newMap, stops: newStops.results }, 201);
+  const newMap: MapData = {
+    id: newMapId, owner_id: userId, name: `${map.name} (copy)`,
+    family_name: map.family_name, visibility: 'private',
+    style_preferences: map.style_preferences, units: map.units,
+    created_at: now, updated_at: now,
+  };
+  return c.json({ ...newMap, stops: newStops }, 201);
 });
 
 // ── Claim share handler (mounted separately at /api/shares/claim/:token) ──

@@ -4,10 +4,11 @@
  * Left panel: read-only map view showing all stops and route lines.
  * Right panel: sidebar with trip info, export format options, and download actions.
  */
-import { html, css } from 'lit';
+import { html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
-import { pageLayoutStyles } from '../styles/page-layout.js';
+import { pageLayoutStyles, familyNameStyles } from '../styles/page-layout.js';
+import { headingStyles } from '../styles/heading-shared.js';
 import { exportMap, type ExportFormat, type PaperSize, type Orientation } from '../map/map-export.js';
 import { navigateTo } from '../nav.js';
 import { formatDistance } from '../utils/geo.js';
@@ -21,25 +22,12 @@ export class ExportPage extends MapPageBase {
   @state() private _exporting = false;
   @state() private _exportError = '';
 
-  static styles = [waUtilities, pageLayoutStyles, css`
+  static styles = [waUtilities, headingStyles, pageLayoutStyles, familyNameStyles, css`
     .trip-info h2 {
       margin: 0;
       font-size: var(--wa-font-size-l);
       font-weight: var(--wa-font-weight-bold);
       color: var(--wa-color-text-normal);
-    }
-
-    .trip-info .family-name {
-      margin: 0;
-      font-size: var(--wa-font-size-s);
-      color: var(--wa-color-text-quiet);
-    }
-
-    .loading-container {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: var(--wa-space-2xl);
     }
 
     /* On narrow viewports, show sidebar above the map */
@@ -60,7 +48,7 @@ export class ExportPage extends MapPageBase {
 
       <div class="sidebar sidebar-right wa-stack wa-gap-m">
         ${this._loading ? html`
-          <div class="loading-container"><wa-spinner></wa-spinner></div>
+          <div class="loading-center"><wa-spinner></wa-spinner></div>
         ` : this._error ? html`
           <wa-callout variant="danger">
             <wa-icon slot="icon" name="circle-xmark"></wa-icon>
@@ -94,7 +82,7 @@ export class ExportPage extends MapPageBase {
                   <span class="stat-label">Total distance:</span>
                   <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
                 </div>
-              ` : ''}
+              ` : nothing}
             </div>
           ` : html`
             <wa-callout variant="warning">
@@ -123,7 +111,7 @@ export class ExportPage extends MapPageBase {
             <wa-icon slot="start" name="arrow-left"></wa-icon>
             Back to trip builder
           </wa-button>
-        ` : ''}
+        ` : nothing}
       </div>
     `;
   }

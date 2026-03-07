@@ -1,5 +1,11 @@
 import { createMiddleware } from 'hono/factory';
-import type { AppEnv } from '../types.js';
+import type { Context } from 'hono';
+import type { AppEnv, Env } from '../types.js';
+
+/** Binding names whose value is a RateLimit. */
+type RateLimitBindings = {
+  [K in keyof Env as Env[K] extends RateLimit ? K : never]: true;
+};
 
 /**
  * Factory that returns a Hono middleware enforcing a per-key rate limit.
@@ -8,8 +14,8 @@ import type { AppEnv } from '../types.js';
  * @param keyFn     - Derives the rate-limit key from the context (e.g. user id, IP)
  */
 export function rateLimit(
-  binding: keyof { [K in keyof AppEnv['Bindings'] as AppEnv['Bindings'][K] extends RateLimit ? K : never]: true },
-  keyFn: (c: Parameters<Parameters<typeof createMiddleware<AppEnv>>[0]>[0]) => string,
+  binding: keyof RateLimitBindings,
+  keyFn: (c: Context<AppEnv>) => string,
 ) {
   return createMiddleware<AppEnv>(async (c, next) => {
     const limiter = c.env[binding] as RateLimit;

@@ -21,7 +21,7 @@ function applyDark(dark: boolean): void {
 }
 
 /** Read stored preference, defaulting to 'auto'. */
-export function getPreference(): Preference {
+function getPreference(): Preference {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === 'light' || stored === 'dark') return stored;
   return 'auto';
@@ -33,7 +33,7 @@ export function isDark(): boolean {
 }
 
 /** Set preference and apply immediately. */
-export function setDarkMode(pref: Preference): void {
+function setDarkMode(pref: Preference): void {
   if (pref === 'auto') {
     localStorage.removeItem(STORAGE_KEY);
   } else {

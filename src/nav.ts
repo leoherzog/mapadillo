@@ -5,18 +5,20 @@
  * All programmatic navigation in child components should go through this
  * instead of reimplementing Navigation API access.
  */
-export function navigateTo(path: string): void {
+export function navigateTo(path: string, options?: { replace?: boolean }): void {
   // Avoid duplicate history entries if already at this URL
   if (new URL(path, location.origin).href === location.href) return;
 
   if ('navigation' in window) {
-    (
+    const nav = (
       window as unknown as {
-        navigation: { navigate: (url: string) => void };
+        navigation: { navigate: (url: string, opts?: { history?: string }) => void };
       }
-    ).navigation.navigate(path);
+    ).navigation;
+    nav.navigate(path, options?.replace ? { history: 'replace' } : undefined);
   } else {
-    window.history.pushState(null, '', path);
+    if (options?.replace) window.history.replaceState(null, '', path);
+    else window.history.pushState(null, '', path);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 }

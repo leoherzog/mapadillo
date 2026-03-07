@@ -7,9 +7,9 @@ export interface MapData {
   owner_id: string;
   name: string;
   family_name: string | null;
-  visibility: string;
+  visibility: 'public' | 'private';
   style_preferences: string;
-  units: string;
+  units: 'km' | 'mi';
   created_at: string;
   updated_at: string;
 }
@@ -47,7 +47,7 @@ export interface ShareRow {
   id: string;
   map_id: string;
   user_id: string | null;
-  role: string;
+  role: 'viewer' | 'editor';
   claim_token: string | null;
   created_at: string;
 }

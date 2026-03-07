@@ -63,16 +63,9 @@ describe('apiGet', () => {
   });
 
   it('throws ApiError with text body when JSON parse fails', async () => {
-    // Use a mock where json() rejects but text() resolves, simulating a
-    // non-JSON error body. Real Response consumes the body stream on json(),
-    // so we mock to test the intended fallback path.
-    const mockRes = {
-      ok: false,
-      status: 500,
-      json: () => Promise.reject(new SyntaxError('Unexpected token')),
-      text: () => Promise.resolve('Server Error'),
-    } as unknown as Response;
-    vi.mocked(fetch).mockResolvedValue(mockRes);
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('Server Error', { status: 500 }),
+    );
 
     const err = await apiGet('/api/broken').catch((e: unknown) => e);
 
@@ -81,12 +74,11 @@ describe('apiGet', () => {
     expect((err as ApiError).body).toBe('Server Error');
   });
 
-  it('throws ApiError with null body when both JSON and text fail', async () => {
+  it('throws ApiError with null body when text() fails', async () => {
     const badResponse = {
       ok: false,
       status: 500,
-      json: () => Promise.reject(new Error('no json')),
-      text: () => Promise.reject(new Error('no text')),
+      text: () => Promise.reject(new Error('no body')),
     } as unknown as Response;
     vi.mocked(fetch).mockResolvedValue(badResponse);
 
@@ -94,6 +86,18 @@ describe('apiGet', () => {
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).body).toBeNull();
+  });
+
+  it('extracts message field from JSON error body', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Not allowed' }), { status: 403 }),
+    );
+
+    const err = await apiGet('/api/forbidden').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(403);
+    expect((err as ApiError).body).toBe('Not allowed');
   });
 });
 

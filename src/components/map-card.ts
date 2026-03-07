@@ -15,7 +15,7 @@ import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
 import { MAP_STYLE_URL } from '../config/map.js';
-import { TRAVEL_MODES } from '../config/travel-modes.js';
+import { HEX_COLOR_BY_MODE } from '../config/travel-modes.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
@@ -109,11 +109,6 @@ export class MapCard extends LitElement {
     const bounds = new maplibregl.LngLatBounds();
     const color = getComputedStyle(this).getPropertyValue('--wa-color-brand-50').trim() || '#ff6b00';
 
-    // Build mode → hex color lookup
-    const modeColors: Record<string, string> = Object.fromEntries(
-      TRAVEL_MODES.map((m) => [m.mode, m.hexColor]),
-    );
-
     // Render cached route geometry lines
     for (const stop of this.map.stops) {
       if (stop.type !== 'route' || !stop.route_geometry) continue;
@@ -135,7 +130,7 @@ export class MapCard extends LitElement {
           type: 'line',
           source: sourceId,
           paint: {
-            'line-color': modeColors[stop.travel_mode ?? 'drive'] ?? color,
+            'line-color': HEX_COLOR_BY_MODE[stop.travel_mode ?? 'drive'] ?? color,
             'line-width': 3,
             'line-opacity': 0.7,
           },

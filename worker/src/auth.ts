@@ -20,12 +20,12 @@
  */
 
 import { betterAuth } from 'better-auth';
+import type { Auth } from 'better-auth';
 import { passkey } from '@better-auth/passkey';
 import { D1Dialect } from 'kysely-d1';
 import type { Env } from './types.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _auth: any = null;
+let _auth: Auth | null = null;
 // Tracks the DB binding reference used to create _auth. In a normal Workers
 // isolate, env.DB is a stable binding object: the same reference is passed to
 // every request within a single isolate lifetime, so _cachedDB === env.DB will
@@ -34,7 +34,7 @@ let _auth: any = null;
 // recycling, etc.) where the binding reference might differ between calls.
 let _cachedDB: Env['DB'] | null = null;
 
-export function getAuth(env: Env) {
+export function getAuth(env: Env): Auth {
   if (!_auth || _cachedDB !== env.DB) {
     if (!env.BETTER_AUTH_URL) {
       throw new Error('BETTER_AUTH_URL secret is not set. Run: wrangler secret put BETTER_AUTH_URL');
@@ -93,7 +93,7 @@ export function getAuth(env: Env) {
           origin: url.origin,
         }),
       ],
-    });
+    }) as unknown as Auth;
   }
-  return _auth;
+  return _auth!;
 }

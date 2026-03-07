@@ -16,6 +16,10 @@ beforeAll(async () => {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS map_shares (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE, user_id TEXT REFERENCES "user"(id), role TEXT NOT NULL DEFAULT \'viewer\', claim_token TEXT UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), UNIQUE(map_id, user_id))'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_stops_map_id ON stops(map_id)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_maps_owner_id ON maps(owner_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_map_shares_user_id ON map_shares(user_id)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY NOT NULL, map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE RESTRICT, user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE RESTRICT, stripe_session_id TEXT, prodigi_order_id TEXT, poster_size TEXT NOT NULL, status TEXT NOT NULL DEFAULT \'pending\', image_url TEXT, shipping_address TEXT, tracking_url TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')), updated_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_orders_map_id ON orders(map_id)'),
   ]);
 });
 
@@ -117,10 +121,10 @@ describe('GET /api/health', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
   });
 
-  it('returns status ok with milestone 7', async () => {
+  it('returns status ok with milestone 8', async () => {
     const res = await request('/api/health');
     const body = await res.json();
-    expect(body).toEqual({ status: 'ok', milestone: 7 });
+    expect(body).toEqual({ status: 'ok', milestone: 8 });
   });
 });
 

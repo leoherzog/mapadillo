@@ -2,6 +2,8 @@
  * Shared types for the Cloudflare Worker app.
  */
 
+import type { SessionUser } from '../../shared/types.js';
+
 // ── Env bindings (generated via `wrangler types`) ─────────────────────────
 // Until `wrangler types` is run after provisioning real resources, we declare
 // the interface manually. Run `npm run types` in /worker after provisioning.
@@ -33,7 +35,6 @@ export interface Env {
 }
 
 export type { SessionUser } from '../../shared/types.js';
-import type { SessionUser } from '../../shared/types.js';
 
 export type AppEnv = {
   Bindings: Env;

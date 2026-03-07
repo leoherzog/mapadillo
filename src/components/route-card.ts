@@ -13,7 +13,7 @@ import './location-search.js';
 import './travel-mode-picker.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
-import { isDraftCoord, formatDistance } from '../utils/geo.js';
+import { isDraftCoord, formatDistance, formatCoords } from '../utils/geo.js';
 import { CSS_COLOR_BY_MODE } from '../config/travel-modes.js';
 
 @customElement('route-card')
@@ -72,10 +72,6 @@ export class RouteCard extends LitElement {
       font-size: var(--wa-font-size-xs);
     }
 
-    .change-btn {
-      font-size: var(--wa-font-size-xs);
-    }
-
     .header-row {
       margin-bottom: var(--wa-space-3xs);
     }
@@ -108,7 +104,9 @@ export class RouteCard extends LitElement {
     if (this.readonly) {
       return html`
         <wa-card style="--border-color: ${borderColor}">
-          ${this._renderEndpointDisplay('Start', this.item.name, this.item.latitude, this.item.longitude)}
+          ${this._hasStart
+            ? this._renderEndpointDisplay('Start', this.item.name, this.item.latitude, this.item.longitude)
+            : nothing}
           <div class="mode-row wa-cluster wa-justify-content-center">
             <travel-mode-picker .value=${this.item.travel_mode ?? ''} ?disabled=${true}></travel-mode-picker>
           </div>
@@ -145,7 +143,7 @@ export class RouteCard extends LitElement {
                   <wa-icon name="pencil" label="Change start"></wa-icon>
                 </wa-button>
               </div>
-              <div class="endpoint-coords">${this.item.latitude.toFixed(5)}, ${this.item.longitude.toFixed(5)}</div>
+              <div class="endpoint-coords">${formatCoords(this.item.latitude, this.item.longitude)}</div>
             `
             : html`
               <location-search
@@ -175,7 +173,7 @@ export class RouteCard extends LitElement {
                   <wa-icon name="pencil" label="Change end"></wa-icon>
                 </wa-button>
               </div>
-              <div class="endpoint-coords">${this.item.dest_latitude!.toFixed(5)}, ${this.item.dest_longitude!.toFixed(5)}</div>
+              <div class="endpoint-coords">${formatCoords(this.item.dest_latitude!, this.item.dest_longitude!)}</div>
             `
             : html`
               <location-search
@@ -200,7 +198,7 @@ export class RouteCard extends LitElement {
       <div class="endpoint">
         <span class="endpoint-label">${label}</span>
         <div class="endpoint-name">${name}</div>
-        <div class="endpoint-coords">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+        <div class="endpoint-coords">${formatCoords(lat, lng)}</div>
       </div>
     `;
   }

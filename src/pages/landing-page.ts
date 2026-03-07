@@ -3,10 +3,11 @@ import { customElement } from 'lit/decorators.js';
 import { navClick } from '../nav.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { headingStyles } from '../styles/heading-shared.js';
 
 @customElement('landing-page')
 export class LandingPage extends LitElement {
-  static styles = [waUtilities, css`
+  static styles = [waUtilities, headingStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -25,9 +26,6 @@ export class LandingPage extends LitElement {
 
     h1 {
       font-size: clamp(2rem, 6vw, 3.5rem);
-      font-weight: var(--wa-font-weight-bold);
-      margin: 0;
-      color: var(--wa-color-brand-60);
       line-height: 1.15;
     }
 

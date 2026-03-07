@@ -12,7 +12,7 @@ import './icon-picker.js';
 import './location-search.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
-import { isDraftCoord } from '../utils/geo.js';
+import { isDraftCoord, formatCoords } from '../utils/geo.js';
 
 @customElement('point-card')
 export class PointCard extends LitElement {
@@ -45,10 +45,6 @@ export class PointCard extends LitElement {
       margin-top: var(--wa-space-3xs);
     }
 
-    .change-btn {
-      font-size: var(--wa-font-size-xs);
-    }
-
     .point-icon {
       color: var(--wa-color-brand-60);
     }
@@ -73,7 +69,7 @@ export class PointCard extends LitElement {
           </div>
           ${!isDraftCoord(this.item.latitude, this.item.longitude) ? html`
             <div class="coords">
-              ${this.item.latitude.toFixed(5)}, ${this.item.longitude.toFixed(5)}
+              ${formatCoords(this.item.latitude, this.item.longitude)}
             </div>
           ` : nothing}
         </wa-card>
@@ -105,7 +101,7 @@ export class PointCard extends LitElement {
             ></wa-input>
           </div>
           <div class="coords wa-cluster wa-align-items-center wa-gap-xs">
-            <span>${this.item.latitude.toFixed(5)}, ${this.item.longitude.toFixed(5)}</span>
+            <span>${formatCoords(this.item.latitude, this.item.longitude)}</span>
             <wa-button class="change-btn" appearance="plain" size="small" @click=${() => { this._editingLocation = true; }}>
               <wa-icon name="pencil" label="Change location"></wa-icon>
             </wa-button>

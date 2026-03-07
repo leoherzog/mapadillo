@@ -18,6 +18,7 @@ import { renderMarkerCanvas } from './map-controller.js';
 const DEFAULT_DPI: DPIType = DPI[200];
 const MAX_CANVAS_DIM = 5400;
 const RENDER_TIMEOUT_MS = 30_000;
+const RENDER_ERROR_MSG = 'Unable to render map at this resolution. Try on a desktop browser.';
 
 /** Paper dimensions in mm (portrait: width × height). */
 const PAPER_SIZES: Record<string, [number, number]> = {
@@ -142,7 +143,7 @@ class MapExporter extends MapGeneratorBase {
             const canvas = tempMap!.getCanvas();
             if (!canvas || canvas.width === 0 || canvas.height === 0) {
               cleanup();
-              reject(new Error('Unable to render map at this resolution. Try on a desktop browser.'));
+              reject(new Error(RENDER_ERROR_MSG));
               return;
             }
 
@@ -153,7 +154,7 @@ class MapExporter extends MapGeneratorBase {
             const ctx = outputCanvas.getContext('2d');
             if (!ctx) {
               cleanup();
-              reject(new Error('Unable to render map at this resolution. Try on a desktop browser.'));
+              reject(new Error(RENDER_ERROR_MSG));
               return;
             }
             ctx.drawImage(canvas, 0, 0);
@@ -161,10 +162,10 @@ class MapExporter extends MapGeneratorBase {
             // Draw composite marker images onto the output canvas (they are not part of the style)
             drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures)
               .then(() => { cleanup(); resolve(outputCanvas); })
-              .catch(() => { cleanup(); reject(new Error('Unable to render map at this resolution. Try on a desktop browser.')); });
+              .catch(() => { cleanup(); reject(new Error(RENDER_ERROR_MSG)); });
           } catch {
             cleanup();
-            reject(new Error('Unable to render map at this resolution. Try on a desktop browser.'));
+            reject(new Error(RENDER_ERROR_MSG));
           }
         });
 
@@ -173,13 +174,13 @@ class MapExporter extends MapGeneratorBase {
           settled = true;
           clearTimeout(timer);
           cleanup();
-          reject(new Error('Unable to render map at this resolution. Try on a desktop browser.'));
+          reject(new Error(RENDER_ERROR_MSG));
         });
       } catch {
         settled = true;
         clearTimeout(timer);
         cleanup();
-        reject(new Error('Unable to render map at this resolution. Try on a desktop browser.'));
+        reject(new Error(RENDER_ERROR_MSG));
       }
     });
   }
@@ -281,30 +282,31 @@ function drawAttribution(canvas: HTMLCanvasElement): void {
   ctx.fillText(text, canvas.width - padding, canvas.height - padding);
 }
 
-// ── PNG export ───────────────────────────────────────────────────────────────
+// ── Raster export (PNG / JPEG) ───────────────────────────────────────────────
+
+async function downloadRaster(
+  map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
+  mimeType: string, filename: string, quality?: number,
+): Promise<void> {
+  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
+  const canvas = await exporter.renderCanvas(markerFeatures);
+  drawAttribution(canvas);
+  const blob = await canvasToBlob(canvas, mimeType, quality);
+  triggerDownload(blob, filename);
+}
 
 async function downloadPNG(
   map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
   filename = 'mapadillo-map.png',
 ): Promise<void> {
-  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(markerFeatures);
-  drawAttribution(canvas);
-  const blob = await canvasToBlob(canvas, 'image/png');
-  triggerDownload(blob, filename);
+  return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/png', filename);
 }
-
-// ── JPEG export ──────────────────────────────────────────────────────────────
 
 async function downloadJPEG(
   map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
   filename = 'mapadillo-map.jpg',
 ): Promise<void> {
-  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(markerFeatures);
-  drawAttribution(canvas);
-  const blob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
-  triggerDownload(blob, filename);
+  return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/jpeg', filename, 0.92);
 }
 
 // ── PDF export (decorative layout) ──────────────────────────────────────────

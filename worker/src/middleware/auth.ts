@@ -13,7 +13,7 @@ function authMiddleware(required: boolean) {
     const auth = getAuth(c.env);
     let session;
     try {
-      session = await auth!.api.getSession({
+      session = await auth.api.getSession({
         headers: c.req.raw.headers,
       });
     } catch {

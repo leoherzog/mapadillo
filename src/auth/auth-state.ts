@@ -7,12 +7,8 @@
 
 import { authClient } from './auth-client.js';
 
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  image?: string | null;
-}
+import type { SessionUser as User } from '../../shared/types.js';
+export type { SessionUser as User } from '../../shared/types.js';
 
 // ── Internal state ────────────────────────────────────────────────────────
 

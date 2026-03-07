@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@awesome.me/kit-781a3c6be3": "^1.0.4",
-    "@better-auth/core": "^1.5.3",
     "@better-auth/passkey": "^1.5.3",
     "@watergis/maplibre-gl-export": "^4.1.1",
     "@web.awesome.me/webawesome-pro": "^3.3.1",

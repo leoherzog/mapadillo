@@ -19,4 +19,8 @@ export const cardSharedStyles = css`
   .delete-btn::part(base):hover {
     color: var(--wa-color-danger-50);
   }
+
+  .change-btn {
+    font-size: var(--wa-font-size-xs);
+  }
 `;

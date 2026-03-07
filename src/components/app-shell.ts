@@ -40,7 +40,7 @@ export class AppShell extends LitElement {
     {
       path: '/dashboard',
       enter: requireAuth,
-      render: () => html`<dashboard-page .user=${this._user}></dashboard-page>`,
+      render: () => html`<dashboard-page></dashboard-page>`,
     },
     {
       path: '/map/new',

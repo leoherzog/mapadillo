@@ -274,9 +274,10 @@ export class MapController {
       }
     }
 
+    // Compute bounds once — used for both marker offset and camera fitting
+    const bounds = this._computeBounds(items, routeGeometries);
+
     if (markerFeatures.length > 0) {
-      // Compute the target zoom before placing markers so we can offset overlapping ones
-      const bounds = this._computeBounds(items, routeGeometries);
       let offsetFeatures = markerFeatures;
 
       if (bounds && markerFeatures.length >= 2) {
@@ -296,12 +297,8 @@ export class MapController {
       this._markerFeatures = [];
     }
 
-    // Fit bounds to all visible coordinates
-    const routeResults = [...routeGeometries.entries()].map(([id, r]) => ({
-      route: items.find((i) => i.id === id)!,
-      geometry: r.geometry,
-    }));
-    this._fitBounds(items, routeResults);
+    // Fit bounds to all visible coordinates (reuse pre-computed bounds)
+    this._fitBounds(items, bounds);
 
     return { distances, totalDistance, geometries };
   }
@@ -518,42 +515,18 @@ export class MapController {
     return result;
   }
 
-  private _fitBounds(
-    items: Stop[],
-    routeResults: Array<{ route: Stop; geometry: SegmentGeometry }>,
-  ): void {
-    const bounds = new maplibregl.LngLatBounds();
-    let coordCount = 0;
-
-    // Include all non-draft item positions
-    for (const item of items) {
-      if (isDraftCoord(item.latitude, item.longitude)) continue;
-      bounds.extend([item.longitude, item.latitude]);
-      coordCount++;
-      // Include route destinations
-      if (item.dest_latitude != null && item.dest_longitude != null && !isDraftCoord(item.dest_latitude, item.dest_longitude)) {
-        bounds.extend([item.dest_longitude, item.dest_latitude]);
-        coordCount++;
-      }
-    }
-
-    // Include route geometry points for accurate bounds
-    for (const result of routeResults) {
-      for (const coord of result.geometry.coordinates) {
-        bounds.extend(coord);
-      }
-    }
-
-    if (coordCount === 0) return;
-
-    if (coordCount >= 2) {
+  private _fitBounds(items: Stop[], bounds: maplibregl.LngLatBounds | null): void {
+    if (bounds) {
       this._map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
     } else {
-      const first = items.find((i) => !isDraftCoord(i.latitude, i.longitude))!;
-      this._map.flyTo({
-        center: [first.longitude, first.latitude],
-        zoom: 12,
-      });
+      // Single coordinate — fly to it
+      const first = items.find((i) => !isDraftCoord(i.latitude, i.longitude));
+      if (first) {
+        this._map.flyTo({
+          center: [first.longitude, first.latitude],
+          zoom: 12,
+        });
+      }
     }
   }
 }

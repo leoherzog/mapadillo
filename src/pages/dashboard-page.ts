@@ -5,18 +5,16 @@
  * with mini MapLibre previews.
  */
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
-import type { User } from '../auth/auth-state.js';
+import { customElement, state } from 'lit/decorators.js';
 import type { MapWithRole } from '../services/maps.js';
 import { listMaps, deleteMap } from '../services/maps.js';
 import { navClick } from '../nav.js';
 import '../components/map-card.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { headingStyles } from '../styles/heading-shared.js';
 
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
-  @property({ type: Object }) user: User | null = null;
-
   @state() private _maps: MapWithRole[] = [];
   @state() private _loading = true;
   @state() private _fetchError = false;
@@ -35,7 +33,7 @@ export class DashboardPage extends LitElement {
 
   @state() private _dialogOpen = false;
 
-  static styles = [waUtilities, css`
+  static styles = [waUtilities, headingStyles, css`
     :host {
       display: block;
       padding: var(--wa-space-xl) var(--wa-space-m);
@@ -46,9 +44,7 @@ export class DashboardPage extends LitElement {
 
     h1 {
       font-size: var(--wa-font-size-3xl);
-      font-weight: var(--wa-font-weight-bold);
-      color: var(--wa-color-brand-60);
-      margin: 0 0 var(--wa-space-xs);
+      margin-bottom: var(--wa-space-xs);
     }
 
     h2 {
@@ -86,6 +82,8 @@ export class DashboardPage extends LitElement {
     }
 
     .loading-center {
+      display: flex;
+      justify-content: center;
       padding: var(--wa-space-2xl);
     }
 
@@ -132,7 +130,7 @@ export class DashboardPage extends LitElement {
       ` : nothing}
 
       ${this._loading
-        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="loading-center"><wa-spinner></wa-spinner></div>`
         : this._fetchError
           ? html`
               <wa-callout variant="danger">
@@ -168,7 +166,7 @@ export class DashboardPage extends LitElement {
       </h2>
 
       ${this._loading
-        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="loading-center"><wa-spinner></wa-spinner></div>`
         : this._sharedMaps.length === 0
           ? html`
               <div class="empty-state wa-stack wa-gap-m wa-align-items-center">

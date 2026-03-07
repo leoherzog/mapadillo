@@ -8,8 +8,9 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import type { ValidIcon } from '../../shared/icons.js';
 
-const CATEGORIES: Record<string, string[]> = {
+const CATEGORIES: Record<string, ValidIcon[]> = {
   Outdoors: ['tree', 'leaf', 'flower', 'compass', 'fire', 'snowflake', 'sun', 'umbrella'],
   'Food & Drink': ['utensils', 'mug-hot', 'cake-candles', 'martini-glass', 'fish'],
   Sightseeing: ['camera', 'landmark', 'globe', 'ticket', 'crown'],

@@ -109,11 +109,11 @@ export class UserMenu extends LitElement {
 
     try {
       await signOut();
+      navigateTo('/');
     } catch (err) {
       console.error('Sign-out failed:', err);
     } finally {
       this._signingOut = false;
-      navigateTo('/');
     }
   };
 }

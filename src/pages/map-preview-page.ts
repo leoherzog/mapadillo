@@ -1,16 +1,17 @@
 /**
  * Map preview page — full-screen read-only map view with all stops and route lines.
  */
-import { html, css } from 'lit';
+import { html, css, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { familyNameStyles } from '../styles/page-layout.js';
 import { navigateTo } from '../nav.js';
 import { MapPageBase } from './map-page-base.js';
 import '../components/map-view.js';
 
 @customElement('map-preview-page')
 export class MapPreviewPage extends MapPageBase {
-  static styles = [waUtilities, css`
+  static styles = [waUtilities, familyNameStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -47,12 +48,6 @@ export class MapPreviewPage extends MapPageBase {
       font-size: var(--wa-font-size-m);
       font-weight: var(--wa-font-weight-bold);
       color: var(--wa-color-text-normal);
-    }
-
-    .overlay .family-name {
-      margin: 0;
-      font-size: var(--wa-font-size-s);
-      color: var(--wa-color-text-quiet);
     }
 
     .overlay .actions {
@@ -105,7 +100,7 @@ export class MapPreviewPage extends MapPageBase {
             <h2>${this._map?.name ?? 'Untitled Trip'}</h2>
             ${this._map?.family_name
               ? html`<p class="family-name">${this._map.family_name}</p>`
-              : ''}
+              : nothing}
             <div class="actions">
               <wa-button
                 size="small"
