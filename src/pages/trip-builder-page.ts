@@ -23,7 +23,6 @@ import { formatDistance } from '../utils/geo.js';
 import { MapPageBase } from './map-page-base.js';
 import '../components/map-view.js';
 import '../components/item-list.js';
-import '../components/save-indicator.js';
 import '../components/share-dialog.js';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -93,6 +92,22 @@ export class TripBuilderPage extends MapPageBase {
       margin-left: auto;
     }
 
+    .header-icon--saving {
+      animation: spin 1s linear infinite;
+    }
+
+    .header-icon--saved {
+      color: var(--wa-color-success-60);
+    }
+
+    .header-icon--error {
+      color: var(--wa-color-danger-60);
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     .route-loading {
       font-size: 0.85rem;
       color: var(--wa-color-neutral-500);
@@ -110,6 +125,7 @@ export class TripBuilderPage extends MapPageBase {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     clearTimeout(this._saveTimer);
+    clearTimeout(this._statusTimer);
     clearTimeout(this._routeDebounceTimer);
     for (const t of this._itemUpdateTimers.values()) clearTimeout(t);
     this._itemUpdateTimers.clear();
@@ -196,23 +212,32 @@ export class TripBuilderPage extends MapPageBase {
         <!-- Fixed top: header + inputs -->
         <div class="wa-split wa-gap-xs">
           <h1>
-            <wa-icon name="compass"></wa-icon>
+            <wa-icon name=${this._saveStatus === 'saving' ? 'spinner' : this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>
             Trip Builder
           </h1>
           <div class="wa-cluster wa-gap-xs wa-align-items-center">
             ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : nothing}
-            ${isOwner ? html`
-              <wa-button
-                appearance="outlined"
-                size="small"
-                variant="neutral"
-                @click=${this._onShareClick}
-              >
-                <wa-icon slot="start" name="share-nodes"></wa-icon>
-                Share
-              </wa-button>
-            ` : ''}
-            ${canEdit ? html`<save-indicator .status=${this._saveStatus} @status-idle=${this._onStatusIdle}></save-indicator>` : ''}
+            ${this._map?.id ? html`
+              <wa-dropdown placement="bottom-end" @wa-select=${this._onActionSelect}>
+                <wa-button slot="trigger" appearance="outlined" size="small" variant="neutral" with-caret>
+                  <wa-icon slot="start" name="ellipsis"></wa-icon>
+                </wa-button>
+                ${isOwner ? html`
+                  <wa-dropdown-item value="share">
+                    <wa-icon slot="icon" name="share-nodes"></wa-icon>
+                    Share
+                  </wa-dropdown-item>
+                ` : nothing}
+                <wa-dropdown-item value="preview">
+                  <wa-icon slot="icon" name="eye"></wa-icon>
+                  Preview
+                </wa-dropdown-item>
+                <wa-dropdown-item value="print">
+                  <wa-icon slot="icon" name="print"></wa-icon>
+                  Print
+                </wa-dropdown-item>
+              </wa-dropdown>
+            ` : nothing}
           </div>
         </div>
 
@@ -263,88 +288,55 @@ export class TripBuilderPage extends MapPageBase {
           `}
         </div>
 
+        ${canEdit ? html`
+          <wa-dropdown style="display: block">
+            <wa-button slot="trigger" variant="brand" size="small" with-caret style="width: 100%">
+              <wa-icon slot="start" name="plus"></wa-icon>
+              Add
+            </wa-button>
+            <wa-dropdown-item @click=${this._onAddPoint}>
+              <wa-icon slot="icon" name="location-dot"></wa-icon>
+              Point
+            </wa-dropdown-item>
+            <wa-dropdown-item @click=${this._onAddRoute}>
+              <wa-icon slot="icon" name="compass"></wa-icon>
+              Route
+            </wa-dropdown-item>
+          </wa-dropdown>
+        ` : nothing}
+
         <!-- Scrollable: map items -->
         <div class="sidebar-scroll">
-          <wa-details open>
-            <span slot="summary" class="section-summary">
-              <wa-icon name="map"></wa-icon>
-              Map Items
-              ${this._items.length > 0
-                ? html`<wa-badge variant="brand">${this._items.length}</wa-badge>`
-                : nothing}
-            </span>
-            <div class="wa-stack wa-gap-s">
-              <item-list
-                .items=${this._items}
-                .readonly=${isReadOnly}
-                .distances=${this._routeDistances}
-                .units=${this._map?.units ?? 'km'}
-                @item-update=${this._onItemUpdate}
-                @item-update-batch=${this._onItemUpdateBatch}
-                @item-delete=${this._onItemDelete}
-                @items-reorder=${this._onItemsReorder}
-              ></item-list>
+          <div class="wa-stack wa-gap-s">
+            <item-list
+              .items=${this._items}
+              .readonly=${isReadOnly}
+              .distances=${this._routeDistances}
+              .units=${this._map?.units ?? 'km'}
+              @item-update=${this._onItemUpdate}
+              @item-update-batch=${this._onItemUpdateBatch}
+              @item-delete=${this._onItemDelete}
+              @items-reorder=${this._onItemsReorder}
+            ></item-list>
 
-              ${canEdit ? html`
-                <div class="wa-cluster wa-gap-xs wa-justify-content-center">
-                  <wa-dropdown>
-                    <wa-button slot="trigger" variant="brand" size="small" with-caret>
-                      <wa-icon slot="start" name="plus"></wa-icon>
-                      Add
-                    </wa-button>
-                    <wa-dropdown-item @click=${this._onAddPoint}>
-                      <wa-icon slot="icon" name="location-dot"></wa-icon>
-                      Point
-                    </wa-dropdown-item>
-                    <wa-dropdown-item @click=${this._onAddRoute}>
-                      <wa-icon slot="icon" name="compass"></wa-icon>
-                      Route
-                    </wa-dropdown-item>
-                  </wa-dropdown>
-                </div>
-              ` : nothing}
+            ${this._totalDistance ? html`
+              <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
+                <span class="stat-label">Total distance:</span>
+                <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
+              </div>
+            ` : ''}
 
-              ${this._totalDistance ? html`
-                <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
-                  <span class="stat-label">Total distance:</span>
-                  <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
-                </div>
-              ` : ''}
-
-              ${this._routeLoading ? html`
-                <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
-                  <wa-spinner></wa-spinner>
-                  Calculating routes...
-                </div>
-              ` : ''}
-            </div>
-          </wa-details>
+            ${this._routeLoading ? html`
+              <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
+                <wa-spinner></wa-spinner>
+                Calculating routes...
+              </div>
+            ` : ''}
+          </div>
         </div>
 
         <!-- Fixed bottom: actions + settings -->
         <div class="wa-stack wa-gap-xs">
-          ${this._map?.id ? html`
-            <div class="wa-cluster wa-gap-xs wa-justify-content-center">
-              <wa-button
-                variant="brand"
-                appearance="outlined"
-                size="small"
-                @click=${() => navigateTo(`/preview/${this._map!.id}`)}
-              >
-                <wa-icon slot="start" name="eye"></wa-icon>
-                Preview
-              </wa-button>
-              <wa-button
-                variant="brand"
-                size="small"
-                @click=${() => navigateTo(`/export/${this._map!.id}`)}
-              >
-                <wa-icon slot="start" name="print"></wa-icon>
-                Print
-              </wa-button>
-            </div>
-          ` : ''}
-
           ${canEdit ? html`
             <wa-details>
               <span slot="summary" class="section-summary">
@@ -389,8 +381,14 @@ export class TripBuilderPage extends MapPageBase {
     `;
   }
 
-  private _onStatusIdle() {
-    this._saveStatus = 'idle';
+  private _statusTimer?: ReturnType<typeof setTimeout>;
+
+  private _setSaveStatus(status: SaveStatus) {
+    clearTimeout(this._statusTimer);
+    this._saveStatus = status;
+    if (status === 'saved' || status === 'error') {
+      this._statusTimer = setTimeout(() => { this._saveStatus = 'idle'; }, 3000);
+    }
   }
 
   // ── Metadata auto-save (debounced) ──────────────────────────────────────
@@ -422,15 +420,15 @@ export class TripBuilderPage extends MapPageBase {
   private async _saveMetadata() {
     if (!this._map) return;
     try {
-      this._saveStatus = 'saving';
+      this._setSaveStatus('saving');
       await updateMap(this._map.id, {
         name: this._map.name,
         family_name: this._map.family_name,
         units: this._map.units,
       });
-      this._saveStatus = 'saved';
+      this._setSaveStatus('saved');
     } catch {
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     }
   }
 
@@ -447,7 +445,7 @@ export class TripBuilderPage extends MapPageBase {
       });
       this._items = [...this._items, item];
     } catch {
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     }
   }
 
@@ -463,7 +461,7 @@ export class TripBuilderPage extends MapPageBase {
       });
       this._items = [...this._items, item];
     } catch {
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     }
   }
 
@@ -520,13 +518,13 @@ export class TripBuilderPage extends MapPageBase {
 
   private async _flushItemUpdate(mapId: string, itemId: string, fields: Record<string, unknown>) {
     this._pendingSaves++;
-    this._saveStatus = 'saving';
+    this._setSaveStatus('saving');
     try {
       await updateStop(mapId, itemId, fields);
-      if (--this._pendingSaves === 0) this._saveStatus = 'saved';
+      if (--this._pendingSaves === 0) this._setSaveStatus('saved');
     } catch {
       this._pendingSaves--;
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     }
   }
 
@@ -541,7 +539,7 @@ export class TripBuilderPage extends MapPageBase {
     try {
       await deleteStop(this._map.id, itemId);
     } catch {
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     }
   }
 
@@ -561,11 +559,18 @@ export class TripBuilderPage extends MapPageBase {
     try {
       await reorderStops(this._map.id, order);
     } catch {
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     }
   }
 
   // ── Sharing ────────────────────────────────────────────────────────────
+
+  private _onActionSelect(e: CustomEvent<{ item: { value: string } }>) {
+    const value = e.detail.item.value;
+    if (value === 'share') this._onShareClick();
+    else if (value === 'preview') navigateTo(`/preview/${this._map!.id}`);
+    else if (value === 'print') navigateTo(`/export/${this._map!.id}`);
+  }
 
   private _onShareClick() {
     const dialog = this.shadowRoot?.querySelector('share-dialog') as HTMLElement & { show(): void } | null;
@@ -585,7 +590,7 @@ export class TripBuilderPage extends MapPageBase {
       const newMap = await duplicateMap(this._map.id);
       navigateTo(`/map/${newMap.id}`);
     } catch {
-      this._saveStatus = 'error';
+      this._setSaveStatus('error');
     } finally {
       this._duplicating = false;
     }

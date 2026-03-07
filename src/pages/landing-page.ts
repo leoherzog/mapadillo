@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { navClick } from '../nav.js';
+import { isAuthenticated } from '../auth/auth-state.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('landing-page')
@@ -80,8 +81,8 @@ export class LandingPage extends LitElement {
         <wa-button
           size="large"
           variant="brand"
-          href="/sign-in"
-          @click=${navClick('/sign-in')}
+          href=${isAuthenticated() ? '/dashboard' : '/sign-in'}
+          @click=${navClick(isAuthenticated() ? '/dashboard' : '/sign-in')}
         >
           <wa-icon slot="start" name="paper-plane"></wa-icon>
           Start Planning

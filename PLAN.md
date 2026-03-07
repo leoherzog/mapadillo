@@ -518,7 +518,7 @@ Authenticated user clicks "Order Print"
 
 ## Milestones
 
-Milestones 1–5 are strictly sequential — each builds on the prior. After M5, milestones 6 and 7 are semi-independent and could be parallelized. M8 depends on M7 (export renders the image that gets uploaded for printing). M9 is a final pass across everything.
+Milestones 1–5 are strictly sequential — each builds on the prior. After M5, milestones 6 and 7 are semi-independent and could be parallelized. M8 is a polish pass across everything. M9 depends on M7 (export renders the image that gets uploaded for printing).
 
 ### Milestone 1: Scaffold & Navigation Shell ✅ COMPLETE
 
@@ -694,7 +694,7 @@ Worker-specific:
 - `worker/src/middleware/require-auth.ts` — Hono session middleware (M2)
 - `worker/src/routes/` — all API route modules (M2–8)
 - `worker/src/db/schema.sql`, `migrations/` — D1 schema (M2)
-- `worker/src/lib/prodigi.ts`, `stripe.ts` — service clients (M8)
+- `worker/src/lib/prodigi.ts`, `stripe.ts` — service clients (M9)
 
 ---
 
@@ -855,7 +855,7 @@ Worker:
 - CJS deps inlined for workerd compatibility: `@better-auth/passkey`, `@simplewebauthn/server`, `@peculiar/*`, `tslib`
 
 **Deferred to later milestones:**
-- Cookie cache for session management (TODO comment in migration, deferred to M9)
+- Cookie cache for session management (TODO comment in migration, deferred to M8)
 - Email verification on sign-up (accepted risk for MVP, noted in `auth.ts`)
 - `GET /api/maps/:id` currently uses `requireAuth` — will switch to optional auth in M6 when public map access is implemented
 
@@ -1162,7 +1162,7 @@ mapadillo/
 - Shared maps in dashboard listing (M6)
 - Route drawing between stops (M5)
 - Public/private map access (M6)
-- Export and print ordering (M7–M8)
+- Export and print ordering (M7, M9)
 
 ---
 
@@ -1306,8 +1306,8 @@ New routing proxy tests (8):
 
 **Deferred to later milestones:**
 - Sharing & collaboration (M6)
-- Export/print (M7–M8)
-- Browser locale-based units default (M9 polish)
+- Export/print (M7, M9)
+- Browser locale-based units default (M8 polish)
 
 ---
 
@@ -1405,8 +1405,8 @@ mapadillo/
 4. **`_totalDistance` is a derived getter.** Changed from `@state()` property to a getter that sums `_routeDistances`, eliminating redundant state.
 
 **Deferred to later milestones:**
-- Print ordering (M8)
-- Browser locale-based units default (M9 polish)
+- Print ordering (M9)
+- Browser locale-based units default (M8 polish)
 
 ---
 
@@ -1501,12 +1501,29 @@ worker/src/
 6. **`worker/src/env.d.ts` added for test type safety.** Augments `cloudflare:test`'s `ProvidedEnv` to extend the project's `Env` interface, resolving 18 TS errors on `env.DB`, `env.BETTER_AUTH_SECRET`, etc. in test files.
 
 **Deferred to later milestones:**
-- Print ordering (M8)
-- Browser locale-based units default (M9 polish)
+- Print ordering (M9)
+- Browser locale-based units default (M8 polish)
 
 ---
 
-### Milestone 8: Print Ordering (Stripe + Prodigi)
+### Milestone 8: Polish & Launch Prep
+
+**Goal:** Production-ready quality.
+
+**Build:**
+1. Responsive design pass (mobile-friendly trip builder + sign-in)
+2. Loading states, error handling, empty states throughout all pages
+3. OpenStreetMap / OpenFreeMap attribution on all map views
+
+**Verify:**
+- All pages usable on mobile
+- Empty states display correctly (no maps, no stops)
+- Error states handled gracefully (API failures, network errors)
+- Attribution visible on map
+
+---
+
+### Milestone 9: Print Ordering (Stripe + Prodigi)
 
 **Goal:** Users can order a printed poster and receive it in the mail.
 
@@ -1524,6 +1541,7 @@ worker/src/
 9. Implement admin endpoint (`PATCH /api/admin/orders/:id`) — accepts `{ image_url }`, places Prodigi order, updates status to `submitted`; protected by `Authorization: Bearer {ADMIN_SECRET}` header
 10. Implement Prodigi webhook handler in Worker (`POST /api/webhooks/prodigi`) — update order status + tracking URL
 11. Build `order-confirmation-page.ts` — shows vague "We're preparing your map for print — shipping notification within 1–2 business days" copy regardless of path; shows tracking info once available
+12. Dashboard: order history section (past print orders with status/tracking)
 
 **Verify:**
 - Render succeeds: image uploaded to R2, checkout completes, webhook places Prodigi order automatically (status: `submitted`)
@@ -1533,24 +1551,6 @@ worker/src/
 - Stripe Checkout with test keys + test card numbers — payment succeeds on both paths
 - Prodigi webhook updates tracking info in D1
 - Order confirmation page shows appropriate copy at each status
-
----
-
-### Milestone 9: Polish & Launch Prep
-
-**Goal:** Production-ready quality.
-
-**Build:**
-1. Responsive design pass (mobile-friendly trip builder + sign-in)
-2. Loading states, error handling, empty states throughout all pages
-3. Dashboard: order history section (past print orders with status/tracking)
-4. OpenStreetMap / OpenFreeMap attribution on all map views
-
-**Verify:**
-- All pages usable on mobile
-- Empty states display correctly (no maps, no stops, no orders)
-- Error states handled gracefully (API failures, network errors)
-- Attribution visible on map
 - End-to-end: sign up → create map → add stops → share with collaborator → export PDF → order print → confirm order
 
 ---

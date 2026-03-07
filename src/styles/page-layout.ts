@@ -9,7 +9,7 @@ import { css } from 'lit';
 export const pageLayoutStyles = css`
   :host {
     display: flex;
-    height: 100%;
+    height: calc(100dvh - var(--header-height, 0px));
     min-height: 0;
     overflow: hidden;
   }
