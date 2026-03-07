@@ -2,7 +2,7 @@
  * Shared base class for pages that display a read-only map with stops.
  *
  * Extracts the common map-loading, MapController lifecycle, and sync logic
- * used by both map-preview-page and export-page.
+ * used by map-preview-page (and any future read-only map pages).
  */
 import { LitElement, type PropertyValues } from 'lit';
 import { property, state } from 'lit/decorators.js';
@@ -13,6 +13,7 @@ import { isAuthenticated } from '../auth/auth-state.js';
 import { MapController } from '../map/map-controller.js';
 import { navigateTo } from '../nav.js';
 import type { MapView } from '../components/map-view.js';
+import { type MapThemeId, DEFAULT_THEME, getControllerOptions } from '../config/map-themes.js';
 
 export class MapPageBase extends LitElement {
   @property() mapId = '';
@@ -85,18 +86,40 @@ export class MapPageBase extends LitElement {
     }
   }
 
-  protected _onMapReady() {
+  protected _getThemeId(): MapThemeId {
+    if (!this._map?.style_preferences) return DEFAULT_THEME;
+    try {
+      const prefs = typeof this._map.style_preferences === 'string'
+        ? JSON.parse(this._map.style_preferences) as Record<string, unknown>
+        : this._map.style_preferences as Record<string, unknown>;
+      return (prefs.theme as MapThemeId) ?? DEFAULT_THEME;
+    } catch {
+      return DEFAULT_THEME;
+    }
+  }
+
+  protected async _onMapReady() {
     this._mapReady = true;
 
     const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (mapView?.map) {
-      this._mapController = new MapController(mapView.map);
+    if (!mapView?.map) return;
+
+    const themeId = this._getThemeId();
+
+    // Destroy previous controller before creating a new one
+    this._mapController?.destroy();
+    this._mapController = new MapController(mapView.map, getControllerOptions(themeId));
+
+    // If the theme differs from what map-view loaded, switch and wait for re-fire
+    if (themeId !== 'bright' && mapView.currentTheme !== themeId) {
+      await mapView.setTheme(themeId);
+      // setTheme will fire map-ready again, which will re-enter this method
+      return;
     }
 
-    if (this._pendingSync) {
-      this._pendingSync = false;
-      this._syncMap();
-    }
+    // Always sync — either pending from initial load, or after a theme switch
+    this._pendingSync = false;
+    this._syncMap();
   }
 
   protected async _syncMap() {

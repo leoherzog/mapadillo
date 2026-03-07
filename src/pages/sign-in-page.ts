@@ -224,15 +224,18 @@ export class SignInPage extends LitElement {
 
   private get _returnTo(): string {
     const params = new URLSearchParams(window.location.search);
-    const raw = params.get('returnTo') ?? '';
-    // Validate same-origin to prevent open redirect via crafted returnTo param
-    try {
-      const url = new URL(raw, window.location.origin);
-      if (url.origin === window.location.origin) {
-        return url.pathname + url.search;
+    const raw = params.get('returnTo');
+    
+    if (raw) {
+      // Validate same-origin to prevent open redirect via crafted returnTo param
+      try {
+        const url = new URL(raw, window.location.origin);
+        if (url.origin === window.location.origin) {
+          return url.pathname + url.search;
+        }
+      } catch {
+        // Not a valid URL — fall through to default
       }
-    } catch {
-      // Not a valid URL — fall through to default
     }
     return '/dashboard';
   }

@@ -22,6 +22,8 @@ import { isAuthenticated } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
 import { formatDistance, getDefaultUnits } from '../utils/geo.js';
 import { MapPageBase } from './map-page-base.js';
+import { MAP_THEMES, type MapThemeId } from '../config/map-themes.js';
+import type { MapView } from '../components/map-view.js';
 import '../components/map-view.js';
 import '../components/item-list.js';
 import '../components/share-dialog.js';
@@ -40,12 +42,19 @@ export class TripBuilderPage extends MapPageBase {
   @state() private _routeLoading = false;
   @state() private _role: 'owner' | 'editor' | 'viewer' | 'public' = 'owner';
   @state() private _duplicating = false;
+  @state() private _isMobile = false;
+  @state() private _drawerOpen = false;
 
   private _saveTimer?: ReturnType<typeof setTimeout>;
   private _pendingSaves = 0;
   private _itemUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private _creatingMap = false;
   private _routeDebounceTimer?: ReturnType<typeof setTimeout>;
+  private _mediaQuery?: MediaQueryList;
+  private _boundMediaHandler = (e: MediaQueryListEvent) => {
+    this._isMobile = e.matches;
+    if (!e.matches) this._drawerOpen = false;
+  };
 
   static styles = [waUtilities, headingStyles, pageLayoutStyles, css`
     h1 {
@@ -85,10 +94,6 @@ export class TripBuilderPage extends MapPageBase {
     .section-subtitle {
       margin: 0;
       color: var(--wa-color-text-quiet);
-    }
-
-    .mt-xs {
-      margin-top: var(--wa-space-xs);
     }
 
     wa-dropdown {
@@ -145,6 +150,41 @@ export class TripBuilderPage extends MapPageBase {
       margin-bottom: var(--wa-space-2xs);
     }
 
+    .map-fab {
+      position: absolute;
+      bottom: var(--wa-space-l);
+      left: var(--wa-space-l);
+      z-index: 1;
+    }
+
+    .drawer-body {
+      display: flex;
+      flex-direction: column;
+      gap: var(--wa-space-m);
+    }
+
+    wa-drawer {
+      --size: min(85vw, 380px);
+    }
+
+    wa-drawer h1 {
+      display: none;
+    }
+
+    wa-drawer .wa-split {
+      display: none;
+    }
+
+    .map-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: color-mix(in srgb, var(--wa-color-surface-default) 80%, transparent);
+      z-index: 1;
+    }
+
     @media (max-width: 700px) {
       h1 {
         font-size: var(--wa-font-size-m);
@@ -152,8 +192,16 @@ export class TripBuilderPage extends MapPageBase {
     }
   `];
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    this._mediaQuery = window.matchMedia('(max-width: 700px)');
+    this._isMobile = this._mediaQuery.matches;
+    this._mediaQuery.addEventListener('change', this._boundMediaHandler);
+  }
+
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this._mediaQuery?.removeEventListener('change', this._boundMediaHandler);
     clearTimeout(this._saveTimer);
     clearTimeout(this._statusTimer);
     clearTimeout(this._routeDebounceTimer);
@@ -206,25 +254,225 @@ export class TripBuilderPage extends MapPageBase {
     }
   }
 
+  private _renderSidebarContent(canEdit: boolean, isOwner: boolean, isReadOnly: boolean, units: 'km' | 'mi') {
+    return html`
+      <div class="wa-split wa-gap-xs">
+        <h1>
+          <wa-icon name=${this._saveStatus === 'saving' ? 'arrow-rotate-right' : this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>
+          Trip Builder
+        </h1>
+        <div class="wa-cluster wa-gap-xs wa-align-items-center">
+          ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : nothing}
+          ${this._map?.id ? html`
+            <wa-dropdown placement="bottom-end" @wa-select=${this._onActionSelect}>
+              <wa-button slot="trigger" appearance="outlined" size="small" variant="neutral">
+                <wa-icon name="ellipsis" label="More actions"></wa-icon>
+              </wa-button>
+              ${isOwner ? html`
+                <wa-dropdown-item value="share">
+                  <wa-icon slot="icon" name="share-nodes"></wa-icon>
+                  Share
+                </wa-dropdown-item>
+              ` : nothing}
+              <wa-dropdown-item value="preview">
+                <wa-icon slot="icon" name="eye"></wa-icon>
+                Preview &amp; Export
+              </wa-dropdown-item>
+            </wa-dropdown>
+          ` : nothing}
+        </div>
+      </div>
+
+      ${isReadOnly ? html`
+        <wa-callout variant="neutral">
+          <wa-icon slot="icon" name="eye"></wa-icon>
+          You are viewing this trip as ${this._role === 'public' ? 'a public visitor' : 'a viewer'}.
+          ${isAuthenticated() ? html`
+            <wa-button
+              size="small"
+              variant="brand"
+              ?loading=${this._duplicating}
+              @click=${this._onDuplicate}
+              style="margin-top: var(--wa-space-xs);"
+            >
+              <wa-icon slot="start" name="clone" library="fa-jelly"></wa-icon>
+              Duplicate this trip
+            </wa-button>
+          ` : html`
+            <wa-button
+              size="small"
+              variant="brand"
+              href="/sign-in?returnTo=${encodeURIComponent(`/map/${this.mapId}`)}"
+              style="margin-top: var(--wa-space-xs);"
+            >
+              <wa-icon slot="start" name="arrow-right-to-bracket" library="fa-jelly"></wa-icon>
+              Sign in to duplicate this trip
+            </wa-button>
+          `}
+        </wa-callout>
+      ` : nothing}
+
+      <div class="wa-stack wa-gap-xs">
+        ${canEdit ? html`
+          <wa-input
+            placeholder="Trip name"
+            .value=${this._map?.name ?? ''}
+            @input=${this._onNameInput}
+          ></wa-input>
+          <wa-input
+            placeholder="Family name (optional)"
+            .value=${this._map?.family_name ?? ''}
+            @input=${this._onFamilyInput}
+          ></wa-input>
+        ` : html`
+          <h2 class="section-heading">${this._map?.name ?? 'Untitled Trip'}</h2>
+          ${this._map?.family_name ? html`<p class="section-subtitle">${this._map.family_name}</p>` : nothing}
+        `}
+      </div>
+
+      ${canEdit ? html`
+        <wa-dropdown>
+          <wa-button slot="trigger" variant="brand" size="small" with-caret class="add-trigger">
+            <wa-icon slot="start" name="plus"></wa-icon>
+            Add
+          </wa-button>
+          <wa-dropdown-item @click=${this._onAddPoint}>
+            <wa-icon slot="icon" name="location-dot"></wa-icon>
+            Point
+          </wa-dropdown-item>
+          <wa-dropdown-item @click=${this._onAddRoute}>
+            <wa-icon slot="icon" name="compass"></wa-icon>
+            Route
+          </wa-dropdown-item>
+        </wa-dropdown>
+      ` : nothing}
+
+      <div class="sidebar-scroll">
+        <div class="wa-stack wa-gap-s">
+          <item-list
+            .items=${this._items}
+            .readonly=${isReadOnly}
+            .distances=${this._routeDistances}
+            .units=${this._map?.units ?? 'km'}
+            @item-update=${this._onItemUpdate}
+            @item-update-batch=${this._onItemUpdateBatch}
+            @item-delete=${this._onItemDelete}
+            @items-reorder=${this._onItemsReorder}
+          ></item-list>
+
+          ${this._totalDistance ? html`
+            <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
+              <span class="stat-label">Total distance:</span>
+              <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
+            </div>
+          ` : nothing}
+
+          ${this._routeLoading ? html`
+            <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
+              <wa-spinner></wa-spinner>
+              Calculating routes...
+            </div>
+          ` : nothing}
+        </div>
+      </div>
+
+      <div class="wa-stack wa-gap-xs">
+        ${canEdit ? html`
+          <wa-details>
+            <span slot="summary" class="section-summary">
+              <wa-icon name="gear"></wa-icon>
+              Settings
+            </span>
+            <div class="wa-stack wa-gap-m">
+              <div class="setting-row">
+                <label>Units</label>
+                <wa-radio-group
+                  .value=${units}
+                  @change=${this._onUnitsChange}
+                >
+                  <wa-radio appearance="button" value="km">Kilometers</wa-radio>
+                  <wa-radio appearance="button" value="mi">Miles</wa-radio>
+                </wa-radio-group>
+              </div>
+              <div class="setting-row">
+                <label>Map theme</label>
+                <wa-radio-group
+                  .value=${this._getThemeId()}
+                  @change=${this._onThemeChange}
+                >
+                  ${MAP_THEMES.map(t => html`
+                    <wa-radio appearance="button" value=${t.id}>${t.name}</wa-radio>
+                  `)}
+                </wa-radio-group>
+              </div>
+            </div>
+          </wa-details>
+        ` : nothing}
+      </div>
+    `;
+  }
+
+  private _renderDrawerHeaderActions(isOwner: boolean) {
+    return html`
+      ${this._map?.id ? html`
+        <wa-dropdown slot="header-actions" placement="bottom-end" @wa-select=${this._onActionSelect}>
+          <wa-button slot="trigger" appearance="plain" size="small">
+            <wa-icon name="ellipsis" label="More actions"></wa-icon>
+          </wa-button>
+          ${isOwner ? html`
+            <wa-dropdown-item value="share">
+              <wa-icon slot="icon" name="share-nodes"></wa-icon> Share
+            </wa-dropdown-item>
+          ` : nothing}
+          <wa-dropdown-item value="preview">
+            <wa-icon slot="icon" name="eye"></wa-icon> Preview &amp; Export
+          </wa-dropdown-item>
+        </wa-dropdown>
+      ` : nothing}
+      ${!isOwner ? html`
+        <wa-badge slot="header-actions" variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>
+      ` : nothing}
+    `;
+  }
+
   render() {
     if (this._loading) {
       return html`
-        <div class="sidebar sidebar-left">
-          <div class="loading-center"><wa-spinner></wa-spinner></div>
+        ${this._isMobile ? nothing : html`
+          <div class="sidebar sidebar-left">
+            <div class="loading-center"><wa-spinner></wa-spinner></div>
+          </div>
+        `}
+        <div class="map-panel">
+          <map-view></map-view>
+          ${this._isMobile ? html`
+            <div class="map-overlay"><wa-spinner></wa-spinner></div>
+          ` : nothing}
         </div>
-        <div class="map-panel"><map-view></map-view></div>
       `;
     }
 
     if (this._error) {
       return html`
-        <div class="sidebar sidebar-left">
-          <wa-callout variant="danger">
-            <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-            ${this._error}
-          </wa-callout>
+        ${this._isMobile ? nothing : html`
+          <div class="sidebar sidebar-left">
+            <wa-callout variant="danger">
+              <wa-icon slot="icon" name="circle-xmark"></wa-icon>
+              ${this._error}
+            </wa-callout>
+          </div>
+        `}
+        <div class="map-panel">
+          <map-view></map-view>
+          ${this._isMobile ? html`
+            <div class="map-overlay">
+              <wa-callout variant="danger">
+                <wa-icon slot="icon" name="circle-xmark"></wa-icon>
+                ${this._error}
+              </wa-callout>
+            </div>
+          ` : nothing}
         </div>
-        <div class="map-panel"><map-view></map-view></div>
       `;
     }
 
@@ -234,167 +482,41 @@ export class TripBuilderPage extends MapPageBase {
     const isReadOnly = !canEdit;
 
     return html`
-      <div class="sidebar sidebar-left">
-        <!-- Fixed top: header + inputs -->
-        <div class="wa-split wa-gap-xs">
-          <h1>
-            <wa-icon name=${this._saveStatus === 'saving' ? 'spinner' : this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>
+      ${this._isMobile ? html`
+        <wa-drawer
+          placement="start"
+          ?open=${this._drawerOpen}
+          light-dismiss
+          @wa-after-hide=${this._onDrawerHide}
+        >
+          <span slot="label">
+            <wa-icon name=${this._saveStatus === 'saving' ? 'arrow-rotate-right' : this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>
             Trip Builder
-          </h1>
-          <div class="wa-cluster wa-gap-xs wa-align-items-center">
-            ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : nothing}
-            ${this._map?.id ? html`
-              <wa-dropdown placement="bottom-end" @wa-select=${this._onActionSelect}>
-                <wa-button slot="trigger" appearance="outlined" size="small" variant="neutral" with-caret>
-                  <wa-icon slot="start" name="ellipsis"></wa-icon>
-                </wa-button>
-                ${isOwner ? html`
-                  <wa-dropdown-item value="share">
-                    <wa-icon slot="icon" name="share-nodes"></wa-icon>
-                    Share
-                  </wa-dropdown-item>
-                ` : nothing}
-                <wa-dropdown-item value="preview">
-                  <wa-icon slot="icon" name="eye"></wa-icon>
-                  Preview
-                </wa-dropdown-item>
-                <wa-dropdown-item value="print">
-                  <wa-icon slot="icon" name="print"></wa-icon>
-                  Print
-                </wa-dropdown-item>
-              </wa-dropdown>
-            ` : nothing}
+          </span>
+          ${this._renderDrawerHeaderActions(isOwner)}
+          <div class="drawer-body">
+            ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
           </div>
+        </wa-drawer>
+      ` : html`
+        <div class="sidebar sidebar-left">
+          ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
         </div>
-
-        ${isReadOnly ? html`
-          <wa-callout variant="neutral">
-            <wa-icon slot="icon" name="eye"></wa-icon>
-            You are viewing this trip as ${this._role === 'public' ? 'a public visitor' : 'a viewer'}.
-            ${isAuthenticated() ? html`
-              <wa-button
-                size="small"
-                variant="brand"
-                ?loading=${this._duplicating}
-                @click=${this._onDuplicate}
-                class="mt-xs"
-              >
-                <wa-icon slot="start" name="clone" library="fa-jelly"></wa-icon>
-                Duplicate this trip
-              </wa-button>
-            ` : html`
-              <wa-button
-                size="small"
-                variant="brand"
-                href="/sign-in?returnTo=${encodeURIComponent(`/map/${this.mapId}`)}"
-                class="mt-xs"
-              >
-                <wa-icon slot="start" name="arrow-right-to-bracket" library="fa-jelly"></wa-icon>
-                Sign in to duplicate this trip
-              </wa-button>
-            `}
-          </wa-callout>
-        ` : nothing}
-
-        <div class="wa-stack wa-gap-xs">
-          ${canEdit ? html`
-            <wa-input
-              placeholder="Trip name"
-              .value=${this._map?.name ?? ''}
-              @input=${this._onNameInput}
-            ></wa-input>
-            <wa-input
-              placeholder="Family name (optional)"
-              .value=${this._map?.family_name ?? ''}
-              @input=${this._onFamilyInput}
-            ></wa-input>
-          ` : html`
-            <h2 class="section-heading">${this._map?.name ?? 'Untitled Trip'}</h2>
-            ${this._map?.family_name ? html`<p class="section-subtitle">${this._map.family_name}</p>` : nothing}
-          `}
-        </div>
-
-        ${canEdit ? html`
-          <wa-dropdown>
-            <wa-button slot="trigger" variant="brand" size="small" with-caret class="add-trigger">
-              <wa-icon slot="start" name="plus"></wa-icon>
-              Add
-            </wa-button>
-            <wa-dropdown-item @click=${this._onAddPoint}>
-              <wa-icon slot="icon" name="location-dot"></wa-icon>
-              Point
-            </wa-dropdown-item>
-            <wa-dropdown-item @click=${this._onAddRoute}>
-              <wa-icon slot="icon" name="compass"></wa-icon>
-              Route
-            </wa-dropdown-item>
-          </wa-dropdown>
-        ` : nothing}
-
-        <!-- Scrollable: map items -->
-        <div class="sidebar-scroll">
-          <div class="wa-stack wa-gap-s">
-            <item-list
-              .items=${this._items}
-              .readonly=${isReadOnly}
-              .distances=${this._routeDistances}
-              .units=${this._map?.units ?? 'km'}
-              @item-update=${this._onItemUpdate}
-              @item-update-batch=${this._onItemUpdateBatch}
-              @item-delete=${this._onItemDelete}
-              @items-reorder=${this._onItemsReorder}
-            ></item-list>
-
-            ${this._totalDistance ? html`
-              <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
-                <span class="stat-label">Total distance:</span>
-                <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
-              </div>
-            ` : nothing}
-
-            ${this._routeLoading ? html`
-              <div class="route-loading wa-cluster wa-gap-xs wa-align-items-center">
-                <wa-spinner></wa-spinner>
-                Calculating routes...
-              </div>
-            ` : nothing}
-          </div>
-        </div>
-
-        <!-- Fixed bottom: actions + settings -->
-        <div class="wa-stack wa-gap-xs">
-          ${canEdit ? html`
-            <wa-details>
-              <span slot="summary" class="section-summary">
-                <wa-icon name="gear"></wa-icon>
-                Settings
-              </span>
-              <div class="wa-stack wa-gap-m">
-                <div class="setting-row">
-                  <label>Units</label>
-                  <wa-radio-group
-                    .value=${units}
-                    @change=${this._onUnitsChange}
-                  >
-                    <wa-radio appearance="button" value="km">Kilometers</wa-radio>
-                    <wa-radio appearance="button" value="mi">Miles</wa-radio>
-                  </wa-radio-group>
-                </div>
-                <div class="setting-row">
-                  <label>Map theme</label>
-                  <wa-callout>
-                    <wa-icon slot="icon" name="circle-info"></wa-icon>
-                    Custom map themes coming soon.
-                  </wa-callout>
-                </div>
-              </div>
-            </wa-details>
-          ` : nothing}
-        </div>
-      </div>
+      `}
 
       <div class="map-panel">
         <map-view @map-ready=${this._onMapReady}></map-view>
+        ${this._isMobile ? html`
+          <wa-button
+            class="map-fab"
+            variant="brand"
+            size="large"
+            pill
+            @click=${() => { this._drawerOpen = true; }}
+          >
+            <wa-icon name="pencil" label="Edit trip"></wa-icon>
+          </wa-button>
+        ` : nothing}
       </div>
 
       ${isOwner ? html`
@@ -438,8 +560,34 @@ export class TripBuilderPage extends MapPageBase {
     // Distance display updates reactively (re-render)
   }
 
+  private async _onThemeChange(e: Event) {
+    const themeId = (e.target as HTMLInputElement).value as MapThemeId;
+    if (!this._map) return;
+
+    // Update style_preferences in local state
+    let prefs: Record<string, unknown> = {};
+    try {
+      prefs = this._map.style_preferences ? JSON.parse(this._map.style_preferences) : {};
+    } catch { /* empty */ }
+    prefs.theme = themeId;
+    this._map = { ...this._map, style_preferences: JSON.stringify(prefs) };
+
+    // Switch the map theme
+    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+    if (mapView) {
+      // Update the controller options for the new theme
+      this._mapController?.destroy();
+      this._mapController = undefined;
+      await mapView.setTheme(themeId);
+      // map-ready event will re-create controller and sync
+    }
+
+    this._debounceSave();
+  }
+
   private _debounceSave() {
     clearTimeout(this._saveTimer);
+    this._setSaveStatus('saving');
     this._saveTimer = setTimeout(() => this._saveMetadata(), 2500);
   }
 
@@ -451,6 +599,7 @@ export class TripBuilderPage extends MapPageBase {
         name: this._map.name,
         family_name: this._map.family_name,
         units: this._map.units,
+        style_preferences: this._map.style_preferences,
       });
       this._setSaveStatus('saved');
     } catch {
@@ -595,7 +744,10 @@ export class TripBuilderPage extends MapPageBase {
     const value = e.detail.item.value;
     if (value === 'share') this._onShareClick();
     else if (value === 'preview') navigateTo(`/preview/${this._map!.id}`);
-    else if (value === 'print') navigateTo(`/export/${this._map!.id}`);
+  }
+
+  private _onDrawerHide() {
+    this._drawerOpen = false;
   }
 
   private _onShareClick() {

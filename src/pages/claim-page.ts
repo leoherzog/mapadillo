@@ -31,10 +31,6 @@ export class ClaimPage extends LitElement {
     .spinner {
       font-size: var(--wa-font-size-2xl);
     }
-
-    .mt-l {
-      margin-top: var(--wa-space-l);
-    }
   `];
 
   connectedCallback(): void {
@@ -79,14 +75,16 @@ export class ClaimPage extends LitElement {
     }
 
     return html`
-      <wa-callout variant="danger">
-        <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-        ${this._error}
-      </wa-callout>
-      <div class="mt-l">
-        <wa-button variant="brand" @click=${() => navigateTo('/dashboard')}>
-          Go to Dashboard
-        </wa-button>
+      <div class="wa-stack wa-gap-l">
+        <wa-callout variant="danger">
+          <wa-icon slot="icon" name="circle-xmark"></wa-icon>
+          ${this._error}
+        </wa-callout>
+        <div>
+          <wa-button variant="brand" @click=${() => navigateTo('/dashboard')}>
+            Go to Dashboard
+          </wa-button>
+        </div>
       </div>
     `;
   }

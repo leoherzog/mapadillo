@@ -7,7 +7,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { signOut, type User } from '../auth/auth-state.js';
-import { navigateTo } from '../nav.js';
+import { navigateTo, navClick } from '../nav.js';
 import { isDark, toggleDarkMode } from '../dark-mode.js';
 
 @customElement('user-menu')
@@ -66,6 +66,11 @@ export class UserMenu extends LitElement {
           ></wa-avatar>
           <span class="trigger-label">${this.user.name}</span>
         </wa-button>
+
+        <wa-dropdown-item @click=${navClick('/dashboard')}>
+          <wa-icon slot="icon" name="compass"></wa-icon>
+          My Trips
+        </wa-dropdown-item>
 
         <wa-dropdown-item @click=${this._handleToggleDark}>
           <wa-icon slot="icon" name=${this._dark ? 'sun' : 'moon'}></wa-icon>

@@ -14,8 +14,9 @@ import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
-import { MAP_STYLE_URL } from '../config/map.js';
+import { resolveMapStyle } from '../config/map.js';
 import { HEX_COLOR_BY_MODE } from '../config/travel-modes.js';
+import { type MapThemeId, DEFAULT_THEME } from '../config/map-themes.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
@@ -72,13 +73,27 @@ export class MapCard extends LitElement {
     `,
   ];
 
-  protected firstUpdated(): void {
+  private _getThemeId(): MapThemeId {
+    if (!this.map.style_preferences) return DEFAULT_THEME;
+    try {
+      const prefs = typeof this.map.style_preferences === 'string'
+        ? JSON.parse(this.map.style_preferences) as Record<string, unknown>
+        : this.map.style_preferences as Record<string, unknown>;
+      return (prefs.theme as MapThemeId) ?? DEFAULT_THEME;
+    } catch {
+      return DEFAULT_THEME;
+    }
+  }
+
+  protected async firstUpdated(): Promise<void> {
     const container = this.shadowRoot!.querySelector('.map-container') as HTMLElement;
     if (!container) return;
 
+    const style = await resolveMapStyle(this._getThemeId());
+
     this._mapInstance = new maplibregl.Map({
       container,
-      style: MAP_STYLE_URL,
+      style,
       center: [0, 20],
       zoom: 2,
       interactive: false,

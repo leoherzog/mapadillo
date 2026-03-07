@@ -29,7 +29,7 @@ describe('navigateTo', () => {
 
       navigateTo('/dashboard');
 
-      expect(mockNavigate).toHaveBeenCalledWith('/dashboard');
+      expect(mockNavigate).toHaveBeenCalledWith('/dashboard', undefined);
     });
   });
 
@@ -75,7 +75,7 @@ describe('navClick', () => {
     const handler = navClick('/trip/123');
     handler({ preventDefault: vi.fn() } as unknown as Event);
 
-    expect(mockNavigate).toHaveBeenCalledWith('/trip/123');
+    expect(mockNavigate).toHaveBeenCalledWith('/trip/123', undefined);
   });
 
   it('uses history fallback when Navigation API is absent', () => {

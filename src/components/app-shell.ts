@@ -19,7 +19,6 @@ import '../pages/dashboard-page.js';
 import '../pages/trip-builder-page.js';
 import '../pages/claim-page.js';
 import '../pages/map-preview-page.js';
-import '../pages/export-page.js';
 import './user-menu.js';
 
 @customElement('app-shell')
@@ -57,8 +56,8 @@ export class AppShell extends LitElement {
     },
     {
       path: '/export/:id',
-      enter: requireAuth,
-      render: ({ id }) => html`<export-page .mapId=${id ?? ''}></export-page>`,
+      enter: ({ id }) => `/preview/${id}`,
+      render: () => html``,
     },
     {
       path: '/claim/:token',
@@ -105,6 +104,16 @@ export class AppShell extends LitElement {
       display: none;
     }
 
+    /*
+     * Full-screen viewport lock for the map editor page.
+     * wa-page has no built-in attribute for this — its footer always pushes
+     * content below the viewport by design. These ::part() overrides constrain
+     * the internal grid chain so trip-builder-page fills exactly 100dvh.
+     * Toggled via [no-footer] host attribute set in render().
+     * See PLAN.md M8 Implementation Notes for rationale.
+     */
+
+    /* Cap the outermost grid at viewport height (internal: min-height: 100dvh) */
     :host([no-footer]) wa-page::part(base) {
       height: 100dvh;
     }
@@ -113,15 +122,22 @@ export class AppShell extends LitElement {
       display: none;
     }
 
+    /*
+     * Internal default is align-items: flex-start, which makes the main element
+     * content-sized (as tall as sidebar cards) instead of stretching to fill the
+     * constrained 1fr body row. Override to stretch + min-height: 0 (from 100%).
+     */
     :host([no-footer]) wa-page::part(body) {
       min-height: 0;
       align-items: stretch;
     }
 
+    /* Prevent expansion beyond grid track (internal: min-height: 100%) */
     :host([no-footer]) wa-page::part(main) {
       min-height: 0;
     }
 
+    /* Flex column so trip-builder-page's flex: 1 fills remaining space */
     :host([no-footer]) wa-page::part(main-content) {
       min-height: 0;
       display: flex;
@@ -159,7 +175,7 @@ export class AppShell extends LitElement {
 
   private get _isFullHeight() {
     const p = location.pathname;
-    return p.startsWith('/map/') || p === '/map/new';
+    return p.startsWith('/map/') || p === '/map/new' || p.startsWith('/preview/');
   }
 
   render() {
@@ -176,16 +192,7 @@ export class AppShell extends LitElement {
 
           <nav class="header-nav wa-cluster wa-align-items-center wa-gap-s" aria-label="Site navigation">
             ${this._user
-              ? html`
-                  <wa-button
-                    appearance="plain"
-                    variant="neutral"
-                    size="small"
-                    href="/dashboard"
-                    @click=${navClick('/dashboard')}
-                  >My Trips</wa-button>
-                  <user-menu .user=${this._user}></user-menu>
-                `
+              ? html`<user-menu .user=${this._user}></user-menu>`
               : html`
                   <wa-button
                     size="small"

@@ -1521,6 +1521,64 @@ worker/src/
 - Error states handled gracefully (API failures, network errors)
 - Attribution visible on map
 
+#### Implementation Notes (M8)
+
+**1. Responsive design pass**
+
+- **Shared page layout styles** (`src/styles/page-layout.ts`): Extracted sidebar + map-panel layout into reusable `pageLayoutStyles` CSS. Desktop: 380px sidebar with border, flex map panel. Mobile (`≤700px`): stacks vertically, sidebar capped at `45vh`, map gets `min-height: 300px`. Also exports `familyNameStyles` (quiet subtitle text) and moved stat-row/loading-center styles here.
+- **Shared heading styles** (`src/styles/heading-shared.ts`): Reusable `headingStyles` for `h1` with brand color + weight, used by landing, export, and trip-builder pages.
+- **Trip builder** (`src/pages/trip-builder-page.ts`): Extends `MapPageBase` instead of `LitElement` directly. Desktop sidebar pins header/footer with scrollable `.sidebar-scroll` middle section. Uses `pageLayoutStyles` for responsive stacking.
+- **Export page** (`src/pages/export-page.ts`): Removed ~100 lines of duplicated layout CSS, replaced with `pageLayoutStyles` + `headingStyles` + `familyNameStyles`.
+- **Map preview page** (`src/pages/map-preview-page.ts`): Added `@media (max-width: 700px)` rules — overlay stretches full width, actions wrap.
+- **Sign-in page** (`src/pages/sign-in-page.ts`): Replaced inline `style` attributes with CSS classes (`.full-width`, `.divider-row`). Extracted `_renderSocialButtons(prefix)` and `_renderDivider()` helpers to DRY up sign-in vs register modes.
+- **App shell header** (`src/components/app-shell.ts`): Mobile-responsive header — tighter padding and smaller logo text/icon at `≤700px`.
+- **Dashboard** (`src/pages/dashboard-page.ts`): Uses `wa-grid` with `--min-column-size: 280px` for responsive card layout. Removed greeting paragraph. Uses design tokens instead of hardcoded colors.
+
+**2. Loading, error, and empty states**
+
+- **Dashboard**: Added `_fetchError` state — shows `wa-callout variant="danger"` on API failure instead of silent empty state. Added `_deleteError` with auto-dismiss timer. Loading state uses centered `wa-spinner`.
+- **Trip builder**: Save status indicator moved inline into sidebar header — animated spinning icon (saving), green check (saved), red X (error) with CSS `@keyframes spin`. Removed standalone `save-indicator.ts` component entirely.
+- **Map preview**: Distinct loading spinner overlay vs error `wa-callout` overlay, both positioned absolutely over map.
+- **Claim page** (`src/pages/claim-page.ts`): Replaced inline `style` on spinner with `.spinner` class. Error state shows callout + "Go to Dashboard" button.
+- **Router** (`src/router.ts`): Error and 404 fallback templates use CSS classes (`.router-callout`) instead of inline styles.
+
+**3. Attribution**
+
+- **Map view** (`src/components/map-view.ts`): Disabled default attribution control, added compact `AttributionControl` explicitly. Centralized map style URL in `src/config/map.ts`.
+- **Map export** (`src/map/map-export.ts`): Attribution is preserved in export renders via the compact control on the temp map.
+
+**4. Dark mode**
+
+- **`src/dark-mode.ts`** (new): Full dark-mode manager — persists preference to `localStorage` (`mapadillo-dark-mode`), falls back to `prefers-color-scheme` media query. Toggles `wa-dark` class on `<html>` and sets `color-scheme`. Dispatches `dark-mode-change` CustomEvent on `document` for reactive component updates. Initialized once from `src/index.ts`.
+- **User menu** (`src/components/user-menu.ts`): Added dark/light mode toggle dropdown item. Listens to `dark-mode-change` events to reactively update icon (sun/moon).
+
+**5. Locale-based units**
+
+- **`src/utils/geo.ts`**: Added `getDefaultUnits()` — detects preferred distance units from `navigator.language`. Returns `'mi'` for US, UK, Myanmar locales; `'km'` everywhere else. Also added `formatCoords()` utility.
+- **Trip builder**: Calls `getDefaultUnits()` when creating new maps to set the default unit preference.
+
+**6. Full-screen map editor (`wa-page` viewport lock)**
+
+The trip builder page needs to fill exactly `100dvh` with no page-level scrollbar (sidebar scrolls internally). `wa-page` has no built-in attribute for this — its footer slot is designed to always push content below the viewport. The solution uses conditional `::part()` overrides on `wa-page` internals, toggled via a `[no-footer]` host attribute on `app-shell`:
+
+1. **`::part(base) { height: 100dvh }`** — caps the grid at viewport height (internal default: `min-height: 100dvh` allows growth)
+2. **`::part(footer) { display: none }`** — hides footer container (footer slot content also conditionally not rendered)
+3. **`::part(body) { min-height: 0; align-items: stretch }`** — critical fix: internal default is `align-items: flex-start` which makes `main` content-sized (as tall as sidebar cards) instead of stretching to fill the constrained 1fr row. Override to `stretch` + `min-height: 0` (from internal `100%`) forces `main` to fill available space
+4. **`::part(main) { min-height: 0 }`** — prevents expansion beyond grid track (internal: `min-height: 100%`)
+5. **`::part(main-content) { display: flex; flex-direction: column; min-height: 0; overflow: hidden }`** — makes `main-content` a flex column so `trip-builder-page`'s `flex: 1` fills the remaining space
+
+The `_isFullHeight` getter checks `location.pathname.startsWith('/map/')` to apply only to the trip builder and export pages. The router calls `requestUpdate()` on every navigation, so `location.pathname` is current during render.
+
+**7. Code cleanup & architecture**
+
+- **Shared types** (`shared/types.ts`): Moved `MapRow`, `StopRow`, `MapRole` from `worker/src/db/types.ts` to shared types used by both client and worker. Added `shared/icons.ts` (valid icon set) and `shared/travel-modes.ts` (valid travel modes) to eliminate duplication.
+- **Navigation** (`src/nav.ts`): Added `navClick(path)` higher-order function for declarative `@click` handlers, replacing per-page `_navX` methods. Router's `navigate()` method removed — all navigation goes through `navigateTo()`.
+- **Map controller** (`src/map/map-controller.ts`): Major refactor — uses GeoJSON sources + symbol/circle/line layers instead of DOM markers. Exports `renderMarkerCanvas()` for use in map export.
+- **Map export** (`src/map/map-export.ts`): Added paper size support (`letter`, `a4`, `a3`, `tabloid`) with orientation (landscape/portrait). Zoom compensation formula (`Math.log2(scaleFactor)`) keeps exported extent matching the live view. Marker rendering now uses `renderMarkerCanvas()` (same composite images as live map) instead of hand-drawn circles.
+- **Worker routes** (`worker/src/routes/maps.ts`): Extracted `requireEditableMap()` and `touchMapStmt()` helpers to reduce boilerplate across CRUD endpoints. Uses shared types/icons/travel-modes from `shared/`.
+- **Landing page**: "Start Planning" button sends authenticated users to `/dashboard` instead of `/sign-in`.
+- **Design tokens**: Replaced hardcoded values (`#e05e00`, `0.9rem`, `font-weight: 900`, `color: var(--wa-color-neutral-*)`) with Web Awesome semantic tokens (`--wa-color-brand-60`, `--wa-font-size-s`, `--wa-font-weight-bold`, `--wa-color-text-quiet`) throughout all components for dark-mode compatibility.
+
 ---
 
 ### Milestone 9: Print Ordering (Stripe + Prodigi)

@@ -10,6 +10,7 @@ import { getSegmentRoute, type SegmentGeometry } from '../services/routing.js';
 import { isDraftCoord } from '../utils/geo.js';
 
 import { TRAVEL_MODES } from '../config/travel-modes.js';
+import type { MapControllerOptions } from '../config/map-themes.js';
 
 // ── Mode-specific line styles ────────────────────────────────────────────────
 
@@ -166,14 +167,20 @@ export class MapController {
   private _sourceIds: string[] = [];
   private _abortController?: AbortController;
   private _markerFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  private _labelFont: string[];
+  private _labelColor: string;
+  private _labelHaloColor: string;
 
   /** Offset marker coordinates used for rendering. Used by export to match live map positions. */
   get markerFeatures(): GeoJSON.Feature<GeoJSON.Point>[] {
     return this._markerFeatures;
   }
 
-  constructor(map: maplibregl.Map) {
+  constructor(map: maplibregl.Map, options?: MapControllerOptions) {
     this._map = map;
+    this._labelFont = options?.labelFont ?? ['Noto Sans Bold'];
+    this._labelColor = options?.labelColor ?? '#333333';
+    this._labelHaloColor = options?.labelHaloColor ?? 'rgba(255, 255, 255, 0.85)';
   }
 
   /**
@@ -385,7 +392,7 @@ export class MapController {
         'icon-allow-overlap': true,
         'symbol-sort-key': ['get', 'sortKey'],
         'text-field': ['get', 'name'],
-        'text-font': ['Noto Sans Bold'],
+        'text-font': this._labelFont,
         'text-size': 11,
         'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
         'text-radial-offset': 1.4,
@@ -395,8 +402,8 @@ export class MapController {
         'text-optional': true,
       },
       paint: {
-        'text-color': '#333333',
-        'text-halo-color': 'rgba(255, 255, 255, 0.85)',
+        'text-color': this._labelColor,
+        'text-halo-color': this._labelHaloColor,
         'text-halo-width': 2,
       },
     });

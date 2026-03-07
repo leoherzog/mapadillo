@@ -21,7 +21,7 @@ const RENDER_TIMEOUT_MS = 30_000;
 const RENDER_ERROR_MSG = 'Unable to render map at this resolution. Try on a desktop browser.';
 
 /** Paper dimensions in mm (portrait: width × height). */
-const PAPER_SIZES: Record<string, [number, number]> = {
+export const PAPER_SIZES: Record<string, [number, number]> = {
   letter: [215.9, 279.4],
   a4: [210, 297],
   a3: [297, 420],

@@ -257,7 +257,7 @@ describe('Router', () => {
       router.hostConnected();
       navigateTo('/dashboard');
 
-      expect(navigation.navigate).toHaveBeenCalledWith('/dashboard');
+      expect(navigation.navigate).toHaveBeenCalledWith('/dashboard', undefined);
     });
 
     it('intercepts same-origin navigations for matching routes', async () => {
