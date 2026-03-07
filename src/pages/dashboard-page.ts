@@ -4,7 +4,7 @@
  * M4: Fetches owned maps from the API and displays them as thumbnail cards
  * with mini MapLibre previews.
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { User } from '../auth/auth-state.js';
 import type { MapWithRole } from '../services/maps.js';
@@ -30,6 +30,9 @@ export class DashboardPage extends LitElement {
     return this._maps.filter(m => m.role !== 'owner');
   }
 
+  @state() private _deleteError = '';
+  private _deleteErrorTimer?: ReturnType<typeof setTimeout>;
+
   @state() private _dialogOpen = false;
 
   static styles = [waUtilities, css`
@@ -43,44 +46,62 @@ export class DashboardPage extends LitElement {
 
     h1 {
       font-size: var(--wa-font-size-3xl);
-      font-weight: 900;
-      color: var(--wa-color-brand-60, #e05e00);
+      font-weight: var(--wa-font-weight-bold);
+      color: var(--wa-color-brand-60);
       margin: 0 0 var(--wa-space-xs);
     }
 
     h2 {
       font-size: var(--wa-font-size-xl);
       font-weight: 800;
-      color: var(--wa-color-brand-60, #e05e00);
+      color: var(--wa-color-brand-60);
       margin: var(--wa-space-2xl) 0 var(--wa-space-xs);
     }
 
     h1 wa-icon {
-      font-size: 1.7rem;
+      font-size: var(--wa-font-size-2xl);
       vertical-align: -0.1em;
     }
 
     h2 wa-icon {
-      font-size: 1.2rem;
+      font-size: var(--wa-font-size-l);
       vertical-align: -0.1em;
     }
 
     .empty-state {
       padding: var(--wa-space-2xl);
       text-align: center;
-      border: 2px dashed var(--wa-color-neutral-300);
-      border-radius: var(--wa-border-radius-xl);
-      color: var(--wa-color-neutral-600);
+      border: var(--wa-border-width-m) dashed var(--wa-color-surface-border);
+      border-radius: var(--wa-border-radius-l);
+      color: var(--wa-color-text-quiet);
     }
 
     .empty-state p {
       margin: 0;
+    }
+
+    .map-grid {
+      --min-column-size: 280px;
+      margin-top: var(--wa-space-l);
+    }
+
+    .loading-center {
+      padding: var(--wa-space-2xl);
+    }
+
+    .delete-callout {
+      margin-bottom: var(--wa-space-m);
     }
   `];
 
   connectedCallback(): void {
     super.connectedCallback();
     this._fetchMaps();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    clearTimeout(this._deleteErrorTimer);
   }
 
   private async _fetchMaps() {
@@ -103,8 +124,15 @@ export class DashboardPage extends LitElement {
         My Trips
       </h1>
 
+      ${this._deleteError ? html`
+        <wa-callout variant="danger" class="delete-callout">
+          <wa-icon slot="icon" name="circle-xmark"></wa-icon>
+          ${this._deleteError}
+        </wa-callout>
+      ` : nothing}
+
       ${this._loading
-        ? html`<div class="wa-cluster wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
         : this._fetchError
           ? html`
               <wa-callout variant="danger">
@@ -127,7 +155,7 @@ export class DashboardPage extends LitElement {
                 <wa-icon slot="start" name="plus"></wa-icon>
                 Create New Trip
               </wa-button>
-              <div class="wa-grid wa-gap-l" style="--min-column-size: 280px; margin-top: var(--wa-space-l)" @map-delete=${this._onMapDelete}>
+              <div class="map-grid wa-grid wa-gap-l" @map-delete=${this._onMapDelete}>
                 ${this._myMaps.map(
                   (m) => html`<map-card .map=${m}></map-card>`,
                 )}
@@ -140,7 +168,7 @@ export class DashboardPage extends LitElement {
       </h2>
 
       ${this._loading
-        ? html`<div class="wa-cluster wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
         : this._sharedMaps.length === 0
           ? html`
               <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
@@ -148,7 +176,7 @@ export class DashboardPage extends LitElement {
               </div>
             `
           : html`
-              <div class="wa-grid wa-gap-l" style="--min-column-size: 280px; margin-top: var(--wa-space-l)">
+              <div class="map-grid wa-grid wa-gap-l">
                 ${this._sharedMaps.map(
                   (m) => html`<map-card .map=${m} .roleBadge=${m.role}></map-card>`,
                 )}
@@ -183,7 +211,9 @@ export class DashboardPage extends LitElement {
       await deleteMap(mapId);
       this._maps = this._maps.filter((m) => m.id !== mapId);
     } catch {
-      // Could show error toast, but for now silent
+      this._deleteError = 'Failed to delete trip. Please try again.';
+      clearTimeout(this._deleteErrorTimer);
+      this._deleteErrorTimer = setTimeout(() => { this._deleteError = ''; }, 5000);
     }
   }
 }

@@ -46,8 +46,8 @@ export class ItemList extends LitElement {
     }
 
     .drop-indicator {
-      height: 3px;
-      background: var(--wa-color-brand-50, #ff6b00);
+      height: var(--wa-border-width-l);
+      background: var(--wa-color-brand-50);
       border-radius: 2px;
       margin: -2px 0;
       pointer-events: none;
@@ -72,6 +72,7 @@ export class ItemList extends LitElement {
     if (this.items.length === 0) {
       return html`
         <wa-callout class="empty">
+          <wa-icon slot="icon" name="map" library="default"></wa-icon>
           Add points or routes to build your map!
         </wa-callout>
       `;

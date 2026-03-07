@@ -55,19 +55,19 @@ export class MapCard extends LitElement {
       h3 {
         margin: 0;
         font-size: var(--wa-font-size-m);
-        font-weight: 600;
+        font-weight: var(--wa-font-weight-semibold);
       }
 
       .family {
         font-size: var(--wa-font-size-s);
-        color: var(--wa-color-neutral-500);
+        color: var(--wa-color-text-quiet);
         margin-top: var(--wa-space-3xs);
       }
 
       .meta {
         margin-top: 0.35rem;
         font-size: var(--wa-font-size-s);
-        color: var(--wa-color-neutral-400);
+        color: var(--wa-color-text-quiet);
       }
     `,
   ];

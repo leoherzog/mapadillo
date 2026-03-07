@@ -79,7 +79,7 @@ const maps = new Hono<AppEnv>();
 
 // POST / — create map
 maps.post('/', async (c) => {
-  const body = await c.req.json<{ name?: string; family_name?: string }>().catch((): { name?: string; family_name?: string } => ({}));
+  const body = await c.req.json<{ name?: string; family_name?: string; units?: string }>().catch((): { name?: string; family_name?: string; units?: string } => ({}));
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
@@ -89,14 +89,15 @@ maps.post('/', async (c) => {
   if (body.family_name && typeof body.family_name === 'string' && body.family_name.trim().length > 200) {
     return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
   }
+  const units = body.units && VALID_UNITS.has(body.units) ? body.units : 'km';
 
   const id = crypto.randomUUID();
   const userId = c.get('user')!.id;
   const now = new Date().toISOString();
 
   await c.env.DB.prepare(
-    'INSERT INTO maps (id, owner_id, name, family_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).bind(id, userId, body.name.trim(), body.family_name?.trim() ?? null, now, now).run();
+    'INSERT INTO maps (id, owner_id, name, family_name, units, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).bind(id, userId, body.name.trim(), body.family_name?.trim() ?? null, units, now, now).run();
 
   const map = await c.env.DB.prepare('SELECT * FROM maps WHERE id = ?').bind(id).first<MapRow>();
   return c.json(map, 201);

@@ -7,13 +7,13 @@ export const cardSharedStyles = css`
 
   .drag-handle {
     cursor: grab;
-    color: var(--wa-color-neutral-400);
+    color: var(--wa-color-text-quiet);
     flex-shrink: 0;
     touch-action: none;
   }
 
   .delete-btn::part(base) {
-    color: var(--wa-color-neutral-400);
+    color: var(--wa-color-text-quiet);
   }
 
   .delete-btn::part(base):hover {

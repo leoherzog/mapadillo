@@ -29,20 +29,55 @@ export class ShareDialog extends LitElement {
   @state() private _open = false;
 
   static styles = [waUtilities, css`
-    wa-dialog::part(panel) {
+    wa-dialog::part(dialog) {
       max-width: 520px;
     }
 
-    .section-label {
-      font-weight: 700;
+    .link-box {
+      padding: var(--wa-space-s);
+      background: var(--wa-color-surface-lowered);
+      border-radius: var(--wa-border-radius-m);
       font-size: var(--wa-font-size-s);
-      color: var(--wa-color-neutral-700);
+      word-break: break-all;
+    }
+
+    .label-icon {
+      font-size: var(--wa-font-size-m);
+      margin-right: var(--wa-space-xs);
+    }
+
+    .collab-icon-pending {
+      font-size: var(--wa-font-size-l);
+      color: var(--wa-color-text-quiet);
+    }
+
+    .collab-icon-claimed {
+      font-size: var(--wa-font-size-l);
+      color: var(--wa-color-brand-60);
+    }
+
+    .collab-row {
+      padding: var(--wa-space-xs) 0;
+    }
+
+    .claim-url {
+      word-break: break-all;
+    }
+
+    .role-select {
+      width: 110px;
+    }
+
+    .section-label {
+      font-weight: var(--wa-font-weight-bold);
+      font-size: var(--wa-font-size-s);
+      color: var(--wa-color-text-normal);
       margin: 0;
     }
 
     .visibility-desc {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
     }
 
     .collaborator-info {
@@ -51,24 +86,24 @@ export class ShareDialog extends LitElement {
     }
 
     .collaborator-name {
-      font-weight: 600;
+      font-weight: var(--wa-font-weight-semibold);
       font-size: var(--wa-font-size-s);
     }
 
     .collaborator-email {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
     }
 
     .pending-label {
       font-style: italic;
-      color: var(--wa-color-neutral-400);
+      color: var(--wa-color-text-quiet);
       font-size: var(--wa-font-size-xs);
     }
 
     .empty-collab {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-400);
+      color: var(--wa-color-text-quiet);
       text-align: center;
       padding: var(--wa-space-m);
     }
@@ -92,7 +127,7 @@ export class ShareDialog extends LitElement {
   render() {
     return html`
       <wa-dialog ?open=${this._open} @wa-after-hide=${this._onClose}>
-        <span slot="label"><wa-icon name="share-nodes" style="font-size: 1.1rem; margin-right: var(--wa-space-xs);"></wa-icon> Share Trip</span>
+        <span slot="label"><wa-icon name="share-nodes" class="label-icon"></wa-icon> Share Trip</span>
 
         <div class="wa-stack wa-gap-l">
           ${this._error ? html`
@@ -145,7 +180,7 @@ export class ShareDialog extends LitElement {
             </wa-button>
 
             ${this._generatedUrl ? html`
-              <div class="wa-cluster wa-align-items-center wa-gap-xs" style="padding: var(--wa-space-s); background: var(--wa-color-surface-sunken); border-radius: var(--wa-border-radius-m); font-size: var(--wa-font-size-s); word-break: break-all;">
+              <div class="link-box wa-cluster wa-align-items-center wa-gap-xs">
                 <span>${this._generatedUrl}</span>
                 <wa-tooltip content=${this._copied ? 'Copied!' : 'Copy link'}>
                   <wa-button appearance="plain" size="small" @click=${this._onCopyLink}>
@@ -182,11 +217,11 @@ export class ShareDialog extends LitElement {
 
     if (!share.claimed) {
       return html`
-        <div class="wa-cluster wa-align-items-center wa-gap-s" style="padding: var(--wa-space-xs) 0;">
-          <wa-icon name="user" library="fa-jelly" style="font-size: 1.2rem; color: var(--wa-color-neutral-400);"></wa-icon>
+        <div class="collab-row wa-cluster wa-align-items-center wa-gap-s">
+          <wa-icon name="user" library="fa-jelly" class="collab-icon-pending"></wa-icon>
           <div class="collaborator-info">
             <div class="pending-label">Pending invite</div>
-            ${claimUrl ? html`<div class="collaborator-email" style="word-break: break-all;">${claimUrl}</div>` : nothing}
+            ${claimUrl ? html`<div class="collaborator-email claim-url">${claimUrl}</div>` : nothing}
           </div>
           <wa-badge variant=${share.role === 'editor' ? 'brand' : 'neutral'}>${share.role}</wa-badge>
           ${claimUrl ? html`
@@ -206,8 +241,8 @@ export class ShareDialog extends LitElement {
     }
 
     return html`
-      <div class="wa-cluster wa-align-items-center wa-gap-s" style="padding: var(--wa-space-xs) 0;">
-        <wa-icon name="user" library="fa-jelly" style="font-size: 1.2rem; color: var(--wa-color-brand-60);"></wa-icon>
+      <div class="collab-row wa-cluster wa-align-items-center wa-gap-s">
+        <wa-icon name="user" library="fa-jelly" class="collab-icon-claimed"></wa-icon>
         <div class="collaborator-info">
           <div class="collaborator-name">${share.user_name ?? 'Unknown'}</div>
           ${share.user_email ? html`<div class="collaborator-email">${share.user_email}</div>` : nothing}
@@ -216,7 +251,7 @@ export class ShareDialog extends LitElement {
           size="small"
           .value=${share.role}
           @change=${(e: Event) => this._onRoleChange(share.id, (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor')}
-          style="width: 110px;"
+          class="role-select"
         >
           <wa-option value="viewer">Viewer</wa-option>
           <wa-option value="editor">Editor</wa-option>

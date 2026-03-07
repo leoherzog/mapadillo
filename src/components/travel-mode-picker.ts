@@ -27,7 +27,7 @@ export class TravelModePicker extends LitElement {
     }
 
     .active::part(base) {
-      border-bottom: 3px solid var(--mode-color, currentColor);
+      border-bottom: var(--wa-border-width-l) solid var(--mode-color, currentColor);
       color: var(--mode-color, currentColor);
     }
   `;

@@ -8,12 +8,16 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { signOut, type User } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
+import { isDark, toggleDarkMode } from '../dark-mode.js';
 
 @customElement('user-menu')
 export class UserMenu extends LitElement {
   @property({ type: Object }) user: User | null = null;
 
   @state() private _signingOut = false;
+  @state() private _dark = isDark();
+
+  private _onDarkModeChange = () => { this._dark = isDark(); };
 
   static styles = css`
     :host {
@@ -39,6 +43,16 @@ export class UserMenu extends LitElement {
     }
   `;
 
+  connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('dark-mode-change', this._onDarkModeChange);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    document.removeEventListener('dark-mode-change', this._onDarkModeChange);
+  }
+
   render() {
     if (!this.user) return nothing;
 
@@ -52,6 +66,13 @@ export class UserMenu extends LitElement {
           ></wa-avatar>
           <span class="trigger-label">${this.user.name}</span>
         </wa-button>
+
+        <wa-dropdown-item @click=${this._handleToggleDark}>
+          <wa-icon slot="icon" name=${this._dark ? 'sun' : 'moon'}></wa-icon>
+          ${this._dark ? 'Light Mode' : 'Dark Mode'}
+        </wa-dropdown-item>
+
+        <wa-divider></wa-divider>
 
         <wa-dropdown-item
           @click=${this._handleSignOut}
@@ -77,6 +98,10 @@ export class UserMenu extends LitElement {
         .slice(0, 2) ?? ''
     );
   }
+
+  private _handleToggleDark = () => {
+    toggleDarkMode();
+  };
 
   private _handleSignOut = async () => {
     if (this._signingOut) return;

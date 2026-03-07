@@ -28,6 +28,7 @@ const BASE = '/api/maps';
 export function createMap(data: {
   name: string;
   family_name?: string;
+  units?: string;
 }): Promise<MapData> {
   return apiPost<MapData>(BASE, data);
 }

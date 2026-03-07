@@ -158,7 +158,8 @@ export class Router implements ReactiveController {
     } catch (err) {
       console.error('[Router] Route error:', err);
       this._currentTemplate = html`
-        <wa-callout variant="danger" style="max-width: 600px; margin: var(--wa-space-2xl) auto;">
+        <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; }</style>
+        <wa-callout class="router-callout" variant="danger">
           <wa-icon slot="icon" name="circle-info"></wa-icon>
           <strong>Something went wrong</strong><br />
           <a href="/">Go home</a>
@@ -195,7 +196,8 @@ export class Router implements ReactiveController {
 
   private _notFoundTemplate(): TemplateResult {
     return html`
-      <wa-callout variant="warning" style="max-width: 600px; margin: var(--wa-space-2xl) auto;">
+      <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; }</style>
+      <wa-callout class="router-callout" variant="warning">
         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
         <strong>404 — Page not found</strong><br />
         <a href="/">Go home</a>

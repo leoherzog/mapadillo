@@ -261,6 +261,26 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
   });
 }
 
+// ── Attribution overlay for raster exports ───────────────────────────────────
+
+function drawAttribution(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const text = '\u00A9 OpenStreetMap contributors';
+  const fontSize = Math.max(12, Math.round(canvas.width / 120));
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  const padding = fontSize * 0.5;
+  const metrics = ctx.measureText(text);
+  const bgX = canvas.width - metrics.width - padding * 3;
+  const bgY = canvas.height - fontSize - padding * 2;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.fillRect(bgX, bgY, canvas.width - bgX, canvas.height - bgY);
+  ctx.fillStyle = '#333';
+  ctx.fillText(text, canvas.width - padding, canvas.height - padding);
+}
+
 // ── PNG export ───────────────────────────────────────────────────────────────
 
 async function downloadPNG(
@@ -269,6 +289,7 @@ async function downloadPNG(
 ): Promise<void> {
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
   const canvas = await exporter.renderCanvas(markerFeatures);
+  drawAttribution(canvas);
   const blob = await canvasToBlob(canvas, 'image/png');
   triggerDownload(blob, filename);
 }
@@ -281,6 +302,7 @@ async function downloadJPEG(
 ): Promise<void> {
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
   const canvas = await exporter.renderCanvas(markerFeatures);
+  drawAttribution(canvas);
   const blob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
   triggerDownload(blob, filename);
 }

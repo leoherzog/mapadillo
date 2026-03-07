@@ -45,14 +45,14 @@ export class SignInPage extends LitElement {
     }
 
     h1 {
-      font-size: 1.75rem;
-      font-weight: 900;
+      font-size: var(--wa-font-size-xl);
+      font-weight: var(--wa-font-weight-bold);
       margin: 0;
-      color: var(--wa-color-brand-60, #e05e00);
+      color: var(--wa-color-brand-60);
     }
 
     p {
-      color: var(--wa-color-neutral-600);
+      color: var(--wa-color-text-quiet);
       margin: 0;
     }
 
@@ -62,12 +62,24 @@ export class SignInPage extends LitElement {
     }
 
     .hero-icon {
-      font-size: 3rem;
-      color: var(--wa-color-brand-50, #ff6b00);
+      font-size: var(--wa-font-size-3xl);
+      color: var(--wa-color-brand-50);
     }
 
     .mode-toggle {
       font-size: var(--wa-font-size-s);
+    }
+
+    .full-width {
+      width: 100%;
+    }
+
+    wa-callout {
+      width: 100%;
+    }
+
+    .divider-row wa-divider {
+      flex: 1;
     }
   `];
 
@@ -86,7 +98,7 @@ export class SignInPage extends LitElement {
         <div aria-live="assertive" aria-atomic="true">
           ${this._error
             ? html`
-                <wa-callout variant="danger" style="width: 100%;">
+                <wa-callout variant="danger">
                   <wa-icon slot="icon" name="circle-info" family="jelly"></wa-icon>
                   ${this._error}
                 </wa-callout>
@@ -103,7 +115,7 @@ export class SignInPage extends LitElement {
 
   private _renderSignIn() {
     return html`
-      <div class="auth-buttons wa-stack wa-gap-s" style="width: 100%">
+      <div class="auth-buttons wa-stack wa-gap-s full-width">
         <wa-button
           variant="neutral"
           appearance="outlined"
@@ -153,7 +165,7 @@ export class SignInPage extends LitElement {
 
   private _renderRegister() {
     return html`
-      <div class="register-form wa-stack wa-gap-m" style="width: 100%">
+      <div class="register-form wa-stack wa-gap-m full-width">
         <wa-input
           label="Name"
           placeholder="Your name"
@@ -199,7 +211,7 @@ export class SignInPage extends LitElement {
 
   private _renderSocialButtons(prefix: string) {
     return html`
-      <div class="auth-buttons wa-stack wa-gap-s" style="width: 100%">
+      <div class="auth-buttons wa-stack wa-gap-s full-width">
         <wa-button
           variant="neutral"
           appearance="outlined"
@@ -226,7 +238,7 @@ export class SignInPage extends LitElement {
 
   private _renderDivider() {
     return html`
-      <div class="wa-cluster wa-align-items-center wa-gap-s" style="width: 100%"><wa-divider style="flex:1"></wa-divider><span>or</span><wa-divider style="flex:1"></wa-divider></div>
+      <div class="divider-row wa-cluster wa-align-items-center wa-gap-s full-width"><wa-divider></wa-divider><span>or</span><wa-divider></wa-divider></div>
     `;
   }
 

@@ -25,7 +25,6 @@ import './user-menu.js';
 @customElement('app-shell')
 export class AppShell extends LitElement {
   @state() private _user: User | null = null;
-
   private _unsubAuth?: () => void;
 
   // Router is a reactive controller — it calls requestUpdate() when the route changes
@@ -79,8 +78,8 @@ export class AppShell extends LitElement {
 
     .logo {
       text-decoration: none;
-      color: var(--wa-color-brand-60, #e05e00);
-      font-weight: 900;
+      color: var(--wa-color-brand-60);
+      font-weight: var(--wa-font-weight-bold);
       font-size: var(--wa-font-size-l);
       cursor: pointer;
     }
@@ -98,12 +97,26 @@ export class AppShell extends LitElement {
       padding: var(--wa-space-m) var(--wa-space-l);
       text-align: center;
       font-size: var(--wa-font-size-s);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
     }
 
     wa-page::part(navigation-toggle),
     wa-page::part(navigation) {
       display: none;
+    }
+
+    @media (max-width: 700px) {
+      .header-inner {
+        padding: var(--wa-space-xs) var(--wa-space-s);
+      }
+
+      .logo {
+        font-size: var(--wa-font-size-m);
+      }
+
+      .logo wa-icon {
+        font-size: var(--wa-font-size-l);
+      }
     }
   `];
 

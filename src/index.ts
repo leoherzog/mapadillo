@@ -50,6 +50,10 @@ setKitCode('781a3c6be3');
 // Default icon family: Jelly — the playful, rounded icon style
 setDefaultIconFamily('jelly');
 
+// ── Dark Mode ─────────────────────────────────────────────────────────────
+import { initDarkMode } from './dark-mode.js';
+initDarkMode();
+
 // ── Auth ──────────────────────────────────────────────────────────────────
 // Start session check immediately so the auth guard doesn't delay the
 // first protected navigation. Non-blocking — components await via initAuth().

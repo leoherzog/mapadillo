@@ -34,16 +34,13 @@ export class ExportOptions extends LitElement {
     }
 
     .heading {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-xs);
-      font-weight: 700;
-      font-size: 1.1rem;
+      font-weight: var(--wa-font-weight-bold);
+      font-size: var(--wa-font-size-m);
     }
 
     .format-description {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
       margin-top: var(--wa-space-2xs);
     }
 
@@ -56,7 +53,7 @@ export class ExportOptions extends LitElement {
     return html`
       <wa-card>
         <div class="wa-stack wa-gap-m">
-          <div class="heading">
+          <div class="heading wa-cluster wa-align-items-center wa-gap-xs">
             <wa-icon name="arrow-down-to-line" library="default"></wa-icon>
             Export Map
           </div>

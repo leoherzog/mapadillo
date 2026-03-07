@@ -36,8 +36,8 @@ export class IconPicker extends LitElement {
 
     .category-label {
       font-size: var(--wa-font-size-xs);
-      font-weight: 600;
-      color: var(--wa-color-neutral-500);
+      font-weight: var(--wa-font-weight-semibold);
+      color: var(--wa-color-text-quiet);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin: var(--wa-space-s) 0 var(--wa-space-3xs);
@@ -48,25 +48,25 @@ export class IconPicker extends LitElement {
     }
 
     .icon-btn {
-      padding: 0.4rem 0.2rem;
+      padding: var(--wa-space-2xs) var(--wa-space-3xs);
       background: none;
-      border: 2px solid transparent;
-      border-radius: var(--wa-border-radius-m, 0.25rem);
+      border: var(--wa-border-width-m) solid transparent;
+      border-radius: var(--wa-border-radius-m);
       cursor: pointer;
-      font-size: 1.2rem;
+      font-size: var(--wa-font-size-l);
     }
 
     .icon-btn:hover {
-      background: var(--wa-color-neutral-100);
+      background: var(--wa-color-surface-lowered);
     }
 
     .icon-btn.selected {
-      border-color: var(--wa-color-brand-50, #ff6b00);
+      border-color: var(--wa-color-brand-50);
     }
 
     .icon-btn .label {
-      font-size: 0.55rem;
-      color: var(--wa-color-neutral-500);
+      font-size: var(--wa-font-size-2xs);
+      color: var(--wa-color-text-quiet);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;

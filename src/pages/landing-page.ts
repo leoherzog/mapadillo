@@ -19,21 +19,21 @@ export class LandingPage extends LitElement {
     }
 
     .hero-icon {
-      font-size: 5rem;
+      font-size: var(--wa-font-size-4xl);
       line-height: 1;
     }
 
     h1 {
       font-size: clamp(2rem, 6vw, 3.5rem);
-      font-weight: 900;
+      font-weight: var(--wa-font-weight-bold);
       margin: 0;
-      color: var(--wa-color-brand-60, #e05e00);
+      color: var(--wa-color-brand-60);
       line-height: 1.15;
     }
 
     .tagline {
       font-size: clamp(1rem, 3vw, 1.35rem);
-      color: var(--wa-color-neutral-600);
+      color: var(--wa-color-text-quiet);
       max-width: 36ch;
       margin: 0 auto;
     }
@@ -50,17 +50,17 @@ export class LandingPage extends LitElement {
     }
 
     .feature-icon {
-      font-size: 2.25rem;
+      font-size: var(--wa-font-size-2xl);
     }
 
     .feature-label {
       font-size: var(--wa-font-size-m);
-      font-weight: 700;
-      color: var(--wa-color-neutral-700);
+      font-weight: var(--wa-font-weight-bold);
+      color: var(--wa-color-text-normal);
     }
 
     .hero-icon wa-icon {
-      color: var(--wa-color-brand-60, #e05e00);
+      color: var(--wa-color-brand-60);
     }
   `];
 

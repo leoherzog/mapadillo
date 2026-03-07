@@ -43,7 +43,10 @@ export class MapView extends LitElement {
       style: MAP_STYLE_URL,
       center: [0, 20],
       zoom: 2,
+      attributionControl: false,
     });
+
+    this._map.addControl(new maplibregl.AttributionControl({ compact: true }));
 
     this._map.addControl(new maplibregl.NavigationControl(), 'top-right');
 

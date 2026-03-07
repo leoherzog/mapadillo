@@ -23,6 +23,10 @@ export class SaveIndicator extends LitElement {
     :host([status='idle']) {
       display: none;
     }
+
+    wa-spinner {
+      font-size: var(--wa-font-size-s);
+    }
   `;
 
   updated(changed: Map<string, unknown>) {
@@ -44,7 +48,7 @@ export class SaveIndicator extends LitElement {
   render() {
     switch (this.status) {
       case 'saving':
-        return html`<wa-badge variant="neutral"><wa-spinner style="font-size: var(--wa-font-size-s);"></wa-spinner> Saving...</wa-badge>`;
+        return html`<wa-badge variant="neutral"><wa-spinner></wa-spinner> Saving...</wa-badge>`;
       case 'saved':
         return html`<wa-badge variant="success"><wa-icon name="check"></wa-icon> Saved</wa-badge>`;
       case 'error':

@@ -24,11 +24,11 @@ export const pageLayoutStyles = css`
   }
 
   .sidebar-left {
-    border-right: 1px solid var(--wa-color-neutral-200);
+    border-right: var(--wa-border-width-s) solid var(--wa-color-surface-border);
   }
 
   .sidebar-right {
-    border-left: 1px solid var(--wa-color-neutral-200);
+    border-left: var(--wa-border-width-s) solid var(--wa-color-surface-border);
   }
 
   .map-panel {
@@ -39,31 +39,31 @@ export const pageLayoutStyles = css`
 
   h1 {
     font-size: var(--wa-font-size-xl);
-    font-weight: 900;
+    font-weight: var(--wa-font-weight-bold);
     margin: 0;
-    color: var(--wa-color-brand-60, #e05e00);
+    color: var(--wa-color-brand-60);
   }
 
   h1 wa-icon {
-    font-size: 1.3rem;
+    font-size: var(--wa-font-size-l);
   }
 
   .stat-row {
-    font-size: 0.9rem;
+    font-size: var(--wa-font-size-s);
   }
 
   .stat-row wa-icon {
-    color: var(--wa-color-brand-60, #e05e00);
-    font-size: 1rem;
+    color: var(--wa-color-brand-60);
+    font-size: var(--wa-font-size-m);
   }
 
   .stat-value {
-    font-weight: 700;
-    color: var(--wa-color-neutral-900);
+    font-weight: var(--wa-font-weight-bold);
+    color: var(--wa-color-text-normal);
   }
 
   .stat-label {
-    color: var(--wa-color-neutral-500);
+    color: var(--wa-color-text-quiet);
   }
 
   /* Responsive: stack on narrow viewports */
@@ -73,12 +73,12 @@ export const pageLayoutStyles = css`
     }
 
     .sidebar {
-      width: 100%;
+      width: auto;
       min-width: 0;
       border-right: none;
       border-left: none;
-      border-bottom: 1px solid var(--wa-color-neutral-200);
-      max-height: 40vh;
+      border-bottom: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+      max-height: 45vh;
     }
 
     .map-panel {

@@ -34,21 +34,25 @@ export class MapPreviewPage extends MapPageBase {
       background: var(--wa-color-surface-default);
       border-radius: var(--wa-border-radius-m);
       padding: var(--wa-space-s) var(--wa-space-m);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      box-shadow: var(--wa-shadow-m);
       max-width: 320px;
+    }
+
+    .overlay.error-overlay {
+      padding: var(--wa-space-l);
     }
 
     .overlay h2 {
       margin: 0;
       font-size: var(--wa-font-size-m);
-      font-weight: 700;
-      color: var(--wa-color-neutral-900);
+      font-weight: var(--wa-font-weight-bold);
+      color: var(--wa-color-text-normal);
     }
 
     .overlay .family-name {
       margin: 0;
       font-size: var(--wa-font-size-s);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
     }
 
     .overlay .actions {
@@ -64,6 +68,20 @@ export class MapPreviewPage extends MapPageBase {
       transform: translate(-50%, -50%);
       z-index: 10;
     }
+
+    @media (max-width: 700px) {
+      .overlay {
+        top: var(--wa-space-xs);
+        left: var(--wa-space-xs);
+        right: var(--wa-space-xs);
+        max-width: none;
+        padding: var(--wa-space-xs) var(--wa-space-s);
+      }
+
+      .overlay .actions {
+        flex-wrap: wrap;
+      }
+    }
   `];
 
   render() {
@@ -76,7 +94,7 @@ export class MapPreviewPage extends MapPageBase {
             <wa-spinner></wa-spinner>
           </div>
         ` : this._error ? html`
-          <div class="overlay" style="padding: var(--wa-space-l);">
+          <div class="overlay error-overlay">
             <wa-callout variant="danger">
               <wa-icon slot="icon" name="circle-xmark"></wa-icon>
               ${this._error}

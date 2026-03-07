@@ -27,6 +27,14 @@ export class ClaimPage extends LitElement {
       padding: 0 var(--wa-space-m);
       text-align: center;
     }
+
+    .spinner {
+      font-size: var(--wa-font-size-2xl);
+    }
+
+    .mt-l {
+      margin-top: var(--wa-space-l);
+    }
   `];
 
   connectedCallback(): void {
@@ -64,7 +72,7 @@ export class ClaimPage extends LitElement {
     if (this._loading) {
       return html`
         <div class="wa-stack wa-gap-m wa-align-items-center">
-          <wa-spinner style="font-size: 2rem;"></wa-spinner>
+          <wa-spinner class="spinner"></wa-spinner>
           <p>Claiming your invite...</p>
         </div>
       `;
@@ -75,7 +83,7 @@ export class ClaimPage extends LitElement {
         <wa-icon slot="icon" name="circle-xmark"></wa-icon>
         ${this._error}
       </wa-callout>
-      <div style="margin-top: var(--wa-space-l)">
+      <div class="mt-l">
         <wa-button variant="brand" @click=${() => navigateTo('/dashboard')}>
           Go to Dashboard
         </wa-button>

@@ -31,7 +31,7 @@ export class PointCard extends LitElement {
     }
 
     wa-card::part(base) {
-      border-left: 4px solid var(--wa-color-brand-50, #ff6b00);
+      border-left: 4px solid var(--wa-color-brand-50);
     }
 
     .name-input {
@@ -41,12 +41,25 @@ export class PointCard extends LitElement {
 
     .coords {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-400);
+      color: var(--wa-color-text-quiet);
       margin-top: var(--wa-space-3xs);
     }
 
     .change-btn {
       font-size: var(--wa-font-size-xs);
+    }
+
+    .point-icon {
+      color: var(--wa-color-brand-60);
+    }
+
+    .point-name {
+      font-weight: var(--wa-font-weight-semibold);
+      font-size: var(--wa-font-size-s);
+    }
+
+    .card-header {
+      margin-bottom: var(--wa-space-3xs);
     }
   `];
 
@@ -55,8 +68,8 @@ export class PointCard extends LitElement {
       return html`
         <wa-card>
           <div class="wa-cluster wa-align-items-center wa-gap-xs">
-            <wa-icon name=${this.item.icon ?? 'location-dot'} style="color: var(--wa-color-brand-60);"></wa-icon>
-            <span class="name-input" style="font-weight: 600; font-size: var(--wa-font-size-s);">${this.item.name}</span>
+            <wa-icon class="point-icon" name=${this.item.icon ?? 'location-dot'}></wa-icon>
+            <span class="name-input point-name">${this.item.name}</span>
           </div>
           ${!isDraftCoord(this.item.latitude, this.item.longitude) ? html`
             <div class="coords">
@@ -69,9 +82,9 @@ export class PointCard extends LitElement {
 
     return html`
       <wa-card>
-        <div class="wa-cluster wa-align-items-center wa-gap-xs" style="margin-bottom: var(--wa-space-3xs);">
+        <div class="wa-cluster wa-align-items-center wa-gap-xs card-header">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
-          <span style="font-weight: 600; font-size: var(--wa-font-size-s); flex: 1;">${this._hasLocation ? this.item.name : 'New Point'}</span>
+          <span class="name-input point-name">${this._hasLocation ? this.item.name : 'New Point'}</span>
           <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
             <wa-icon name="xmark" label="Delete point"></wa-icon>
           </wa-button>

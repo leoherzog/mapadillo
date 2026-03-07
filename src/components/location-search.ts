@@ -29,10 +29,14 @@ export class LocationSearch extends LitElement {
       display: block;
     }
 
+    wa-option wa-icon[slot="start"] {
+      color: var(--wa-color-brand-50);
+    }
+
     .option-detail {
       display: block;
       font-size: var(--wa-font-size-s);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -96,7 +100,6 @@ export class LocationSearch extends LitElement {
           <wa-icon
             slot="start"
             name="location-dot"
-                       style="color: var(--wa-color-brand-50)"
           ></wa-icon>
           ${r.name}
           <span class="option-detail">

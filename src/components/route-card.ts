@@ -32,7 +32,7 @@ export class RouteCard extends LitElement {
     }
 
     wa-card::part(base) {
-      border-left: 4px solid var(--border-color, var(--wa-color-neutral-300));
+      border-left: 4px solid var(--border-color, var(--wa-color-surface-border));
     }
 
     .endpoint {
@@ -42,20 +42,20 @@ export class RouteCard extends LitElement {
 
     .endpoint-label {
       font-size: var(--wa-font-size-xs);
-      font-weight: 700;
-      color: var(--wa-color-neutral-500);
+      font-weight: var(--wa-font-weight-bold);
+      color: var(--wa-color-text-quiet);
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
 
     .endpoint-name {
-      font-weight: 600;
+      font-weight: var(--wa-font-weight-semibold);
       font-size: var(--wa-font-size-s);
     }
 
     .endpoint-coords {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-400);
+      color: var(--wa-color-text-quiet);
     }
 
     .mode-row {
@@ -64,7 +64,7 @@ export class RouteCard extends LitElement {
 
     .distance {
       font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
       margin-top: var(--wa-space-3xs);
     }
 
@@ -74,6 +74,16 @@ export class RouteCard extends LitElement {
 
     .change-btn {
       font-size: var(--wa-font-size-xs);
+    }
+
+    .header-row {
+      margin-bottom: var(--wa-space-3xs);
+    }
+
+    .route-title {
+      font-weight: var(--wa-font-weight-semibold);
+      font-size: var(--wa-font-size-s);
+      flex: 1;
     }
   `];
 
@@ -93,7 +103,7 @@ export class RouteCard extends LitElement {
   }
 
   render() {
-    const borderColor = CSS_COLOR_BY_MODE[this.item.travel_mode ?? ''] ?? 'var(--wa-color-neutral-300)';
+    const borderColor = CSS_COLOR_BY_MODE[this.item.travel_mode ?? ''] ?? 'var(--wa-color-surface-border)';
 
     if (this.readonly) {
       return html`
@@ -116,9 +126,9 @@ export class RouteCard extends LitElement {
 
     return html`
       <wa-card style="--border-color: ${borderColor}">
-        <div class="wa-cluster wa-align-items-center wa-gap-xs" style="margin-bottom: var(--wa-space-3xs);">
+        <div class="header-row wa-cluster wa-align-items-center wa-gap-xs">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
-          <span style="font-weight: 600; font-size: var(--wa-font-size-s); flex: 1;">${this._title}</span>
+          <span class="route-title">${this._title}</span>
           <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
             <wa-icon name="xmark" label="Delete route"></wa-icon>
           </wa-button>

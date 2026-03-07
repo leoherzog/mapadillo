@@ -21,6 +21,11 @@
   --wa-font-size-m: 1.0625rem;
 }
 
+/* Fix Playful theme: dark-mode surface-border matches surface-raised, making dividers invisible */
+.wa-dark {
+  --wa-color-surface-border: var(--wa-color-neutral-30);
+}
+
 /* Smooth scrolling */
 html {
   scroll-behavior: smooth;

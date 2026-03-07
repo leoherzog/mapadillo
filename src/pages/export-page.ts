@@ -25,14 +25,14 @@ export class ExportPage extends MapPageBase {
     .trip-info h2 {
       margin: 0;
       font-size: var(--wa-font-size-l);
-      font-weight: 700;
-      color: var(--wa-color-neutral-900);
+      font-weight: var(--wa-font-weight-bold);
+      color: var(--wa-color-text-normal);
     }
 
     .trip-info .family-name {
       margin: 0;
       font-size: var(--wa-font-size-s);
-      color: var(--wa-color-neutral-500);
+      color: var(--wa-color-text-quiet);
     }
 
     .loading-container {
@@ -96,7 +96,12 @@ export class ExportPage extends MapPageBase {
                 </div>
               ` : ''}
             </div>
-          ` : ''}
+          ` : html`
+            <wa-callout variant="warning">
+              <wa-icon slot="icon" name="circle-info"></wa-icon>
+              This trip has no stops or routes yet. Go back to the trip builder to add some!
+            </wa-callout>
+          `}
 
           <wa-divider></wa-divider>
 

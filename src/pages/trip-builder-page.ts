@@ -19,7 +19,7 @@ import {
 } from '../services/maps.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
-import { formatDistance } from '../utils/geo.js';
+import { formatDistance, getDefaultUnits } from '../utils/geo.js';
 import { MapPageBase } from './map-page-base.js';
 import '../components/map-view.js';
 import '../components/item-list.js';
@@ -75,17 +75,44 @@ export class TripBuilderPage extends MapPageBase {
       padding-top: var(--wa-space-s);
     }
 
+    .loading-spinner {
+      padding: var(--wa-space-2xl);
+    }
+
+    .section-heading {
+      margin: 0;
+      font-size: var(--wa-font-size-l);
+      font-weight: var(--wa-font-weight-bold);
+    }
+
+    .section-subtitle {
+      margin: 0;
+      color: var(--wa-color-text-quiet);
+    }
+
+    .mt-xs {
+      margin-top: var(--wa-space-xs);
+    }
+
+    wa-dropdown {
+      display: block;
+    }
+
+    .add-trigger {
+      width: 100%;
+    }
+
     .section-summary {
       display: flex;
       align-items: center;
       gap: var(--wa-space-xs);
-      font-weight: 700;
-      font-size: 0.9rem;
+      font-weight: var(--wa-font-weight-bold);
+      font-size: var(--wa-font-size-s);
     }
 
     .section-summary wa-icon {
-      font-size: 1rem;
-      color: var(--wa-color-brand-60, #e05e00);
+      font-size: var(--wa-font-size-m);
+      color: var(--wa-color-brand-60);
     }
 
     .section-summary wa-badge {
@@ -109,16 +136,22 @@ export class TripBuilderPage extends MapPageBase {
     }
 
     .route-loading {
-      font-size: 0.85rem;
-      color: var(--wa-color-neutral-500);
+      font-size: var(--wa-font-size-s);
+      color: var(--wa-color-text-quiet);
     }
 
     .setting-row label {
       display: block;
-      font-weight: 600;
-      font-size: 0.85rem;
-      color: var(--wa-color-neutral-700);
+      font-weight: var(--wa-font-weight-semibold);
+      font-size: var(--wa-font-size-s);
+      color: var(--wa-color-text-normal);
       margin-bottom: var(--wa-space-2xs);
+    }
+
+    @media (max-width: 700px) {
+      h1 {
+        font-size: var(--wa-font-size-m);
+      }
     }
   `];
 
@@ -148,7 +181,7 @@ export class TripBuilderPage extends MapPageBase {
       this._error = '';
       this._creatingMap = true;
       try {
-        const newMap = await createMap({ name: 'Untitled Trip' });
+        const newMap = await createMap({ name: 'Untitled Trip', units: getDefaultUnits() });
         this._map = newMap;
         this._items = [];
         this._role = 'owner';
@@ -184,7 +217,7 @@ export class TripBuilderPage extends MapPageBase {
     if (this._loading) {
       return html`
         <div class="sidebar sidebar-left">
-          <div class="wa-cluster wa-align-items-center wa-justify-content-center" style="padding: var(--wa-space-2xl)"><wa-spinner></wa-spinner></div>
+          <div class="wa-cluster wa-align-items-center wa-justify-content-center loading-spinner"><wa-spinner></wa-spinner></div>
         </div>
         <div class="map-panel"><map-view></map-view></div>
       `;
@@ -251,7 +284,7 @@ export class TripBuilderPage extends MapPageBase {
                 variant="brand"
                 ?loading=${this._duplicating}
                 @click=${this._onDuplicate}
-                style="margin-top: var(--wa-space-xs);"
+                class="mt-xs"
               >
                 <wa-icon slot="start" name="clone" library="fa-jelly"></wa-icon>
                 Duplicate this trip
@@ -261,7 +294,7 @@ export class TripBuilderPage extends MapPageBase {
                 size="small"
                 variant="brand"
                 href="/sign-in?returnTo=${encodeURIComponent(`/map/${this.mapId}`)}"
-                style="margin-top: var(--wa-space-xs);"
+                class="mt-xs"
               >
                 <wa-icon slot="start" name="arrow-right-to-bracket" library="fa-jelly"></wa-icon>
                 Sign in to duplicate this trip
@@ -283,14 +316,14 @@ export class TripBuilderPage extends MapPageBase {
               @input=${this._onFamilyInput}
             ></wa-input>
           ` : html`
-            <h2 style="margin: 0; font-size: var(--wa-font-size-l); font-weight: 700;">${this._map?.name ?? 'Untitled Trip'}</h2>
-            ${this._map?.family_name ? html`<p style="margin: 0; color: var(--wa-color-neutral-500);">${this._map.family_name}</p>` : ''}
+            <h2 class="section-heading">${this._map?.name ?? 'Untitled Trip'}</h2>
+            ${this._map?.family_name ? html`<p class="section-subtitle">${this._map.family_name}</p>` : ''}
           `}
         </div>
 
         ${canEdit ? html`
-          <wa-dropdown style="display: block">
-            <wa-button slot="trigger" variant="brand" size="small" with-caret style="width: 100%">
+          <wa-dropdown>
+            <wa-button slot="trigger" variant="brand" size="small" with-caret class="add-trigger">
               <wa-icon slot="start" name="plus"></wa-icon>
               Add
             </wa-button>
