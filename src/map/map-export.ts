@@ -15,9 +15,21 @@ import { renderMarkerCanvas } from './map-controller.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_DPI: DPIType = DPI[200];
-const MAX_CANVAS_DIM = 5400;
+const DEFAULT_DPI: DPIType = DPI[300];
 const RENDER_TIMEOUT_MS = 30_000;
+
+/** Query the GPU's max texture size once, with a conservative fallback. */
+const MAX_CANVAS_DIM = (() => {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    if (gl) {
+      const max = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+      // Leave ~20% headroom — MapLibre uses multiple framebuffers internally
+      return Math.floor(max * 0.8);
+    }
+  } catch { /* fall through */ }
+  return 4096;
+})();
 const RENDER_ERROR_MSG = 'Unable to render map at this resolution. Try on a desktop browser.';
 
 /** Paper dimensions in mm (portrait: width × height). */
@@ -26,11 +38,27 @@ export const PAPER_SIZES: Record<string, [number, number]> = {
   a4: [210, 297],
   a3: [297, 420],
   tabloid: [279.4, 431.8],
+  '18x24': [457.2, 609.6],
+  '24x36': [609.6, 914.4],
+  a2: [420, 594],
+  a1: [594, 841],
 };
 
 // ── MapExporter (subclass of MapGeneratorBase) ──────────────────────────────
 
 class MapExporter extends MapGeneratorBase {
+  /**
+   * CSS pixel dimensions for the offscreen render container.
+   * Matches the paper frame's on-screen size (or the full viewport for 'auto')
+   * so that MapLibre style elements (line widths, text, icons) render at the
+   * same visual proportions as the live preview.
+   */
+  private _cssWidth: number;
+  private _cssHeight: number;
+
+  /** Ratio of export canvas pixels to CSS pixels — drives MapLibre's internal scaling. */
+  private _renderPixelRatio: number;
+
   constructor(
     map: maplibregl.Map,
     dpi: DPIType = DEFAULT_DPI,
@@ -39,15 +67,19 @@ class MapExporter extends MapGeneratorBase {
   ) {
     super(map, Size.A3, dpi, 'png' as never, Unit.mm, 'map');
 
+    const srcContainer = map.getContainer();
+    const cw = srcContainer.clientWidth;
+    const ch = srcContainer.clientHeight;
+
     let w: number;
     let h: number;
 
     if (paperSize === 'auto') {
-      // Use viewport dimensions scaled by DPI
       const scaleFactor = dpi / 96;
-      const container = map.getContainer();
-      w = Math.round(container.clientWidth * scaleFactor);
-      h = Math.round(container.clientHeight * scaleFactor);
+      w = Math.round(cw * scaleFactor);
+      h = Math.round(ch * scaleFactor);
+      this._cssWidth = cw;
+      this._cssHeight = ch;
     } else {
       // Compute pixel dimensions from paper size at export DPI
       const [pw, ph] = PAPER_SIZES[paperSize];
@@ -55,6 +87,13 @@ class MapExporter extends MapGeneratorBase {
       const mmH = orientation === 'landscape' ? pw : ph;
       w = Math.round((mmW / 25.4) * dpi);
       h = Math.round((mmH / 25.4) * dpi);
+
+      // Match the paper frame's on-screen CSS pixel size (see map-preview-page.ts).
+      // CSS: width: min(85cqw, 85cqh * pw / ph); aspect-ratio: pw / ph
+      const exportAspect = w / h;
+      const frameW = Math.min(0.85 * cw, 0.85 * ch * exportAspect);
+      this._cssWidth = frameW;
+      this._cssHeight = frameW / exportAspect;
     }
 
     // Cap max canvas dimension — scale down proportionally if either exceeds limit
@@ -66,26 +105,25 @@ class MapExporter extends MapGeneratorBase {
 
     this.width = w;
     this.height = h;
+    this._renderPixelRatio = this.width / this._cssWidth;
   }
 
   protected getRenderedMap(container: HTMLElement, style: StyleSpecification): maplibregl.Map {
     const sourceMap = this.map as maplibregl.Map;
 
-    // The export container is larger than the source (DPI scaling). At the same
-    // zoom a bigger container shows more geographic area, appearing "zoomed out".
-    // Increase zoom to compensate so the exported extent matches the live view.
-    const srcContainer = sourceMap.getContainer();
-    const scaleFactor = Math.min(this.width / srcContainer.clientWidth, this.height / srcContainer.clientHeight);
-    const zoomAdjust = Math.log2(scaleFactor);
-
+    // The container is sized to match the paper frame's on-screen CSS pixels.
+    // pixelRatio tells MapLibre to render a canvas that's _renderPixelRatio×
+    // larger, producing the high-res output while keeping all style elements
+    // (line widths, text sizes, icons) at the same visual proportions as the
+    // live preview. No zoom adjustment is needed.
     return new maplibregl.Map({
       container,
       style,
       center: sourceMap.getCenter(),
-      zoom: sourceMap.getZoom() + zoomAdjust,
+      zoom: sourceMap.getZoom(),
       bearing: sourceMap.getBearing(),
       pitch: sourceMap.getPitch(),
-      pixelRatio: 1, // Prevent HiDPI doubling — container dimensions ARE the pixel dimensions
+      pixelRatio: this._renderPixelRatio,
       canvasContextAttributes: { preserveDrawingBuffer: true },
       interactive: false,
       attributionControl: false,
@@ -100,13 +138,15 @@ class MapExporter extends MapGeneratorBase {
     const sourceMap = this.map as maplibregl.Map;
 
     return new Promise<HTMLCanvasElement>((resolve, reject) => {
-      // Create hidden container at computed pixel dimensions
+      // Create hidden container at the paper frame's CSS pixel size.
+      // MapLibre's pixelRatio will scale the internal canvas up to the
+      // full export resolution (this.width × this.height).
       const container = document.createElement('div');
       container.style.position = 'fixed';
       container.style.left = '-99999px';
       container.style.top = '-99999px';
-      container.style.width = `${this.width}px`;
-      container.style.height = `${this.height}px`;
+      container.style.width = `${this._cssWidth}px`;
+      container.style.height = `${this._cssHeight}px`;
       container.style.visibility = 'hidden';
       document.body.appendChild(container);
 
@@ -132,7 +172,29 @@ class MapExporter extends MapGeneratorBase {
 
       try {
         const style = sourceMap.getStyle();
+
+        // Hide marker icons in the MapLibre render (they'll be drawn manually
+        // at full export resolution), but keep them in the layout so MapLibre
+        // correctly positions text labels with text-radial-offset around icons.
+        for (const layer of style.layers ?? []) {
+          if (layer.type === 'symbol' && layer.id.endsWith('-markers-symbol')) {
+            (layer as Record<string, unknown>).paint = {
+              ...((layer as Record<string, unknown>).paint as object),
+              'icon-opacity': 0,
+            };
+          }
+        }
+
         tempMap = this.getRenderedMap(container, style);
+
+        // Supply marker images on demand so MapLibre can compute correct
+        // text label positioning (even though the icons are invisible).
+        tempMap.on('styleimagemissing', ({ id }: { id: string }) => {
+          if (id.startsWith('marker-')) {
+            const img = sourceMap.getImage(id);
+            if (img) tempMap!.addImage(id, img.data);
+          }
+        });
 
         tempMap.once('idle', () => {
           if (settled) return;
@@ -159,8 +221,9 @@ class MapExporter extends MapGeneratorBase {
             }
             ctx.drawImage(canvas, 0, 0);
 
-            // Draw composite marker images onto the output canvas (they are not part of the style)
-            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures)
+            // Draw composite marker images onto the output canvas (they are not part of the style).
+            // tempMap.project() returns CSS pixel coords — scale by pixelRatio for canvas coords.
+            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures, this._renderPixelRatio)
               .then(() => { cleanup(); resolve(outputCanvas); })
               .catch(() => { cleanup(); reject(new Error(RENDER_ERROR_MSG)); });
           } catch {
@@ -199,8 +262,11 @@ async function drawMarkersOnCanvas(
   canvasW: number,
   canvasH: number,
   markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
+  pixelRatio: number,
 ): Promise<void> {
-  const markerSize = Math.max(24, Math.round(canvasW / 60));
+  // Match the live preview: MapController registers 48px icons at icon-size 0.5 = 24 CSS px.
+  // Scale by pixelRatio to convert to canvas pixels.
+  const markerSize = Math.round(24 * pixelRatio);
   const halfSize = markerSize / 2;
 
   // Pre-render each unique icon once
@@ -217,15 +283,18 @@ async function drawMarkersOnCanvas(
 
   for (const feature of markerFeatures) {
     const [lng, lat] = feature.geometry.coordinates;
+    // project() returns CSS pixel coords — scale to canvas pixel coords
     const tempPt = tempMap.project([lng, lat]);
+    const x = tempPt.x * pixelRatio;
+    const y = tempPt.y * pixelRatio;
 
-    if (tempPt.x < -halfSize || tempPt.y < -halfSize || tempPt.x > canvasW + halfSize || tempPt.y > canvasH + halfSize) continue;
+    if (x < -halfSize || y < -halfSize || x > canvasW + halfSize || y > canvasH + halfSize) continue;
 
     const iconId = feature.properties?.icon as string | undefined;
     const iconName = iconId?.replace(/^marker-/, '') ?? 'location-dot';
     const iconCanvas = iconCanvases.get(iconName);
     if (iconCanvas) {
-      ctx.drawImage(iconCanvas, tempPt.x - halfSize, tempPt.y - halfSize, markerSize, markerSize);
+      ctx.drawImage(iconCanvas, x - halfSize, y - halfSize, markerSize, markerSize);
     }
   }
 }
@@ -309,7 +378,186 @@ async function downloadJPEG(
   return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/jpeg', filename, 0.92);
 }
 
-// ── PDF export (decorative layout) ──────────────────────────────────────────
+// ── PDF helpers ──────────────────────────────────────────────────────────────
+
+/** Build an ordered itinerary of unique waypoint names from the stops list. */
+function buildItinerary(stops: Stop[]): string[] {
+  const names: string[] = [];
+  for (const stop of stops) {
+    if (stop.type === 'route') {
+      if (!names.length || names[names.length - 1] !== stop.name) names.push(stop.name);
+      const dest = stop.dest_name ?? 'Destination';
+      if (names[names.length - 1] !== dest) names.push(dest);
+    } else {
+      if (!names.length || names[names.length - 1] !== stop.name) names.push(stop.name);
+    }
+  }
+  return names;
+}
+
+/** Word-wrap text to fit within maxWidth using the current canvas font. */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width <= maxWidth) {
+      line = test;
+    } else {
+      if (line) lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** Trace a rounded rectangle path (caller must stroke/fill). */
+function roundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+/**
+ * Draw poster overlays onto the composited canvas: gradient banners with
+ * title, itinerary, stats, and attribution rendered via Canvas 2D text
+ * (bypasses jsPDF font encoding limitations).
+ */
+function drawPosterOverlays(
+  ctx: CanvasRenderingContext2D,
+  w: number, h: number,
+  pxPerMm: number,
+  title: string,
+  familyName: string | null | undefined,
+  itinerary: string[],
+  distStr: string,
+  pointCount: number,
+  routeCount: number,
+): void {
+  const mm = (v: number) => Math.round(v * pxPerMm);
+  const FONT = "ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT', 'Arial Rounded MT Bold', Calibri, source-sans-pro, system-ui, sans-serif";
+
+  // ── Thin inset border ──────────────────────────────────────────────────
+  const b = mm(4);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+  ctx.lineWidth = mm(0.4);
+  roundedRect(ctx, b, b, w - b * 2, h - b * 2, mm(3));
+  ctx.stroke();
+
+  // ── Top gradient banner ────────────────────────────────────────────────
+  // Dark orange tint from --wa-color-brand-60 (#e05e00) blended into black
+  const topH = mm(36);
+  const topGrad = ctx.createLinearGradient(0, 0, 0, topH);
+  topGrad.addColorStop(0, 'rgba(56, 24, 0, 0.75)');
+  topGrad.addColorStop(0.6, 'rgba(40, 17, 0, 0.25)');
+  topGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = topGrad;
+  ctx.fillRect(0, 0, w, topH);
+
+  // Title (with text shadow for readability over map)
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = mm(2);
+
+  const titleSize = mm(9);
+  ctx.font = `bold ${titleSize}px ${FONT}`;
+  ctx.fillStyle = '#FFFFFF';
+  const titleMaxW = w - mm(24);
+  const titleLines = wrapText(ctx, title, titleMaxW);
+  let titleY = mm(7);
+  for (const line of titleLines.slice(0, 2)) {
+    ctx.fillText(line, w / 2, titleY, titleMaxW);
+    titleY += titleSize * 1.3;
+  }
+
+  // Family name
+  if (familyName) {
+    const famSize = mm(4.5);
+    ctx.font = `${famSize}px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillText(familyName, w / 2, titleY + mm(1), titleMaxW);
+  }
+
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+
+  // ── Bottom gradient banner ─────────────────────────────────────────────
+  const botH = mm(42);
+  const botGrad = ctx.createLinearGradient(0, h - botH, 0, h);
+  botGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  botGrad.addColorStop(0.3, 'rgba(40, 17, 0, 0.25)');
+  botGrad.addColorStop(1, 'rgba(56, 24, 0, 0.75)');
+  ctx.fillStyle = botGrad;
+  ctx.fillRect(0, h - botH, w, botH);
+
+  // Itinerary (compact flow of waypoint names)
+  if (itinerary.length > 0) {
+    const itinSize = mm(3.2);
+    ctx.font = `${itinSize}px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = mm(1);
+
+    const itinText = itinerary.join('  \u00B7  ');
+    const itinMaxW = w - mm(20);
+    const itinLines = wrapText(ctx, itinText, itinMaxW);
+    let itinY = h - mm(22);
+    for (const line of itinLines.slice(0, 2)) {
+      ctx.fillText(line, w / 2, itinY, itinMaxW);
+      itinY += itinSize * 1.6;
+    }
+    if (itinLines.length > 2) {
+      ctx.fillText('\u2026', w / 2, itinY, itinMaxW);
+    }
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+  }
+
+  // Stats line
+  const parts: string[] = [];
+  if (distStr) parts.push(distStr);
+  if (pointCount > 0) parts.push(`${pointCount} stop${pointCount !== 1 ? 's' : ''}`);
+  if (routeCount > 0) parts.push(`${routeCount} route${routeCount !== 1 ? 's' : ''}`);
+  if (parts.length > 0) {
+    const statsSize = mm(2.8);
+    ctx.font = `600 ${statsSize}px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(parts.join('  \u00B7  '), w / 2, h - mm(11), w - mm(20));
+  }
+
+  // Footer
+  const footerSize = mm(2.2);
+  const footerY = h - mm(5);
+  ctx.textBaseline = 'top';
+  ctx.font = `italic ${footerSize}px ${FONT}`;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.textAlign = 'left';
+  ctx.fillText('Made with Mapadillo', mm(8), footerY);
+  ctx.textAlign = 'right';
+  ctx.font = `${footerSize}px ${FONT}`;
+  ctx.fillText('Map data \u00A9 OpenStreetMap contributors', w - mm(8), footerY);
+}
+
+// ── PDF export (poster layout) ──────────────────────────────────────────────
 
 async function downloadPDF(
   map: maplibregl.Map,
@@ -321,149 +569,50 @@ async function downloadPDF(
   orientation: Orientation,
   routeDistances?: Map<string, number>,
 ): Promise<void> {
+  // 1. Render the map at high resolution
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(markerFeatures);
-  const imgData = canvas.toDataURL('image/jpeg', 0.92);
+  const mapCanvas = await exporter.renderCanvas(markerFeatures);
 
-  const pdfFormat = paperSize === 'auto' ? 'a3' : paperSize;
-  const pdfOrientation = paperSize === 'auto' ? 'landscape' : orientation;
-  const pdf = new jsPDF({ orientation: pdfOrientation, unit: 'mm', format: pdfFormat });
+  // 2. Compute page dimensions in mm (pass explicitly — jsPDF doesn't know custom sizes like '18x24')
+  const effectiveSize = paperSize === 'auto' ? 'a3' : paperSize;
+  const pdfOrientation: Orientation = paperSize === 'auto' ? 'landscape' : orientation;
+  const [pw, ph] = PAPER_SIZES[effectiveSize];
+  const pageW_mm = pdfOrientation === 'landscape' ? Math.max(pw, ph) : Math.min(pw, ph);
+  const pageH_mm = pdfOrientation === 'landscape' ? Math.min(pw, ph) : Math.max(pw, ph);
+  const pdf = new jsPDF({ unit: 'mm', format: [pageW_mm, pageH_mm] });
 
-  const pageW = pdf.internal.pageSize.getWidth();
-  const pageH = pdf.internal.pageSize.getHeight();
-  const margin = 10;
-  const innerW = pageW - margin * 2;
-  const innerH = pageH - margin * 2;
+  // 3. Create poster canvas at exact page dimensions (200 DPI)
+  const pxPerMm = DEFAULT_DPI / 25.4;
+  const posterW = Math.round(pageW_mm * pxPerMm);
+  const posterH = Math.round(pageH_mm * pxPerMm);
 
-  // ── Decorative border ────────────────────────────────────────────────────
-  pdf.setDrawColor(200, 200, 200);
-  pdf.setLineWidth(0.5);
-  pdf.roundedRect(margin, margin, innerW, innerH, 6, 6, 'S');
+  const posterCanvas = document.createElement('canvas');
+  posterCanvas.width = posterW;
+  posterCanvas.height = posterH;
+  const ctx = posterCanvas.getContext('2d')!;
 
-  // ── Layout: left 2/3 = map, right 1/3 = info panel ──────────────────────
-  const contentMargin = margin + 8;
-  const mapAreaW = (innerW * 2) / 3 - 12;
-  const panelX = contentMargin + mapAreaW + 8;
-  const panelW = innerW / 3 - 4;
-  const contentTop = contentMargin;
-  const footerH = 12;
-  const contentBottom = pageH - margin - footerH;
-  const mapAreaH = contentBottom - contentTop;
+  // 4. Dark background (visible only if map doesn't fill the page, e.g. 'auto')
+  ctx.fillStyle = '#1C1C1E';
+  ctx.fillRect(0, 0, posterW, posterH);
 
-  // ── Map image (maintain aspect ratio, fill left area) ────────────────────
-  const canvasAspect = canvas.width / canvas.height;
-  const areaAspect = mapAreaW / mapAreaH;
-
-  let imgW: number;
-  let imgH: number;
-  let imgX: number;
-  let imgY: number;
-
-  if (canvasAspect > areaAspect) {
-    // Canvas is wider — fit to width
-    imgW = mapAreaW;
-    imgH = mapAreaW / canvasAspect;
-    imgX = contentMargin;
-    imgY = contentTop + (mapAreaH - imgH) / 2;
+  // 5. Draw map canvas fitted into the poster (preserving aspect ratio)
+  const mapAspect = mapCanvas.width / mapCanvas.height;
+  const posterAspect = posterW / posterH;
+  let mw: number, mh: number, mx: number, my: number;
+  if (mapAspect > posterAspect) {
+    mw = posterW; mh = posterW / mapAspect;
+    mx = 0; my = (posterH - mh) / 2;
   } else {
-    // Canvas is taller — fit to height
-    imgH = mapAreaH;
-    imgW = mapAreaH * canvasAspect;
-    imgX = contentMargin + (mapAreaW - imgW) / 2;
-    imgY = contentTop;
+    mh = posterH; mw = posterH * mapAspect;
+    mx = (posterW - mw) / 2; my = 0;
   }
+  ctx.drawImage(mapCanvas, mx, my, mw, mh);
 
-  pdf.addImage(imgData, 'JPEG', imgX, imgY, imgW, imgH);
-
-  // ── Info panel ───────────────────────────────────────────────────────────
-  let cursorY = contentTop + 4;
-
-  // Trip title
-  pdf.setFontSize(22);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(224, 94, 0); // ORANGE
-  const titleLines = pdf.splitTextToSize(mapData.name, panelW - 4);
-  pdf.text(titleLines, panelX, cursorY + 6);
-  cursorY += titleLines.length * 8 + 4;
-
-  // Family name
-  if (mapData.family_name) {
-    pdf.setFontSize(13);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setTextColor(120, 120, 120);
-    pdf.text(mapData.family_name, panelX, cursorY + 4);
-    cursorY += 8;
-  }
-
-  // Horizontal rule
-  cursorY += 4;
-  pdf.setDrawColor(200, 200, 200);
-  pdf.setLineWidth(0.3);
-  pdf.line(panelX, cursorY, panelX + panelW - 4, cursorY);
-  cursorY += 6;
-
-  // ── Stops list ───────────────────────────────────────────────────────────
-  pdf.setFontSize(14);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(60, 60, 60);
-  pdf.text('Stops', panelX, cursorY + 4);
-  cursorY += 10;
-
-  pdf.setFontSize(10);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setTextColor(80, 80, 80);
-
-  const maxStopY = contentBottom - 50; // Reserve space for stats
-
-  const points = stops.filter((s) => s.type === 'point');
+  // 6. Compute trip stats
   const routes = stops.filter((s) => s.type === 'route');
-
-  for (const stop of stops) {
-    if (cursorY > maxStopY) {
-      pdf.text('...', panelX + 2, cursorY + 3);
-      cursorY += 6;
-      break;
-    }
-
-    let label: string;
-    if (stop.type === 'route') {
-      const endName = stop.dest_name ?? 'Destination';
-      label = `${stop.name} \u2192 ${endName}`;
-    } else {
-      const iconPrefix = stop.icon ? `${stop.icon}  ` : '';
-      label = iconPrefix + stop.name;
-    }
-
-    const stopLines = pdf.splitTextToSize(`\u2022 ${label}`, panelW - 8);
-    for (const line of stopLines) {
-      if (cursorY > maxStopY) break;
-      pdf.text(line as string, panelX + 2, cursorY + 3);
-      cursorY += 5;
-    }
-    cursorY += 1;
-  }
-
-  // Horizontal rule before stats
-  cursorY += 2;
-  pdf.setDrawColor(200, 200, 200);
-  pdf.setLineWidth(0.3);
-  pdf.line(panelX, cursorY, panelX + panelW - 4, cursorY);
-  cursorY += 6;
-
-  // ── Road trip stats ──────────────────────────────────────────────────────
-  pdf.setFontSize(12);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(60, 60, 60);
-  pdf.text('Trip Stats', panelX, cursorY + 4);
-  cursorY += 10;
-
-  pdf.setFontSize(10);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setTextColor(80, 80, 80);
-
-  // Use routed distances when available, fall back to straight-line haversine
+  const points = stops.filter((s) => s.type === 'point');
   let totalMeters = 0;
-  if (routeDistances && routeDistances.size > 0) {
+  if (routeDistances?.size) {
     for (const d of routeDistances.values()) totalMeters += d;
   } else {
     for (const stop of routes) {
@@ -476,38 +625,27 @@ async function downloadPDF(
     }
   }
 
-  const distStr = formatDistance(totalMeters, units);
-  pdf.text(`Total distance: ${distStr}`, panelX + 2, cursorY + 3);
-  cursorY += 6;
-  pdf.text(`Stops: ${points.length}`, panelX + 2, cursorY + 3);
-  cursorY += 6;
-  pdf.text(`Routes: ${routes.length}`, panelX + 2, cursorY + 3);
-
-  // ── Footer ───────────────────────────────────────────────────────────────
-  const footerY = pageH - margin - 4;
-
-  pdf.setFontSize(8);
-  pdf.setFont('helvetica', 'italic');
-  pdf.setTextColor(160, 160, 160);
-  pdf.text('Made with Mapadillo', contentMargin, footerY);
-
-  pdf.setFontSize(7);
-  pdf.setFont('helvetica', 'normal');
-  pdf.text(
-    'Map data \u00A9 OpenStreetMap contributors',
-    pageW - contentMargin,
-    footerY,
-    { align: 'right' },
+  // 7. Draw poster overlays (title, itinerary, stats, attribution)
+  drawPosterOverlays(
+    ctx, posterW, posterH, pxPerMm,
+    mapData.name,
+    mapData.family_name,
+    buildItinerary(stops),
+    totalMeters > 0 ? formatDistance(totalMeters, units) : '',
+    points.length,
+    routes.length,
   );
 
-  // Trigger download (jsPDF v4 save() returns a promise)
+  // 8. Embed composited poster in PDF and trigger download
+  const imgData = posterCanvas.toDataURL('image/png');
+  pdf.addImage(imgData, 'PNG', 0, 0, pageW_mm, pageH_mm);
   await pdf.save(`${sanitizeFilename(mapData.name)}.pdf`);
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export type ExportFormat = 'png' | 'jpeg' | 'pdf';
-export type PaperSize = 'auto' | 'letter' | 'a4' | 'a3' | 'tabloid';
+export type PaperSize = 'auto' | 'letter' | 'a4' | 'a3' | 'tabloid' | '18x24' | '24x36' | 'a2' | 'a1';
 export type Orientation = 'landscape' | 'portrait';
 
 export async function exportMap(

@@ -14,18 +14,21 @@ import { MapPageBase } from './map-page-base.js';
 import type { MapView } from '../components/map-view.js';
 import '../components/map-view.js';
 
-const PAPER_SIZE_LABELS: Record<PaperSize, string> = {
-  auto: 'Current view',
+const PAPER_SIZE_LABELS: Partial<Record<PaperSize, string>> = {
   letter: 'Letter (8.5 \u00d7 11\u2033)',
   a4: 'A4 (210 \u00d7 297 mm)',
   a3: 'A3 (297 \u00d7 420 mm)',
   tabloid: 'Tabloid (11 \u00d7 17\u2033)',
+  '18x24': 'Poster (18 \u00d7 24\u2033)',
+  '24x36': 'Poster (24 \u00d7 36\u2033)',
+  a2: 'A2 (420 \u00d7 594 mm)',
+  a1: 'A1 (594 \u00d7 841 mm)',
 };
 
 @customElement('map-preview-page')
 export class MapPreviewPage extends MapPageBase {
   @state() private _format: ExportFormat = 'pdf';
-  @state() private _paperSize: PaperSize = 'auto';
+  @state() private _paperSize: PaperSize = 'letter';
   @state() private _orientation: Orientation = 'landscape';
   @state() private _exporting = false;
   @state() private _exportError = '';
@@ -80,10 +83,6 @@ export class MapPreviewPage extends MapPageBase {
 
     .stat-value {
       font-size: var(--wa-font-size-xs);
-      font-weight: var(--wa-font-weight-semibold);
-    }
-
-    wa-details::part(summary) {
       font-weight: var(--wa-font-weight-semibold);
     }
 
@@ -164,11 +163,9 @@ export class MapPreviewPage extends MapPageBase {
       <div class="map-panel">
         <map-view @map-ready=${this._onMapReady}></map-view>
 
-        ${this._paperSize !== 'auto' ? html`
-          <div class="paper-frame-container">
-            <div class="paper-frame" style="${this._paperFrameStyle}"></div>
-          </div>
-        ` : nothing}
+        <div class="paper-frame-container">
+          <div class="paper-frame" style="${this._paperFrameStyle}"></div>
+        </div>
 
         ${this._loading ? html`
           <div class="loading-container">
@@ -200,66 +197,59 @@ export class MapPreviewPage extends MapPageBase {
 
             <wa-divider></wa-divider>
 
-            <wa-details summary="Export">
-              <div class="wa-stack wa-gap-s">
-                <wa-radio-group
-                  .value=${this._format}
-                  @change=${this._onFormatChange}
-                >
-                  <wa-radio appearance="button" value="pdf">PDF</wa-radio>
-                  <wa-radio appearance="button" value="png">PNG</wa-radio>
-                  <wa-radio appearance="button" value="jpeg">JPEG</wa-radio>
-                </wa-radio-group>
+            <wa-radio-group
+              .value=${this._format}
+              @change=${this._onFormatChange}
+            >
+              <wa-radio appearance="button" value="pdf">PDF</wa-radio>
+              <wa-radio appearance="button" value="png">PNG</wa-radio>
+              <wa-radio appearance="button" value="jpeg">JPEG</wa-radio>
+            </wa-radio-group>
 
-                <div class="format-description">
-                  ${MapPreviewPage._formatDescriptions[this._format]}
-                </div>
+            <div class="format-description">
+              ${MapPreviewPage._formatDescriptions[this._format]}
+            </div>
 
-                <wa-select
-                  label="Paper size"
-                  .value=${this._paperSize}
-                  @change=${this._onPaperSizeChange}
-                >
-                  ${Object.entries(PAPER_SIZE_LABELS).map(
-                    ([value, label]) => html`<wa-option value=${value}>${label}</wa-option>`,
-                  )}
-                </wa-select>
+            <wa-select
+              label="Paper size"
+              @change=${this._onPaperSizeChange}
+            >
+              ${Object.entries(PAPER_SIZE_LABELS).map(
+                ([value, label]) => html`<wa-option value=${value} ?selected=${value === this._paperSize}>${label}</wa-option>`,
+              )}
+            </wa-select>
 
-                ${this._paperSize !== 'auto' ? html`
-                  <wa-radio-group
-                    .value=${this._orientation}
-                    @change=${this._onOrientationChange}
-                  >
-                    <wa-radio appearance="button" value="landscape">
-                      <wa-icon slot="start" name="rectangle-wide"></wa-icon>
-                      Landscape
-                    </wa-radio>
-                    <wa-radio appearance="button" value="portrait">
-                      <wa-icon slot="start" name="rectangle-vertical"></wa-icon>
-                      Portrait
-                    </wa-radio>
-                  </wa-radio-group>
-                ` : nothing}
+            <wa-radio-group
+              .value=${this._orientation}
+              @change=${this._onOrientationChange}
+            >
+              <wa-radio appearance="button" value="landscape">
+                <wa-icon slot="start" name="rectangle-wide"></wa-icon>
+                Landscape
+              </wa-radio>
+              <wa-radio appearance="button" value="portrait">
+                <wa-icon slot="start" name="rectangle-vertical"></wa-icon>
+                Portrait
+              </wa-radio>
+            </wa-radio-group>
 
-                ${this._exportError ? html`
-                  <wa-callout variant="danger">
-                    <wa-icon slot="icon" name="circle-info" library="default"></wa-icon>
-                    ${this._exportError}
-                  </wa-callout>
-                ` : nothing}
+            ${this._exportError ? html`
+              <wa-callout variant="danger">
+                <wa-icon slot="icon" name="circle-info" library="default"></wa-icon>
+                ${this._exportError}
+              </wa-callout>
+            ` : nothing}
 
-                <wa-button
-                  variant="brand"
-                  class="download-btn"
-                  ?loading=${this._exporting}
-                  ?disabled=${this._exporting}
-                  @click=${this._onDownload}
-                >
-                  <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
-                  Download
-                </wa-button>
-              </div>
-            </wa-details>
+            <wa-button
+              variant="brand"
+              class="download-btn"
+              ?loading=${this._exporting}
+              ?disabled=${this._exporting}
+              @click=${this._onDownload}
+            >
+              <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
+              Download
+            </wa-button>
 
             <wa-divider></wa-divider>
 

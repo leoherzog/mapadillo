@@ -434,11 +434,15 @@ export class MapController {
         'text-field': ['get', 'name'],
         'text-font': this._labelFont,
         'text-size': 11,
-        'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
-        'text-radial-offset': 1.4,
+        'text-variable-anchor': [
+          'top', 'bottom', 'left', 'right',
+          'top-left', 'top-right', 'bottom-left', 'bottom-right',
+        ],
+        'text-radial-offset': 1.6,
         'text-justify': 'auto',
         'text-max-width': 10,
-        'text-allow-overlap': false,
+        'text-overlap': 'always',
+        'text-padding': 1,
         'text-optional': true,
       },
       paint: {
