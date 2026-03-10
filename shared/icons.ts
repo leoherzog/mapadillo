@@ -3,6 +3,7 @@
  */
 
 const ICON_NAMES = [
+  'none',
   'tree', 'leaf', 'flower', 'compass', 'fire', 'snowflake', 'sun', 'umbrella',
   'utensils', 'mug-hot', 'cake-candles', 'martini-glass', 'fish',
   'camera', 'landmark', 'globe', 'ticket', 'crown',

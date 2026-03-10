@@ -3,8 +3,8 @@ import { css } from 'lit';
 /**
  * Shared page layout styles for sidebar + map-panel pages.
  *
- * Use `.sidebar-left` or `.sidebar-right` on the sidebar element
- * to control which side gets the border.
+ * Desktop: uses `<wa-split-panel>` for a resizable sidebar + map layout.
+ * Mobile: hides the split panel; trip-builder uses a drawer instead.
  */
 /** Reusable .family-name subtitle style (quiet, small text). */
 export const familyNameStyles = css`
@@ -23,26 +23,22 @@ export const pageLayoutStyles = css`
     overflow: hidden;
   }
 
+  wa-split-panel {
+    flex: 1;
+    min-height: 0;
+    --min: 300px;
+    --max: 50%;
+  }
+
   .sidebar {
-    width: 380px;
-    min-width: 300px;
-    flex-shrink: 0;
+    height: 100%;
     padding: var(--wa-space-l);
     overflow-y: auto;
     background: var(--wa-color-surface-default);
   }
 
-  .sidebar-left {
-    border-right: var(--wa-border-width-s) solid var(--wa-color-surface-border);
-  }
-
-  .sidebar-right {
-    border-left: var(--wa-border-width-s) solid var(--wa-color-surface-border);
-  }
-
   .map-panel {
-    flex: 1;
-    min-width: 0;
+    height: 100%;
     position: relative;
   }
 
@@ -78,22 +74,14 @@ export const pageLayoutStyles = css`
     padding: var(--wa-space-2xl);
   }
 
-  /* Responsive: stack on narrow viewports */
+  /* Responsive: hide split panel on narrow viewports */
   @media (max-width: 700px) {
-    :host {
-      flex-direction: column;
-    }
-
-    .sidebar {
-      width: auto;
-      min-width: 0;
-      border-right: none;
-      border-left: none;
-      border-bottom: var(--wa-border-width-s) solid var(--wa-color-surface-border);
-      max-height: 45vh;
+    wa-split-panel {
+      display: none;
     }
 
     .map-panel {
+      flex: 1;
       min-height: 300px;
     }
   }

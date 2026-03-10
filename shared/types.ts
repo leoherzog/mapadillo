@@ -28,6 +28,7 @@ export interface Stop {
   dest_name: string | null;
   dest_latitude: number | null;
   dest_longitude: number | null;
+  dest_icon: string | null;
   route_geometry: string | null;
   created_at: string;
 }

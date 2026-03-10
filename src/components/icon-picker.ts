@@ -4,13 +4,19 @@
  * Trigger button shows the currently selected icon. Clicking it opens a
  * wa-dialog with icons grouped by category. Selecting an icon fires
  * `icon-change` with the icon name string.
+ *
+ * The special value `'none'` hides the marker on the map entirely.
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import type { ValidIcon } from '../../shared/icons.js';
 
+/** Display icon name for a given value (maps 'none' → 'ban' for the FA icon). */
+const displayIcon = (icon: string) => icon === 'none' ? 'ban' : icon;
+
 const CATEGORIES: Record<string, ValidIcon[]> = {
+  'No Icon': ['none'],
   Outdoors: ['tree', 'leaf', 'flower', 'compass', 'fire', 'snowflake', 'sun', 'umbrella'],
   'Food & Drink': ['utensils', 'mug-hot', 'cake-candles', 'martini-glass', 'fish'],
   Sightseeing: ['camera', 'landmark', 'globe', 'ticket', 'crown'],
@@ -78,7 +84,7 @@ export class IconPicker extends LitElement {
   render() {
     return html`
       <wa-button class="trigger" appearance="outlined" size="small" @click=${this._openDialog}>
-        <wa-icon name=${this.value} label="Pick icon"></wa-icon>
+        <wa-icon name=${displayIcon(this.value)} label="Pick icon"></wa-icon>
       </wa-button>
       <wa-dialog label="Pick an icon" ?open=${this._open} @wa-after-hide=${this._closeDialog}>
         ${Object.entries(CATEGORIES).map(
@@ -89,11 +95,11 @@ export class IconPicker extends LitElement {
                 (icon) => html`
                   <button
                     class="icon-btn wa-stack wa-align-items-center wa-gap-0 ${icon === this.value ? 'selected' : ''}"
-                    aria-label=${icon}
+                    aria-label=${icon === 'none' ? 'No icon' : icon}
                     @click=${() => this._select(icon)}
                   >
-                    <wa-icon name=${icon}></wa-icon>
-                    <span class="label">${icon}</span>
+                    <wa-icon name=${displayIcon(icon)}></wa-icon>
+                    <span class="label">${icon === 'none' ? 'none' : icon}</span>
                   </button>
                 `,
               )}

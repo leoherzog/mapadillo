@@ -58,7 +58,7 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 
 ### Shared types
 
-`shared/types.ts` is imported by both frontend (`tsconfig.json` includes `"shared"`) and worker (relative import `../../shared/types.js`). Contains `MapData`, `Stop` (includes `route_geometry` field), `ShareData`, `ShareRow`, `MapRole`, `SessionUser`.
+`shared/types.ts` is imported by both frontend (`tsconfig.json` includes `"shared"`) and worker (relative import `../../shared/types.js`). Contains `MapData`, `Stop` (includes `route_geometry`, `dest_icon` fields), `ShareData`, `ShareRow`, `MapRole`, `SessionUser`.
 
 ### Frontend: `src/`
 
@@ -70,8 +70,8 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 - **Services:** `src/services/` — `api-client.ts` base fetch wrapper (same-origin, no CORS); `maps.ts` typed CRUD wrappers; `geocoding.ts` → `/api/geocode`; `routing.ts` → `/api/route`
 - **Map:** `src/map/map-controller.ts` manages MapLibre instance, draws stops + route segments; `src/map/map-export.ts` handles PDF/image export via `@watergis/maplibre-gl-export` + jsPDF
 - **Config:** `src/config/travel-modes.ts`, `src/config/map.ts` — travel mode definitions and map constants
-- **Styles:** `src/styles/card-shared.ts` (shared CSS for point-card + route-card), `src/styles/page-layout.ts` (shared page layout CSS), `src/styles/wa-utilities.ts` (Web Awesome utility classes)
-- **Utils:** `src/utils/geo.ts` — `isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `sanitizeFilename()`
+- **Styles:** `src/styles/card-shared.ts` (shared CSS for point-card + route-card), `src/styles/page-layout.ts` (shared page layout: `wa-split-panel` on desktop, `wa-drawer` on mobile), `src/styles/wa-utilities.ts` (Web Awesome utility classes)
+- **Utils:** `src/utils/geo.ts` — `isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `getDefaultUnits()`, `sanitizeFilename()`
 - **Pages:** `landing-page.ts`, `sign-in-page.ts`, `dashboard-page.ts`, `trip-builder-page.ts`, `claim-page.ts`, `map-preview-page.ts`, `map-page-base.ts` (shared base class), `export-page.ts`
 
 ### Worker: `worker/src/`
@@ -83,7 +83,7 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 - **Lib:** `worker/src/lib/` — `hash.ts` (crypto hashing helpers). *Note: Prodigi and Stripe helpers are planned but not yet implemented.*
 - **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic)
 - **DB types:** `worker/src/db/types.ts` re-exports from `shared/types.ts`
-- **Migrations:** `worker/src/db/migrations/` — 5 migrations (0001–0005)
+- **Migrations:** `worker/src/db/migrations/` — 6 migrations (0001–0006)
 
 ### Cloudflare bindings (`worker/wrangler.toml`)
 
@@ -102,7 +102,9 @@ Secrets set via `wrangler secret put`: `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, 
 
 Two stop types stored in the `stops` table:
 - **`point`** — standalone map marker (name, lat/lng, icon, label)
-- **`route`** — A→B segment (start lat/lng/name + `dest_*` fields + `travel_mode` + `route_geometry` for cached GeoJSON)
+- **`route`** — A→B segment (start lat/lng/name + `dest_*` fields + `dest_icon` + `travel_mode` + `route_geometry` for cached GeoJSON)
+
+Each endpoint (point or route start/dest) has an icon from the curated Jelly set. The special icon value `'none'` hides the marker and label on the map entirely. When an icon changes, it propagates to all other items sharing the exact same coordinates.
 
 `travel_mode` is stored on the destination stop (NULL on the first stop). Five modes: `drive`, `walk`, `bike`, `plane`, `boat`. Plane = great-circle arc (client-computed, no ORS call). Boat = straight line.
 
@@ -113,6 +115,23 @@ All non-GET state-changing API requests (except `/api/webhooks/*`) are validated
 ### UI components
 
 Web Awesome Pro (`@web.awesome.me/webawesome-pro`) v3.x web components. Font Awesome Pro Jelly icons via kit `@awesome.me/kit-781a3c6be3`. Use `<wa-*>` components and `<wa-icon name="...">` throughout. `useDefineForClassFields: false` is required in tsconfig for Lit decorators.
+
+#### Web Awesome event conventions
+
+- **Custom events** are prefixed `wa-` (e.g., `wa-show`, `wa-hide`, `wa-clear`). **Standard DOM events** use native names (`input`, `change`, `focus`, `blur`).
+- Components call `this.dispatchEvent()` directly — no `emit()` helper.
+
+**Popup/panel lifecycle** (wa-combobox, wa-select, wa-dialog, wa-details, wa-dropdown, wa-tooltip): `wa-show` (cancelable) → `wa-after-show` → `wa-hide` (cancelable) → `wa-after-hide`. `wa-dialog` and `wa-dropdown` include `event.detail.source` on hide.
+
+**Form inputs** (wa-input, wa-combobox, wa-select, wa-switch, wa-radio-group): emit `input` + `change` on value commit, `wa-clear` on clear button, `wa-invalid` on validation failure, `focus`/`blur` on focus changes.
+
+**wa-combobox `input` caveat:** The component may `stopPropagation()` on native typing events. To listen for typing, use a capture-phase listener: `addEventListener('input', ..., true)`.
+
+**wa-dropdown:** also emits `wa-select` with `event.detail.item` referencing the selected `<wa-dropdown-item>`.
+
+**Utility components:** `wa-copy-button` (one-click clipboard copy, replaces manual `navigator.clipboard` logic), `wa-toast`/`wa-toast-item` (transient notifications via `toast.create()`), `wa-split-panel` (resizable panel layout with drag handle).
+
+**Minimal-event components:** wa-badge, wa-callout, wa-card, wa-copy-button, wa-divider, wa-dropdown-item, wa-option, wa-page, wa-radio, wa-relative-time, wa-spinner, wa-split-panel, wa-toast emit no custom events. wa-icon emits `wa-load`/`wa-error`. wa-button emits `wa-invalid`.
 
 ### Passkeys / WebAuthn
 

@@ -1,8 +1,11 @@
 /**
- * Travel mode picker — horizontal row of transport mode buttons.
+ * Travel mode picker — horizontal row of transport mode radio buttons.
  *
  * Each mode has a distinctive color. The active mode gets a colored
- * bottom border. Fires `mode-change` with the mode string on click.
+ * bottom indicator. Fires `mode-change` with the mode string on selection.
+ *
+ * Uses `<wa-radio-group>` with `<wa-radio appearance="button">` for
+ * built-in ARIA semantics, keyboard navigation, and selection state.
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
@@ -21,40 +24,70 @@ export class TravelModePicker extends LitElement {
 
   static styles = css`
     :host {
-      display: flex;
-      gap: var(--wa-space-3xs);
-      align-items: center;
+      display: block;
     }
 
-    .active::part(base) {
-      border-bottom: var(--wa-border-width-l) solid var(--mode-color, currentColor);
+    wa-radio-group::part(form-control-label) {
+      display: none;
+    }
+
+    wa-radio {
+      position: relative;
+    }
+
+    wa-radio:state(checked)::part(label) {
       color: var(--mode-color, currentColor);
+    }
+
+    wa-radio:state(checked)::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 10px;
+      height: 8px;
+      z-index: 1;
+      background: var(--mode-color, currentColor);
+      clip-path: polygon(
+        35% 0%, 65% 0%,
+        65% 45%, 100% 45%,
+        50% 100%,
+        0% 45%, 35% 45%
+      );
     }
   `;
 
   render() {
-    return MODES.map(
-      ({ icon, mode, color }) => html`
-        <wa-button
-          appearance="plain"
-          size="small"
-          class=${this.value === mode ? 'active' : ''}
-          style="--mode-color: ${color}"
-          title=${mode}
-          ?disabled=${this.disabled}
-          @click=${() => this._select(mode)}
-        >
-          <wa-icon name=${icon}></wa-icon>
-        </wa-button>
-      `,
-    );
+    return html`
+      <wa-radio-group
+        size="small"
+        orientation="horizontal"
+        .value=${this.value}
+        ?disabled=${this.disabled}
+        @change=${this._onChange}
+      >
+        ${MODES.map(
+          ({ icon, mode, color }) => html`
+            <wa-radio
+              appearance="button"
+              value=${mode}
+              style="--mode-color: ${color}"
+            >
+              <wa-icon name=${icon}></wa-icon>
+            </wa-radio>
+          `,
+        )}
+      </wa-radio-group>
+    `;
   }
 
-  private _select(mode: string) {
-    this.value = mode;
+  private _onChange(e: Event) {
+    const group = e.currentTarget as HTMLElement & { value: string };
+    this.value = group.value;
     this.dispatchEvent(
       new CustomEvent('mode-change', {
-        detail: mode,
+        detail: this.value,
         bubbles: true,
         composed: true,
       }),

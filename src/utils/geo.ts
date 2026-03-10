@@ -59,11 +59,6 @@ export function getDefaultUnits(): 'km' | 'mi' {
   return 'km';
 }
 
-/** Format a lat/lng pair as a display string. */
-export function formatCoords(lat: number, lng: number): string {
-  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-}
-
 /** Sanitize a string for use as a filename. */
 export function sanitizeFilename(name: string): string {
   return name

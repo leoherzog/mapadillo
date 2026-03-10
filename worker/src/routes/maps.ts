@@ -151,7 +151,7 @@ maps.get('/', async (c) => {
 
   // Batch all stop queries in a single D1 round-trip
   const stopStmts = allMaps.map((map) =>
-    c.env.DB.prepare('SELECT id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, created_at FROM stops WHERE map_id = ? ORDER BY position').bind(map.id),
+    c.env.DB.prepare('SELECT id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, created_at FROM stops WHERE map_id = ? ORDER BY position').bind(map.id),
   );
   const stopResults = await c.env.DB.batch(stopStmts);
 
@@ -337,6 +337,7 @@ maps.post('/:id/stops', async (c) => {
     dest_name?: string;
     dest_lat?: number;
     dest_lng?: number;
+    dest_icon?: string;
   };
   let body: StopBody;
   try {
@@ -372,6 +373,9 @@ maps.post('/:id/stops', async (c) => {
   }
   if (body.icon && !VALID_ICONS.has(body.icon)) {
     return c.json({ error: `Invalid icon: ${body.icon}` }, 400);
+  }
+  if (body.dest_icon && !VALID_ICONS.has(body.dest_icon)) {
+    return c.json({ error: `Invalid dest_icon: ${body.dest_icon}` }, 400);
   }
 
   // travel_mode validation: only allowed on routes
@@ -420,14 +424,15 @@ maps.post('/:id/stops', async (c) => {
   const destName = body.dest_name?.trim() ?? null;
   const destLat = body.dest_lat ?? null;
   const destLng = body.dest_lng ?? null;
+  const destIcon = body.dest_icon ?? null;
 
   await c.env.DB.batch([
     c.env.DB.prepare(
-      'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ).bind(
       stopId, result.map.id, position, type, stopName, stopLabel,
       body.lat, body.lng, stopIcon, travelMode,
-      destName, destLat, destLng, null, now,
+      destName, destLat, destLng, destIcon, null, now,
     ),
     touchMapStmt(c.env.DB, result.map.id, now),
   ]);
@@ -436,8 +441,9 @@ maps.post('/:id/stops', async (c) => {
     id: stopId, map_id: result.map.id, position, type: type as 'point' | 'route',
     name: stopName, label: stopLabel, latitude: body.lat, longitude: body.lng,
     icon: stopIcon, travel_mode: travelMode, dest_name: destName,
-    dest_latitude: destLat, dest_longitude: destLng, route_geometry: null,
-    created_at: now,
+    dest_latitude: destLat, dest_longitude: destLng,
+    dest_icon: destIcon,
+    route_geometry: null, created_at: now,
   };
   return c.json(newStop, 201);
 });
@@ -504,6 +510,13 @@ maps.put('/:id/stops/:stopId', async (c) => {
     }
     updates.push('icon = ?');
     values.push(body.icon ?? null);
+  }
+  if ('dest_icon' in body) {
+    if (body.dest_icon !== null && !VALID_ICONS.has(body.dest_icon as string)) {
+      return c.json({ error: `Invalid dest_icon: ${body.dest_icon}` }, 400);
+    }
+    updates.push('dest_icon = ?');
+    values.push(body.dest_icon ?? null);
   }
   if ('travel_mode' in body) {
     if (body.travel_mode !== null && !VALID_TRAVEL_MODES.has(body.travel_mode as string)) {
@@ -586,6 +599,7 @@ maps.put('/:id/stops/:stopId', async (c) => {
   if ('lat' in body) updatedStop.latitude = body.lat as number;
   if ('lng' in body) updatedStop.longitude = body.lng as number;
   if ('icon' in body) updatedStop.icon = (body.icon as string) ?? null;
+  if ('dest_icon' in body) updatedStop.dest_icon = (body.dest_icon as string) ?? null;
   if ('travel_mode' in body) updatedStop.travel_mode = (body.travel_mode as string) ?? null;
   if ('dest_name' in body) updatedStop.dest_name = typeof body.dest_name === 'string' ? body.dest_name.trim() : null;
   if ('dest_lat' in body) updatedStop.dest_latitude = (body.dest_lat as number) ?? null;

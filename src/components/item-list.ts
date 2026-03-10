@@ -90,12 +90,14 @@ export class ItemList extends LitElement {
             ${item.type === 'route'
               ? html`<route-card
                   .item=${item}
+                  .allItems=${this.items}
                   ?readonly=${this.readonly}
                   .distance=${this.distances.get(item.id) ?? 0}
                   .units=${this.units}
                 ></route-card>`
               : html`<point-card
                   .item=${item}
+                  .allItems=${this.items}
                   ?readonly=${this.readonly}
                 ></point-card>`}
           </div>

@@ -35,8 +35,17 @@ export async function geocodeHandler(c: Context<AppEnv>) {
     ? rawLayer.split(',').filter((l) => ALLOWED_LAYERS.includes(l.trim() as (typeof ALLOWED_LAYERS)[number])).join(',')
     : '';
 
-  // KV cache lookup
-  const cacheKey = `geocode:${await sha256Hex(`${q.toLowerCase()}:${lang}:${limit}:${layer}`)}`;
+  // Location bias (optional)
+  const rawLat = c.req.query('lat');
+  const rawLon = c.req.query('lon');
+  const biasLat = rawLat ? parseFloat(rawLat) : NaN;
+  const biasLon = rawLon ? parseFloat(rawLon) : NaN;
+  const hasBias = !Number.isNaN(biasLat) && !Number.isNaN(biasLon)
+    && Math.abs(biasLat) <= 90 && Math.abs(biasLon) <= 180;
+
+  // KV cache lookup — include bias (rounded to ~11 km) to limit cache cardinality
+  const biasKey = hasBias ? `:${biasLat.toFixed(1)}:${biasLon.toFixed(1)}` : '';
+  const cacheKey = `geocode:${await sha256Hex(`${q.toLowerCase()}:${lang}:${limit}:${layer}${biasKey}`)}`;
   const cached = await c.env.API_CACHE.get(cacheKey);
   if (cached) {
     try {
@@ -52,6 +61,10 @@ export async function geocodeHandler(c: Context<AppEnv>) {
   url.searchParams.set('q', q);
   url.searchParams.set('lang', lang);
   url.searchParams.set('limit', String(limit));
+  if (hasBias) {
+    url.searchParams.set('lat', String(biasLat));
+    url.searchParams.set('lon', String(biasLon));
+  }
   if (layer) {
     for (const l of layer.split(',')) {
       url.searchParams.append('layer', l);

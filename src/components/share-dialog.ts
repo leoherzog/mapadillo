@@ -23,8 +23,8 @@ export class ShareDialog extends LitElement {
   @state() private _loading = false;
   @state() private _linkRole: 'viewer' | 'editor' = 'viewer';
   @state() private _generatedUrl = '';
-  @state() private _copied = false;
   @state() private _generating = false;
+  @state() private _pendingRemoveId: string | null = null;
   @state() private _error = '';
   @state() private _open = false;
 
@@ -112,7 +112,6 @@ export class ShareDialog extends LitElement {
   async show() {
     this._loading = true;
     this._generatedUrl = '';
-    this._copied = false;
     this._error = '';
     this._open = true;
     try {
@@ -182,11 +181,14 @@ export class ShareDialog extends LitElement {
             ${this._generatedUrl ? html`
               <div class="link-box wa-cluster wa-align-items-center wa-gap-xs">
                 <span>${this._generatedUrl}</span>
-                <wa-tooltip content=${this._copied ? 'Copied!' : 'Copy link'}>
-                  <wa-button appearance="plain" size="small" @click=${this._onCopyLink}>
-                    <wa-icon name="clone" library="fa-jelly" label="Copy link"></wa-icon>
-                  </wa-button>
-                </wa-tooltip>
+                <wa-copy-button
+                  value=${this._generatedUrl}
+                  copy-label="Copy link"
+                  success-label="Copied!"
+                  feedback-duration="2000"
+                >
+                  <wa-icon slot="copy-icon" name="clone" library="fa-jelly"></wa-icon>
+                </wa-copy-button>
               </div>
             ` : nothing}
           </div>
@@ -207,6 +209,13 @@ export class ShareDialog extends LitElement {
 
         <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onClose}>Close</wa-button>
       </wa-dialog>
+
+      <wa-dialog ?open=${this._pendingRemoveId !== null} @wa-after-hide=${() => { this._pendingRemoveId = null; }}>
+        <span slot="label">Remove Collaborator?</span>
+        <p>They will need a new invite link to regain access.</p>
+        <wa-button slot="footer" variant="danger" @click=${this._confirmRemove}>Remove</wa-button>
+        <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${() => { this._pendingRemoveId = null; }}>Cancel</wa-button>
+      </wa-dialog>
     `;
   }
 
@@ -225,11 +234,14 @@ export class ShareDialog extends LitElement {
           </div>
           <wa-badge variant=${share.role === 'editor' ? 'brand' : 'neutral'}>${share.role}</wa-badge>
           ${claimUrl ? html`
-            <wa-tooltip content="Copy invite link">
-              <wa-button appearance="plain" size="small" label="Copy invite link" @click=${() => this._copyText(claimUrl)}>
-                <wa-icon name="clone"></wa-icon>
-              </wa-button>
-            </wa-tooltip>
+            <wa-copy-button
+              value=${claimUrl}
+              copy-label="Copy invite link"
+              success-label="Copied!"
+              feedback-duration="2000"
+            >
+              <wa-icon slot="copy-icon" name="clone"></wa-icon>
+            </wa-copy-button>
           ` : nothing}
           <wa-tooltip content="Remove">
             <wa-button appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
@@ -287,7 +299,6 @@ export class ShareDialog extends LitElement {
 
   private async _onGenerateLink() {
     this._generating = true;
-    this._copied = false;
     try {
       const result = await generateShareLink(this.mapId, this._linkRole);
       this._generatedUrl = result.url || `${window.location.origin}/claim/${result.claim_token}`;
@@ -297,20 +308,6 @@ export class ShareDialog extends LitElement {
       this._error = 'Failed to generate invite link. Please try again.';
     } finally {
       this._generating = false;
-    }
-  }
-
-  private async _onCopyLink() {
-    await this._copyText(this._generatedUrl);
-    this._copied = true;
-    setTimeout(() => { this._copied = false; }, 2000);
-  }
-
-  private async _copyText(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      this._error = 'Failed to copy to clipboard. Please copy the link manually.';
     }
   }
 
@@ -325,13 +322,14 @@ export class ShareDialog extends LitElement {
     }
   }
 
-  private async _onRemoveShare(shareId: string) {
-    const share = this._shares.find(s => s.id === shareId);
-    const name = share?.user_name ?? (share?.claimed ? 'this collaborator' : 'this pending invite');
-    const confirmed = window.confirm(
-      `Remove ${name} from this map? They will need a new invite link to regain access.`
-    );
-    if (!confirmed) return;
+  private _onRemoveShare(shareId: string) {
+    this._pendingRemoveId = shareId;
+  }
+
+  private async _confirmRemove() {
+    const shareId = this._pendingRemoveId;
+    this._pendingRemoveId = null;
+    if (!shareId) return;
 
     try {
       await deleteShare(this.mapId, shareId);

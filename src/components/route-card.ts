@@ -4,21 +4,27 @@
  * Shows start/end locations (with inline location search when unset),
  * travel mode picker, and distance display. Start uses the item's
  * lat/lng, end uses dest_lat/dest_lng.
+ *
+ * Each endpoint has an icon picker (like points). Selecting the
+ * "none" icon removes the marker and label from the map.
  */
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Stop } from '../services/maps.js';
 import type { GeocodingResult } from '../services/geocoding.js';
+import './icon-picker.js';
 import './location-search.js';
 import './travel-mode-picker.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
-import { isDraftCoord, formatDistance, formatCoords } from '../utils/geo.js';
+import { isDraftCoord, formatDistance } from '../utils/geo.js';
 import { CSS_COLOR_BY_MODE } from '../config/travel-modes.js';
+import { extractExistingLocations } from '../utils/existing-locations.js';
 
 @customElement('route-card')
 export class RouteCard extends LitElement {
   @property({ type: Object }) item!: Stop;
+  @property({ type: Array }) allItems: Stop[] = [];
   @property({ type: Boolean }) readonly = false;
   @property({ type: Number }) distance = 0;
   @property() units = 'km';
@@ -53,11 +59,6 @@ export class RouteCard extends LitElement {
       font-size: var(--wa-font-size-s);
     }
 
-    .endpoint-coords {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-    }
-
     .mode-row {
       padding: var(--wa-space-3xs) 0;
     }
@@ -80,6 +81,19 @@ export class RouteCard extends LitElement {
       font-weight: var(--wa-font-weight-semibold);
       font-size: var(--wa-font-size-s);
       flex: 1;
+    }
+
+    .endpoint-icon {
+      color: var(--wa-color-brand-60);
+    }
+
+    .name-input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    icon-picker {
+      --wa-font-size-l: var(--wa-font-size-m);
     }
   `];
 
@@ -105,13 +119,13 @@ export class RouteCard extends LitElement {
       return html`
         <wa-card style="--border-color: ${borderColor}">
           ${this._hasStart
-            ? this._renderEndpointDisplay('Start', this.item.name, this.item.latitude, this.item.longitude)
+            ? this._renderEndpointDisplay(this.item.icon, this.item.name)
             : nothing}
           <div class="mode-row wa-cluster wa-justify-content-center">
             <travel-mode-picker .value=${this.item.travel_mode ?? ''} ?disabled=${true}></travel-mode-picker>
           </div>
           ${this._hasEnd
-            ? this._renderEndpointDisplay('End', this.item.dest_name ?? '', this.item.dest_latitude!, this.item.dest_longitude!)
+            ? this._renderEndpointDisplay(this.item.dest_icon, this.item.dest_name ?? '')
             : nothing}
           ${this.distance > 0 ? html`
             <div class="distance wa-cluster wa-gap-xs wa-align-items-center">
@@ -134,21 +148,28 @@ export class RouteCard extends LitElement {
 
         <!-- Start -->
         <div class="endpoint">
-          <span class="endpoint-label">Start</span>
           ${this._hasStart && !this._editingStart
             ? html`
               <div class="wa-cluster wa-align-items-center wa-gap-xs">
-                <span class="endpoint-name">${this.item.name}</span>
-                <wa-button class="change-btn" appearance="plain" size="small" @click=${() => { this._editingStart = true; }}>
-                  <wa-icon name="pencil" label="Change start"></wa-icon>
-                </wa-button>
+                <icon-picker
+                  .value=${this.item.icon ?? 'location-dot'}
+                  @icon-change=${this._onStartIconChange}
+                ></icon-picker>
+                <wa-input
+                  class="name-input"
+                  size="small"
+                  .value=${this.item.name}
+                  placeholder="Start name"
+                  @input=${this._onStartNameInput}
+                >
+                  <wa-icon class="change-btn" name="pencil" slot="end" label="Change start" @click=${() => { this._editingStart = true; }}></wa-icon>
+                </wa-input>
               </div>
-              <div class="endpoint-coords">${formatCoords(this.item.latitude, this.item.longitude)}</div>
             `
             : html`
               <location-search
-                search-type="city"
                 placeholder="Search start location..."
+                .existingLocations=${extractExistingLocations(this.allItems)}
                 @location-selected=${this._onStartSelected}
               ></location-search>
             `}
@@ -164,21 +185,28 @@ export class RouteCard extends LitElement {
 
         <!-- End -->
         <div class="endpoint">
-          <span class="endpoint-label">End</span>
           ${this._hasEnd && !this._editingEnd
             ? html`
               <div class="wa-cluster wa-align-items-center wa-gap-xs">
-                <span class="endpoint-name">${this.item.dest_name ?? ''}</span>
-                <wa-button class="change-btn" appearance="plain" size="small" @click=${() => { this._editingEnd = true; }}>
-                  <wa-icon name="pencil" label="Change end"></wa-icon>
-                </wa-button>
+                <icon-picker
+                  .value=${this.item.dest_icon ?? 'location-dot'}
+                  @icon-change=${this._onEndIconChange}
+                ></icon-picker>
+                <wa-input
+                  class="name-input"
+                  size="small"
+                  .value=${this.item.dest_name ?? ''}
+                  placeholder="End name"
+                  @input=${this._onEndNameInput}
+                >
+                  <wa-icon class="change-btn" name="pencil" slot="end" label="Change end" @click=${() => { this._editingEnd = true; }}></wa-icon>
+                </wa-input>
               </div>
-              <div class="endpoint-coords">${formatCoords(this.item.dest_latitude!, this.item.dest_longitude!)}</div>
             `
             : html`
               <location-search
-                search-type="city"
                 placeholder="Search destination..."
+                .existingLocations=${extractExistingLocations(this.allItems)}
                 @location-selected=${this._onEndSelected}
               ></location-search>
             `}
@@ -193,33 +221,53 @@ export class RouteCard extends LitElement {
     `;
   }
 
-  private _renderEndpointDisplay(label: string, name: string, lat: number, lng: number) {
+  private _renderEndpointDisplay(icon: string | null, name: string) {
     return html`
       <div class="endpoint">
-        <span class="endpoint-label">${label}</span>
-        <div class="endpoint-name">${name}</div>
-        <div class="endpoint-coords">${formatCoords(lat, lng)}</div>
+        <div class="wa-cluster wa-align-items-center wa-gap-xs">
+          <wa-icon class="endpoint-icon" name=${icon ?? 'location-dot'}></wa-icon>
+          <span class="endpoint-name">${name}</span>
+        </div>
       </div>
     `;
   }
 
-  private _onStartSelected(e: CustomEvent<GeocodingResult>) {
+  private _onStartSelected(e: CustomEvent<GeocodingResult & { icon?: string | null }>) {
     e.stopPropagation();
-    const { longitude, latitude, name } = e.detail;
+    const { longitude, latitude, name, icon } = e.detail;
     this._editingStart = false;
-    // Fire individual field updates
-    this._fireMultiple({ name, lat: latitude, lng: longitude });
+    const fields: Record<string, unknown> = { name, lat: latitude, lng: longitude };
+    if (icon) fields.icon = icon;
+    this._fireMultiple(fields);
   }
 
-  private _onEndSelected(e: CustomEvent<GeocodingResult>) {
+  private _onEndSelected(e: CustomEvent<GeocodingResult & { icon?: string | null }>) {
     e.stopPropagation();
-    const { longitude, latitude, name } = e.detail;
+    const { longitude, latitude, name, icon } = e.detail;
     this._editingEnd = false;
-    this._fireMultiple({ dest_name: name, dest_lat: latitude, dest_lng: longitude });
+    const fields: Record<string, unknown> = { dest_name: name, dest_lat: latitude, dest_lng: longitude };
+    if (icon) fields.dest_icon = icon;
+    this._fireMultiple(fields);
   }
 
   private _onModeChange(e: CustomEvent) {
     this._fire('travel_mode', e.detail);
+  }
+
+  private _onStartIconChange(e: CustomEvent) {
+    this._fire('icon', e.detail);
+  }
+
+  private _onEndIconChange(e: CustomEvent) {
+    this._fire('dest_icon', e.detail);
+  }
+
+  private _onStartNameInput(e: Event) {
+    this._fire('name', (e.target as HTMLInputElement).value);
+  }
+
+  private _onEndNameInput(e: Event) {
+    this._fire('dest_name', (e.target as HTMLInputElement).value);
   }
 
   private _fire(field: string, value: unknown) {

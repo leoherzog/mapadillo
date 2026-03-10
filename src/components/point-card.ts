@@ -4,7 +4,7 @@
  * Shows icon picker, name input, and coordinates.
  * No travel mode (points are standalone, not part of a route).
  */
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Stop } from '../services/maps.js';
 import type { GeocodingResult } from '../services/geocoding.js';
@@ -12,11 +12,13 @@ import './icon-picker.js';
 import './location-search.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
-import { isDraftCoord, formatCoords } from '../utils/geo.js';
+import { isDraftCoord } from '../utils/geo.js';
+import { extractExistingLocations } from '../utils/existing-locations.js';
 
 @customElement('point-card')
 export class PointCard extends LitElement {
   @property({ type: Object }) item!: Stop;
+  @property({ type: Array }) allItems: Stop[] = [];
   @property({ type: Boolean }) readonly = false;
 
   @state() private _editingLocation = false;
@@ -39,12 +41,6 @@ export class PointCard extends LitElement {
       min-width: 0;
     }
 
-    .coords {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-      margin-top: var(--wa-space-3xs);
-    }
-
     .point-icon {
       color: var(--wa-color-brand-60);
     }
@@ -57,6 +53,10 @@ export class PointCard extends LitElement {
     .card-header {
       margin-bottom: var(--wa-space-3xs);
     }
+
+    icon-picker {
+      --wa-font-size-l: var(--wa-font-size-m);
+    }
   `];
 
   render() {
@@ -67,11 +67,6 @@ export class PointCard extends LitElement {
             <wa-icon class="point-icon" name=${this.item.icon ?? 'location-dot'}></wa-icon>
             <span class="name-input point-name">${this.item.name}</span>
           </div>
-          ${!isDraftCoord(this.item.latitude, this.item.longitude) ? html`
-            <div class="coords">
-              ${formatCoords(this.item.latitude, this.item.longitude)}
-            </div>
-          ` : nothing}
         </wa-card>
       `;
     }
@@ -98,17 +93,14 @@ export class PointCard extends LitElement {
               .value=${this.item.name}
               placeholder="Point name"
               @input=${this._onNameInput}
-            ></wa-input>
-          </div>
-          <div class="coords wa-cluster wa-align-items-center wa-gap-xs">
-            <span>${formatCoords(this.item.latitude, this.item.longitude)}</span>
-            <wa-button class="change-btn" appearance="plain" size="small" @click=${() => { this._editingLocation = true; }}>
-              <wa-icon name="pencil" label="Change location"></wa-icon>
-            </wa-button>
+            >
+              <wa-icon class="change-btn" name="pencil" slot="end" label="Change location" @click=${() => { this._editingLocation = true; }}></wa-icon>
+            </wa-input>
           </div>
         ` : html`
           <location-search
             placeholder="Search for a place to mark..."
+            .existingLocations=${extractExistingLocations(this.allItems)}
             @location-selected=${this._onLocationSelected}
           ></location-search>
         `}
@@ -134,13 +126,15 @@ export class PointCard extends LitElement {
     this._fire('icon', e.detail);
   }
 
-  private _onLocationSelected(e: CustomEvent<GeocodingResult>) {
+  private _onLocationSelected(e: CustomEvent<GeocodingResult & { icon?: string | null }>) {
     e.stopPropagation();
-    const { longitude, latitude, name } = e.detail;
+    const { longitude, latitude, name, icon } = e.detail;
     this._editingLocation = false;
+    const fields: Record<string, unknown> = { name, lat: latitude, lng: longitude };
+    if (icon) fields.icon = icon;
     this.dispatchEvent(
       new CustomEvent('item-update-batch', {
-        detail: { itemId: this.item.id, fields: { name, lat: latitude, lng: longitude } },
+        detail: { itemId: this.item.id, fields },
         bubbles: true,
         composed: true,
       }),

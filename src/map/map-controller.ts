@@ -12,6 +12,17 @@ import { isDraftCoord } from '../utils/geo.js';
 import { TRAVEL_MODES } from '../config/travel-modes.js';
 import type { MapControllerOptions } from '../config/map-themes.js';
 
+// ── Active map center (singleton for location bias) ─────────────────────────
+
+let _activeMap: maplibregl.Map | null = null;
+
+/** Returns the current center of the active map, or null if no map is active. */
+export function getActiveMapCenter(): { lat: number; lon: number } | null {
+  if (!_activeMap) return null;
+  const c = _activeMap.getCenter();
+  return { lat: c.lat, lon: c.lng };
+}
+
 // ── Mode-specific line styles ────────────────────────────────────────────────
 
 interface LineStyle {
@@ -181,6 +192,7 @@ export class MapController {
     this._labelFont = options?.labelFont ?? ['Noto Sans Bold'];
     this._labelColor = options?.labelColor ?? '#333333';
     this._labelHaloColor = options?.labelHaloColor ?? 'rgba(255, 255, 255, 0.85)';
+    _activeMap = map;
   }
 
   /**
@@ -273,13 +285,25 @@ export class MapController {
 
     for (const item of items) {
       if (item.type === 'point' && !isDraftCoord(item.latitude, item.longitude)) {
-        addFeature(item.icon ?? 'location-dot', item.name, [item.longitude, item.latitude], 1);
-      } else if (item.type === 'route') {
-        if (!routeGeometries.has(item.id)) continue;
-        addFeature(item.icon ?? 'location-dot', item.name, [item.longitude, item.latitude], 0);
-        addFeature(item.icon ?? 'location-dot', item.dest_name ?? item.name, [item.dest_longitude!, item.dest_latitude!], 0);
+        const icon = item.icon ?? 'location-dot';
+        if (icon !== 'none') addFeature(icon, item.name, [item.longitude, item.latitude], 0);
       }
     }
+    
+    for (const item of items) {
+      if (item.type === 'route') {
+        if (!routeGeometries.has(item.id)) continue;
+        const startIcon = item.icon ?? 'location-dot';
+        const endIcon = item.dest_icon ?? item.icon ?? 'location-dot';
+        if (startIcon !== 'none') addFeature(startIcon, item.name, [item.longitude, item.latitude], 1);
+        if (endIcon !== 'none') addFeature(endIcon, item.dest_name ?? item.name, [item.dest_longitude!, item.dest_latitude!], 1);
+      }
+    }
+
+    // Sort features so that lower sortKeys (points) are at the end.
+    // Combined with 'symbol-z-order': 'source', this renders them on top
+    // while preserving their placement priority (lower sortKey = higher priority).
+    markerFeatures.sort((a, b) => b.properties!.sortKey - a.properties!.sortKey);
 
     // Compute bounds once — used for both marker offset and camera fitting
     const bounds = this._computeBounds(items, routeGeometries);
@@ -327,6 +351,7 @@ export class MapController {
   destroy(): void {
     this._abortController?.abort();
     this.clear();
+    if (_activeMap === this._map) _activeMap = null;
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
@@ -373,15 +398,31 @@ export class MapController {
   }
 
   private _addMarkerLayers(features: GeoJSON.Feature<GeoJSON.Point>[]): void {
-    const sourceId = 'item-markers';
+    // Split into two layers so points always render above route endpoints.
+    // MapLibre renders later layers on top.
+    const routeFeatures = features.filter((f) => f.properties!.sortKey === 1);
+    const pointFeatures = features.filter((f) => f.properties!.sortKey === 0);
+
+    // Route endpoint markers (rendered first = below)
+    if (routeFeatures.length > 0) {
+      this._addSymbolLayer('route-markers', routeFeatures);
+    }
+
+    // Point markers (rendered second = on top)
+    if (pointFeatures.length > 0) {
+      this._addSymbolLayer('point-markers', pointFeatures);
+    }
+  }
+
+  private _addSymbolLayer(id: string, features: GeoJSON.Feature<GeoJSON.Point>[]): void {
+    const sourceId = id;
+    const layerId = `${id}-symbol`;
 
     this._map.addSource(sourceId, {
       type: 'geojson',
       data: { type: 'FeatureCollection', features },
     });
 
-    // Single symbol layer: composite icon image + name label
-    const layerId = 'item-markers-symbol';
     this._map.addLayer({
       id: layerId,
       type: 'symbol',
@@ -390,7 +431,6 @@ export class MapController {
         'icon-image': ['get', 'icon'],
         'icon-size': 0.5,
         'icon-allow-overlap': true,
-        'symbol-sort-key': ['get', 'sortKey'],
         'text-field': ['get', 'name'],
         'text-font': this._labelFont,
         'text-size': 11,

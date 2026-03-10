@@ -4,7 +4,7 @@
  * M4: Fetches owned maps from the API and displays them as thumbnail cards
  * with mini MapLibre previews.
  */
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import type { MapWithRole } from '../services/maps.js';
 import { listMaps, deleteMap } from '../services/maps.js';
@@ -27,9 +27,6 @@ export class DashboardPage extends LitElement {
   private get _sharedMaps(): MapWithRole[] {
     return this._maps.filter(m => m.role !== 'owner');
   }
-
-  @state() private _deleteError = '';
-  private _deleteErrorTimer?: ReturnType<typeof setTimeout>;
 
   @state() private _dialogOpen = false;
 
@@ -64,18 +61,6 @@ export class DashboardPage extends LitElement {
       vertical-align: -0.1em;
     }
 
-    .empty-state {
-      padding: var(--wa-space-2xl);
-      text-align: center;
-      border: var(--wa-border-width-m) dashed var(--wa-color-surface-border);
-      border-radius: var(--wa-border-radius-l);
-      color: var(--wa-color-text-quiet);
-    }
-
-    .empty-state p {
-      margin: 0;
-    }
-
     .map-grid {
       --min-column-size: 280px;
       margin-top: var(--wa-space-l);
@@ -86,20 +71,11 @@ export class DashboardPage extends LitElement {
       justify-content: center;
       padding: var(--wa-space-2xl);
     }
-
-    .delete-callout {
-      margin-bottom: var(--wa-space-m);
-    }
   `];
 
   connectedCallback(): void {
     super.connectedCallback();
     this._fetchMaps();
-  }
-
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    clearTimeout(this._deleteErrorTimer);
   }
 
   private async _fetchMaps() {
@@ -122,13 +98,6 @@ export class DashboardPage extends LitElement {
         My Trips
       </h1>
 
-      ${this._deleteError ? html`
-        <wa-callout variant="danger" class="delete-callout">
-          <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-          ${this._deleteError}
-        </wa-callout>
-      ` : nothing}
-
       ${this._loading
         ? html`<div class="loading-center"><wa-spinner></wa-spinner></div>`
         : this._fetchError
@@ -140,13 +109,14 @@ export class DashboardPage extends LitElement {
             `
           : this._myMaps.length === 0
           ? html`
-              <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
+              <wa-callout variant="neutral">
+                <wa-icon slot="icon" name="map"></wa-icon>
                 <p>No trips yet! Create your first adventure to get started.</p>
                 <wa-button variant="brand" href="/map/new" @click=${navClick('/map/new')}>
                   <wa-icon slot="start" name="plus"></wa-icon>
                   Create New Trip
                 </wa-button>
-              </div>
+              </wa-callout>
             `
           : html`
               <wa-button variant="brand" href="/map/new" @click=${navClick('/map/new')}>
@@ -169,9 +139,10 @@ export class DashboardPage extends LitElement {
         ? html`<div class="loading-center"><wa-spinner></wa-spinner></div>`
         : this._sharedMaps.length === 0
           ? html`
-              <div class="empty-state wa-stack wa-gap-m wa-align-items-center">
+              <wa-callout variant="neutral">
+                <wa-icon slot="icon" name="share-nodes"></wa-icon>
                 <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
-              </div>
+              </wa-callout>
             `
           : html`
               <div class="map-grid wa-grid wa-gap-l">
@@ -186,6 +157,8 @@ export class DashboardPage extends LitElement {
         <wa-button slot="footer" variant="danger" @click=${this._onDialogConfirm}>Delete</wa-button>
         <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onDialogCancel}>Cancel</wa-button>
       </wa-dialog>
+
+      <wa-toast></wa-toast>
     `;
   }
 
@@ -209,9 +182,12 @@ export class DashboardPage extends LitElement {
       await deleteMap(mapId);
       this._maps = this._maps.filter((m) => m.id !== mapId);
     } catch {
-      this._deleteError = 'Failed to delete trip. Please try again.';
-      clearTimeout(this._deleteErrorTimer);
-      this._deleteErrorTimer = setTimeout(() => { this._deleteError = ''; }, 5000);
+      const toast = this.renderRoot.querySelector('wa-toast');
+      toast?.create('Failed to delete trip. Please try again.', {
+        variant: 'danger',
+        icon: 'circle-xmark',
+        duration: 5000,
+      });
     }
   }
 }

@@ -30,14 +30,17 @@ export async function searchPlaces(
   query: string,
   lang = 'en',
   limit = 5,
-  layer?: string,
+  bias?: { lat: number; lon: number } | null,
 ): Promise<GeocodingResult[]> {
   const params = new URLSearchParams({
     q: query,
     lang,
     limit: String(limit),
   });
-  if (layer) params.set('layer', layer);
+  if (bias) {
+    params.set('lat', String(bias.lat));
+    params.set('lon', String(bias.lon));
+  }
 
   let data: PhotonResponse;
   try {

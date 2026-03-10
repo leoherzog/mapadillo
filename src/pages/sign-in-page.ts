@@ -143,7 +143,7 @@ export class SignInPage extends LitElement {
 
   private _renderRegister() {
     return html`
-      <div class="register-form wa-stack wa-gap-m full-width">
+      <form class="register-form wa-stack wa-gap-m full-width" @submit=${this._onRegisterSubmit}>
         <wa-input
           label="Name"
           placeholder="Your name"
@@ -163,14 +163,14 @@ export class SignInPage extends LitElement {
         ></wa-input>
         <wa-button
           variant="brand"
-          @click=${this._registerPasskey}
+          type="submit"
           ?disabled=${this._loading}
           ?loading=${this._loading}
         >
           <wa-icon slot="start" name="fingerprint" family="duotone"></wa-icon>
           Register with Passkey
         </wa-button>
-      </div>
+      </form>
 
       ${this._renderDivider()}
 
@@ -281,16 +281,14 @@ export class SignInPage extends LitElement {
     }
   }
 
-  private async _registerPasskey() {
-    if (!this._email) {
-      this._error = 'Please enter your email address';
-      return;
-    }
-    if (!this._name) {
-      this._error = 'Please enter your name';
-      return;
-    }
+  private _onRegisterSubmit(e: SubmitEvent) {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    if (!form.reportValidity()) return;
+    this._registerPasskey();
+  }
 
+  private async _registerPasskey() {
     this._loading = true;
     this._error = '';
     try {

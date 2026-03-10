@@ -17,7 +17,4 @@
 body {
   margin: 0;
   min-height: 100dvh;
-  font-family: var(--wa-font-family-body, system-ui, sans-serif);
-  background-color: var(--wa-color-surface-default);
-  color: var(--wa-color-text-normal);
 }

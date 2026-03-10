@@ -43,6 +43,10 @@ import '@web.awesome.me/webawesome-pro/dist/components/relative-time/relative-ti
 import '@web.awesome.me/webawesome-pro/dist/components/select/select.js';
 import '@web.awesome.me/webawesome-pro/dist/components/switch/switch.js';
 import '@web.awesome.me/webawesome-pro/dist/components/tooltip/tooltip.js';
+import '@web.awesome.me/webawesome-pro/dist/components/copy-button/copy-button.js';
+import '@web.awesome.me/webawesome-pro/dist/components/toast/toast.js';
+import '@web.awesome.me/webawesome-pro/dist/components/toast-item/toast-item.js';
+import '@web.awesome.me/webawesome-pro/dist/components/split-panel/split-panel.js';
 
 // Kit code comes from the package @awesome.me/kit-781a3c6be3
 setKitCode('781a3c6be3');

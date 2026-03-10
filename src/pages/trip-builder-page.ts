@@ -20,7 +20,7 @@ import {
 } from '../services/maps.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
-import { formatDistance, getDefaultUnits } from '../utils/geo.js';
+import { formatDistance, getDefaultUnits, isDraftCoord } from '../utils/geo.js';
 import { MapPageBase } from './map-page-base.js';
 import { MAP_THEMES, type MapThemeId } from '../config/map-themes.js';
 import type { MapView } from '../components/map-view.js';
@@ -438,41 +438,47 @@ export class TripBuilderPage extends MapPageBase {
   render() {
     if (this._loading) {
       return html`
-        ${this._isMobile ? nothing : html`
-          <div class="sidebar sidebar-left">
+        <wa-split-panel primary="start" position-in-pixels="380">
+          <div slot="start" class="sidebar">
             <div class="loading-center"><wa-spinner></wa-spinner></div>
           </div>
-        `}
-        <div class="map-panel">
-          <map-view></map-view>
-          ${this._isMobile ? html`
+          <div slot="end" class="map-panel">
+            <map-view></map-view>
+          </div>
+        </wa-split-panel>
+        ${this._isMobile ? html`
+          <div class="map-panel">
+            <map-view></map-view>
             <div class="map-overlay"><wa-spinner></wa-spinner></div>
-          ` : nothing}
-        </div>
+          </div>
+        ` : nothing}
       `;
     }
 
     if (this._error) {
       return html`
-        ${this._isMobile ? nothing : html`
-          <div class="sidebar sidebar-left">
+        <wa-split-panel primary="start" position-in-pixels="380">
+          <div slot="start" class="sidebar">
             <wa-callout variant="danger">
               <wa-icon slot="icon" name="circle-xmark"></wa-icon>
               ${this._error}
             </wa-callout>
           </div>
-        `}
-        <div class="map-panel">
-          <map-view></map-view>
-          ${this._isMobile ? html`
+          <div slot="end" class="map-panel">
+            <map-view></map-view>
+          </div>
+        </wa-split-panel>
+        ${this._isMobile ? html`
+          <div class="map-panel">
+            <map-view></map-view>
             <div class="map-overlay">
               <wa-callout variant="danger">
                 <wa-icon slot="icon" name="circle-xmark"></wa-icon>
                 ${this._error}
               </wa-callout>
             </div>
-          ` : nothing}
-        </div>
+          </div>
+        ` : nothing}
       `;
     }
 
@@ -482,6 +488,15 @@ export class TripBuilderPage extends MapPageBase {
     const isReadOnly = !canEdit;
 
     return html`
+      <wa-split-panel primary="start" position-in-pixels="380">
+        <div slot="start" class="sidebar">
+          ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
+        </div>
+        <div slot="end" class="map-panel">
+          <map-view @map-ready=${this._onMapReady}></map-view>
+        </div>
+      </wa-split-panel>
+
       ${this._isMobile ? html`
         <wa-drawer
           placement="start"
@@ -498,15 +513,9 @@ export class TripBuilderPage extends MapPageBase {
             ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
           </div>
         </wa-drawer>
-      ` : html`
-        <div class="sidebar sidebar-left">
-          ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
-        </div>
-      `}
 
-      <div class="map-panel">
-        <map-view @map-ready=${this._onMapReady}></map-view>
-        ${this._isMobile ? html`
+        <div class="map-panel">
+          <map-view @map-ready=${this._onMapReady}></map-view>
           <wa-button
             class="map-fab"
             variant="brand"
@@ -516,8 +525,8 @@ export class TripBuilderPage extends MapPageBase {
           >
             <wa-icon name="pencil" label="Edit trip"></wa-icon>
           </wa-button>
-        ` : nothing}
-      </div>
+        </div>
+      ` : nothing}
 
       ${isOwner ? html`
         <share-dialog
@@ -653,10 +662,15 @@ export class TripBuilderPage extends MapPageBase {
       s.id === itemId ? { ...s, [field]: value, ...extra } : s,
     );
 
+    // Propagate icon changes to all other items sharing the same coordinates
+    if ((field === 'icon' || field === 'dest_icon') && typeof value === 'string') {
+      this._propagateIconToColocated(itemId, field, value);
+    }
+
     // Icon and travel_mode save immediately; text fields debounce
-    if (field === 'icon' || field === 'travel_mode') {
+    const immediateSaveFields = new Set(['icon', 'dest_icon', 'travel_mode']);
+    if (immediateSaveFields.has(field)) {
       this._flushItemUpdate(this._map.id, itemId, { [field]: value });
-      this._debounceSyncMap();
     } else {
       const mapId = this._map.id;
       const timerKey = `${itemId}:${field}`;
@@ -669,6 +683,8 @@ export class TripBuilderPage extends MapPageBase {
         }, 1500),
       );
     }
+    // Always sync map so labels/icons update visually
+    this._debounceSyncMap();
   }
 
   /** Handle batch field updates (e.g., coordinate changes from route-card). */
@@ -685,6 +701,13 @@ export class TripBuilderPage extends MapPageBase {
     this._items = this._items.map((s) =>
       s.id === itemId ? { ...s, ...modelFields } : s,
     );
+
+    // Propagate icon changes to co-located items
+    for (const iconField of ['icon', 'dest_icon'] as const) {
+      if (typeof modelFields[iconField] === 'string') {
+        this._propagateIconToColocated(itemId, iconField, modelFields[iconField] as string);
+      }
+    }
 
     // Save immediately and sync map (coordinates changed)
     this._flushItemUpdate(this._map.id, itemId, fields);
@@ -735,6 +758,69 @@ export class TripBuilderPage extends MapPageBase {
       await reorderStops(this._map.id, order);
     } catch {
       this._setSaveStatus('error');
+    }
+  }
+
+  // ── Icon propagation ──────────────────────────────────────────────────
+
+  /**
+   * When an icon changes on a point or route endpoint, propagate the new icon
+   * to every other item that shares the exact same coordinates.
+   */
+  private _propagateIconToColocated(itemId: string, field: 'icon' | 'dest_icon', newIcon: string) {
+    const source = this._items.find((s) => s.id === itemId);
+    if (!source) return;
+
+    // Resolve the coordinates of the changed endpoint
+    let lat: number, lng: number;
+    if (field === 'dest_icon') {
+      if (source.dest_latitude == null || source.dest_longitude == null) return;
+      lat = source.dest_latitude;
+      lng = source.dest_longitude;
+    } else {
+      lat = source.latitude;
+      lng = source.longitude;
+    }
+    if (isDraftCoord(lat, lng)) return;
+
+    const eq = (a: number, b: number) => Math.abs(a - b) < 1e-5;
+
+    // Collect field updates per item
+    const updates = new Map<string, Record<string, string>>();
+    for (const item of this._items) {
+      if (item.id === itemId) continue;
+
+      // Match start endpoint (point or route start)
+      if (eq(item.latitude, lat) && eq(item.longitude, lng) && item.icon !== newIcon) {
+        const u = updates.get(item.id) ?? {};
+        u.icon = newIcon;
+        updates.set(item.id, u);
+      }
+
+      // Match dest endpoint (route end)
+      if (
+        item.dest_latitude != null && item.dest_longitude != null &&
+        eq(item.dest_latitude, lat) && eq(item.dest_longitude, lng) &&
+        item.dest_icon !== newIcon
+      ) {
+        const u = updates.get(item.id) ?? {};
+        u.dest_icon = newIcon;
+        updates.set(item.id, u);
+      }
+    }
+
+    if (updates.size === 0) return;
+
+    // Optimistic local update
+    this._items = this._items.map((s) => {
+      const fields = updates.get(s.id);
+      return fields ? { ...s, ...fields } : s;
+    });
+
+    // Persist each co-located update to the server
+    const mapId = this._map!.id;
+    for (const [id, fields] of updates) {
+      this._flushItemUpdate(mapId, id, fields);
     }
   }
 

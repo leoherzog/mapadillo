@@ -2,7 +2,7 @@ import { css } from 'lit';
 
 export const cardSharedStyles = css`
   wa-card {
-    --spacing: var(--wa-space-xs) var(--wa-space-s);
+    --spacing: var(--wa-space-s);
   }
 
   .drag-handle {
@@ -22,5 +22,11 @@ export const cardSharedStyles = css`
 
   .change-btn {
     font-size: var(--wa-font-size-xs);
+    cursor: pointer;
+    color: var(--wa-color-text-quiet);
+  }
+
+  .change-btn:hover {
+    color: var(--wa-color-brand-50);
   }
 `;

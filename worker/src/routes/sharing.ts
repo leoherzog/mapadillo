@@ -193,11 +193,12 @@ sharing.post('/:id/duplicate', async (c) => {
       const newId = crypto.randomUUID();
       newStops.push({ ...stop, id: newId, map_id: newMapId, created_at: now });
       return c.env.DB.prepare(
-        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(
         newId, newMapId, stop.position, stop.type, stop.name,
         stop.label, stop.latitude, stop.longitude, stop.icon, stop.travel_mode,
-        stop.dest_name, stop.dest_latitude, stop.dest_longitude, stop.route_geometry, now,
+        stop.dest_name, stop.dest_latitude, stop.dest_longitude,
+        stop.dest_icon, stop.route_geometry, now,
       );
     });
     await c.env.DB.batch(stmts);

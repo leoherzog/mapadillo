@@ -84,7 +84,8 @@ mapadillo/
 │   ├── styles/
 │   │   ├── theme.css               # WA Playful theme overrides, bright kid palette
 │   │   ├── global.css              # App-wide styles
-│   │   └── card-shared.ts          # Shared CSS for point-card + route-card components
+│   │   ├── card-shared.ts          # Shared CSS for point-card + route-card components
+│   │   └── page-layout.ts          # Shared page layout CSS (wa-split-panel sidebar+map on desktop, wa-drawer on mobile)
 │   ├── auth/
 │   │   ├── auth-client.ts          # Better Auth client instance + helpers
 │   │   ├── auth-guard.ts           # Route guard: redirect to sign-in if unauthenticated
@@ -96,7 +97,7 @@ mapadillo/
 │   │   └── map-export.ts           # PDF/image export logic
 │   ├── pages/
 │   │   ├── landing-page.ts
-│   │   ├── sign-in-page.ts         # OAuth buttons (Google, Facebook, Apple)
+│   │   ├── sign-in-page.ts         # OAuth buttons (Google, Facebook) + passkey registration with native form validation
 │   │   ├── dashboard-page.ts       # "My Maps" + "Shared with me" lists
 │   │   ├── trip-builder-page.ts
 │   │   ├── map-preview-page.ts
@@ -105,16 +106,16 @@ mapadillo/
 │   ├── utils/
 │   │   └── geo.ts                  # Shared utilities: isDraftCoord(), formatDistance()
 │   ├── components/
-│   │   ├── location-search.ts      # Geocoding autocomplete (configurable placeholder)
+│   │   ├── location-search.ts      # Geocoding autocomplete (location-biased via active map center)
 │   │   ├── item-list.ts            # Pointer-based drag-and-drop item list (points + routes)
 │   │   ├── point-card.ts           # Standalone point card (icon picker, name/label)
 │   │   ├── route-card.ts           # A→B route card (start/end search, travel mode, distance)
 │   │   ├── map-view.ts             # MapLibre GL wrapper component
 │   │   ├── map-card.ts             # Map thumbnail card for dashboard
-│   │   ├── share-dialog.ts         # Share settings: public/private, generate invite links, role picker
+│   │   ├── share-dialog.ts         # Share settings: public/private, invite links (wa-copy-button), role picker, wa-dialog confirmation for collaborator removal
 │   │   ├── icon-picker.ts          # Dialog-based Jelly icon picker (40 icons, 8 categories)
 │   │   ├── save-indicator.ts       # Save status display (saving/saved/error)
-│   │   ├── travel-mode-picker.ts   # 5-mode horizontal button bar
+│   │   ├── travel-mode-picker.ts   # 5-mode wa-radio-group (horizontal button appearance) with per-mode colors
 │   │   ├── export-options.ts       # PDF/image/print selection
 │   │   ├── print-order-form.ts     # Size, address, Stripe checkout
 │   │   ├── user-menu.ts            # Avatar, sign-out, account dropdown
@@ -146,7 +147,7 @@ mapadillo/
 │   │   ├── db/
 │   │   │   ├── types.ts            # Shared D1 row types: MapRow, StopRow, ShareRow
 │   │   │   ├── schema.sql          # D1 schema: users, sessions, accounts, maps, stops, map_shares
-│   │   │   └── migrations/         # D1 migration files (0001–0004)
+│   │   │   └── migrations/         # D1 migration files (0001–0006)
 │   │   └── lib/
 │   │       ├── prodigi.ts          # Prodigi API client
 │   │       └── stripe.ts           # Stripe API helpers
@@ -213,10 +214,13 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 
 #### Points (Stops)
 - Each stop has a name, optional custom label, lat/lng, and an **icon** chosen from the curated Jelly picker
-- Icon picker shows a categorized grid of ~41 confirmed Jelly icons (verified against `@awesome.me/kit-781a3c6be3` metadata):
+- The special icon value `'none'` hides the marker and label on the map entirely
+- When an icon changes on any endpoint, it propagates to all other items sharing the exact same coordinates
+- Icon picker shows a categorized grid of ~42 confirmed Jelly icons (verified against `@awesome.me/kit-781a3c6be3` metadata):
 
 | Category | Icons |
 |----------|-------|
+| No Icon | `none` (hides marker) |
 | Outdoors | `tree`, `leaf`, `flower`, `compass`, `fire`, `snowflake`, `sun`, `umbrella` |
 | Food & Drink | `utensils`, `mug-hot`, `cake-candles`, `martini-glass`, `fish` |
 | Sightseeing | `camera`, `landmark`, `globe`, `ticket`, `crown` |
@@ -285,7 +289,7 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 - No API key required. No strict rate limit (unlike Nominatim's 1 req/sec). Good autocomplete support via `/api?q=...&limit=5`
 - Worker adds KV caching for repeated queries (TTL: 7 days)
 - Response format: GeoJSON `FeatureCollection` with `properties.name`, `properties.city`, `properties.country`, etc.
-- Works globally — no geographic bias
+- Works globally — location bias from the active map center improves relevance without restricting results
 - Client debounces autocomplete input (300ms+)
 - `lang` query parameter for localized results (e.g., `lang=en`)
 
@@ -359,6 +363,9 @@ CREATE TABLE stops (
   dest_name TEXT,                 -- Routes only: destination place name
   dest_latitude REAL,             -- Routes only: destination latitude
   dest_longitude REAL,            -- Routes only: destination longitude
+  dest_icon TEXT,                 -- Routes only: destination icon (Jelly icon name or 'none')
+  show_start_label INTEGER NOT NULL DEFAULT 1,  -- Routes only: show start label on map
+  show_dest_label INTEGER NOT NULL DEFAULT 1,   -- Routes only: show dest label on map
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -560,7 +567,7 @@ mapadillo/
 │   ├── router.ts                    # DIY Lit ReactiveController router (~150 LOC)
 │   ├── nav.ts                       # navigateTo() + navClick() helpers
 │   ├── styles/
-│   │   ├── global.css               # WA CSS imports + box-sizing reset + body defaults
+│   │   ├── global.css               # WA CSS imports + box-sizing reset (body styles deferred to WA native)
 │   │   └── theme.css                # Brand orange (#ff6b00/#e05e00), rounded system fonts, larger text
 │   ├── auth/
 │   │   ├── auth-state.ts            # Stub reactive auth (getUser/setUser/onAuthChange/isAuthenticated)
@@ -818,7 +825,7 @@ Worker:
 **Sign-in page (`src/pages/sign-in-page.ts`):**
 - Two togglable modes: sign-in (returning users) and register (new users)
 - Sign-in mode: Google, Facebook, Passkey buttons
-- Register mode: Name + Email inputs → `signUp.email()` with `crypto.randomUUID()` password → `passkey.addPasskey()` → `refreshAuth()` → navigate. Risk of random password documented in code
+- Register mode: `<form>` with Name + Email inputs using native constraint validation (`form.reportValidity()`) → `signUp.email()` with `crypto.randomUUID()` password → `passkey.addPasskey()` → `refreshAuth()` → navigate. Risk of random password documented in code
 - `returnTo` query param preserved through OAuth redirect (`callbackURL`) and passkey flow (`navigateTo`)
 - Error display: `wa-callout variant="danger"`; loading state disables all buttons
 
@@ -1076,8 +1083,10 @@ mapadillo/
 - Status reflected to attribute for CSS-based visibility control
 
 **Travel mode picker (`src/components/travel-mode-picker.ts`):**
-- 5 horizontal buttons: car/drive (orange), compass/walk (green), person-biking/bike (teal), plane/plane (blue), ship/boat (navy)
-- Active mode gets colored bottom border + matching text color
+- `<wa-radio-group orientation="horizontal" size="small">` with `<wa-radio appearance="button">` for each mode
+- 5 modes: car/drive (orange), compass/walk (green), person-biking/bike (teal), plane/plane (blue), ship/boat (navy)
+- Per-mode colors applied via `:state(checked)` CSS on each radio button
+- Proper ARIA radiogroup semantics and keyboard navigation via Web Awesome
 - Fires `mode-change` with mode string
 
 **Map card (`src/components/map-card.ts`):**
@@ -1088,7 +1097,7 @@ mapadillo/
 - Cleans up MapLibre instance in `disconnectedCallback`
 
 **Trip builder page (`src/pages/trip-builder-page.ts`):**
-- Sidebar (380px) + full-screen map panel; stacks vertically below 700px
+- `<wa-split-panel>` with resizable sidebar (default 380px, min 300px, max 50%) + map panel; mobile (≤700px) uses `<wa-drawer>`
 - New trip flow: creates "Untitled Trip" server-side immediately via `createMap()`, replaces URL with `history.replaceState` (no extra history entry)
 - Metadata auto-save: 2500ms debounce on name/family_name inputs
 - Stop save strategy: `icon` and `travel_mode` save immediately; `name` and `label` debounce at 1500ms per stop per field (keyed by `${stopId}:${field}` to avoid clobbering concurrent edits)
@@ -1100,8 +1109,8 @@ mapadillo/
 **Dashboard page (`src/pages/dashboard-page.ts`):**
 - Fetches maps via `listMaps()` on connect
 - Responsive grid (`auto-fill, minmax(280px, 1fr)`) of `<map-card>` components
-- Empty state: dashed border box with "No trips yet!" + "Create New Trip" button → `/map/new`
-- Delete: `window.confirm()` → `deleteMap()` → optimistic removal from local list
+- Empty state: `<wa-callout variant="neutral">` with "No trips yet!" + "Create New Trip" button → `/map/new`
+- Delete: `window.confirm()` → `deleteMap()` → optimistic removal; errors shown via `<wa-toast>`
 - "Shared with Me" section: static empty state placeholder (M6)
 
 **Router + nav refactoring:**
@@ -1379,8 +1388,9 @@ mapadillo/
 - `POST /:id/duplicate` forks map + all stops with new UUIDs; duplicated map is always private
 
 **Share dialog (`src/components/share-dialog.ts`):**
-- `wa-dialog` with three sections: visibility toggle (wa-switch), invite link generator (role picker + generate button + copy URL), collaborators list
-- Collaborators show claimed (user info + role select + remove) vs. pending (invite URL + role badge + copy + remove)
+- `wa-dialog` with three sections: visibility toggle (wa-switch), invite link generator (role picker + generate button + `<wa-copy-button>` for URL), collaborators list
+- Collaborators show claimed (user info + role select + remove) vs. pending (invite URL + role badge + `<wa-copy-button>` + remove)
+- Collaborator removal uses a `<wa-dialog>` confirmation prompt instead of `window.confirm()`
 - Optimistic updates for role changes with revert on failure
 
 **Unified items model:**
@@ -1525,7 +1535,7 @@ worker/src/
 
 **1. Responsive design pass**
 
-- **Shared page layout styles** (`src/styles/page-layout.ts`): Extracted sidebar + map-panel layout into reusable `pageLayoutStyles` CSS. Desktop: 380px sidebar with border, flex map panel. Mobile (`≤700px`): stacks vertically, sidebar capped at `45vh`, map gets `min-height: 300px`. Also exports `familyNameStyles` (quiet subtitle text) and moved stat-row/loading-center styles here.
+- **Shared page layout styles** (`src/styles/page-layout.ts`): Extracted sidebar + map-panel layout into reusable `pageLayoutStyles` CSS. Desktop: `<wa-split-panel>` with user-resizable drag handle (default 380px, min 300px, max 50%). Mobile (`≤700px`): `<wa-drawer>` overlay, split panel hidden via CSS media query. Also exports `familyNameStyles` (quiet subtitle text) and moved stat-row/loading-center styles here.
 - **Shared heading styles** (`src/styles/heading-shared.ts`): Reusable `headingStyles` for `h1` with brand color + weight, used by landing, export, and trip-builder pages.
 - **Trip builder** (`src/pages/trip-builder-page.ts`): Extends `MapPageBase` instead of `LitElement` directly. Desktop sidebar pins header/footer with scrollable `.sidebar-scroll` middle section. Uses `pageLayoutStyles` for responsive stacking.
 - **Export page** (`src/pages/export-page.ts`): Removed ~100 lines of duplicated layout CSS, replaced with `pageLayoutStyles` + `headingStyles` + `familyNameStyles`.
@@ -1578,6 +1588,20 @@ The `_isFullHeight` getter checks `location.pathname.startsWith('/map/')` to app
 - **Worker routes** (`worker/src/routes/maps.ts`): Extracted `requireEditableMap()` and `touchMapStmt()` helpers to reduce boilerplate across CRUD endpoints. Uses shared types/icons/travel-modes from `shared/`.
 - **Landing page**: "Start Planning" button sends authenticated users to `/dashboard` instead of `/sign-in`.
 - **Design tokens**: Replaced hardcoded values (`#e05e00`, `0.9rem`, `font-weight: 900`, `color: var(--wa-color-neutral-*)`) with Web Awesome semantic tokens (`--wa-color-brand-60`, `--wa-font-size-s`, `--wa-font-weight-bold`, `--wa-color-text-quiet`) throughout all components for dark-mode compatibility.
+
+**8. Route endpoint icons & map UX improvements (post-M8)**
+
+- **Migration 0006** (`worker/src/db/migrations/0006_route_endpoint_options.sql`): Added `dest_icon TEXT`, `show_start_label INTEGER DEFAULT 1`, `show_dest_label INTEGER DEFAULT 1` to `stops` table.
+- **`dest_icon` field**: Route endpoints now have independent icons (start uses `icon`, destination uses `dest_icon`). Supported in create, update, duplicate, and list stop APIs.
+- **`'none'` icon**: Added to `shared/icons.ts`. When selected, the marker and label are hidden on the map. Icon picker shows a "No Icon" category with a ban icon.
+- **Icon propagation**: When an icon changes on any endpoint, `_propagateIconToColocated()` in trip-builder-page updates all other items sharing the exact same coordinates (within 1e-5 tolerance).
+- **Location bias**: Geocoding (`searchPlaces()`) now accepts an optional `bias` parameter (lat/lon from active map center via `getActiveMapCenter()`). Worker geocode route passes bias to Photon, with cache key rounded to ~11 km granularity. Replaced `search-type`/`layer` filtering with bias-based relevance.
+- **Map controller marker layers**: Split from single `item-markers` layer into `route-markers` (below) + `point-markers` (on top) so standalone points always render above route endpoints.
+- **Route card UX**: Both endpoints now have inline `<icon-picker>` + `<wa-input>` for name editing (with pencil icon to change location). Removed coordinate display and "Start"/"End" labels.
+- **Point card UX**: Removed coordinate display, moved edit pencil inline into the name input's end slot.
+- **Travel mode picker**: Active mode indicator changed from `border-bottom` to a downward arrow (`clip-path: polygon(...)`) for clearer visual connection to the route line.
+- **Location search**: Uses `lit/directives/repeat.js` for stable option DOM keys. Added `_updatingOptions` flag to prevent combobox from closing during Lit re-renders that replace option nodes.
+- **Removed**: `formatCoords()` from `src/utils/geo.ts`, `WEB_AWESOME_EVENTS.md` (content merged into AGENTS.md).
 
 ---
 
