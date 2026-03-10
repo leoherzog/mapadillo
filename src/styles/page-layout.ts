@@ -69,14 +69,21 @@ export const pageLayoutStyles = css`
   }
 
   .loading-center {
-    display: flex;
-    justify-content: center;
     padding: var(--wa-space-2xl);
   }
 
-  /* Responsive: hide split panel on narrow viewports */
+  /* Responsive: collapse sidebar, keep map visible */
   @media (max-width: 700px) {
     wa-split-panel {
+      --min: 0;
+      --max: 0;
+    }
+
+    wa-split-panel::part(start) {
+      display: none;
+    }
+
+    wa-split-panel::part(divider) {
       display: none;
     }
 

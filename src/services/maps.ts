@@ -28,7 +28,6 @@ const BASE = '/api/maps';
 export function createMap(data: {
   name: string;
   family_name?: string;
-  units?: string;
 }): Promise<MapData> {
   return apiPost<MapData>(BASE, data);
 }
@@ -43,7 +42,7 @@ export function getMap(id: string): Promise<MapWithRole> {
 
 export function updateMap(
   id: string,
-  data: Partial<Pick<MapData, 'name' | 'family_name' | 'style_preferences' | 'export_settings' | 'units'>>,
+  data: Partial<Pick<MapData, 'name' | 'family_name' | 'export_settings'>>,
 ): Promise<MapData> {
   return apiPut<MapData>(`${BASE}/${id}`, data);
 }

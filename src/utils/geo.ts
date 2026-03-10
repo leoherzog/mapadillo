@@ -46,19 +46,6 @@ export function haversineDistance(
   return R * haversineAngle(a, b);
 }
 
-/**
- * Detect preferred distance units based on browser locale.
- * Returns 'mi' for US, UK, and Myanmar locales; 'km' everywhere else.
- */
-export function getDefaultUnits(): 'km' | 'mi' {
-  const lang = navigator.language ?? '';
-  const region = lang.split('-')[1]?.toUpperCase();
-  if (region === 'US' || region === 'GB' || region === 'MM') return 'mi';
-  // Myanmar language tag without region suffix
-  if (lang.startsWith('my')) return 'mi';
-  return 'km';
-}
-
 /** Sanitize a string for use as a filename. */
 export function sanitizeFilename(name: string): string {
   return name

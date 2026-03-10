@@ -26,6 +26,7 @@ export class RouteCard extends LitElement {
   @property({ type: Object }) item!: Stop;
   @property({ type: Array }) allItems: Stop[] = [];
   @property({ type: Boolean }) readonly = false;
+  @property({ type: Boolean }) highlighted = false;
   @property({ type: Number }) distance = 0;
   @property() units = 'km';
 
@@ -38,7 +39,7 @@ export class RouteCard extends LitElement {
     }
 
     wa-card::part(base) {
-      border-left: 4px solid var(--border-color, var(--wa-color-surface-border));
+      border-left: var(--wa-border-width-l) solid var(--border-color, var(--wa-color-surface-border));
     }
 
     .endpoint {
@@ -117,7 +118,7 @@ export class RouteCard extends LitElement {
 
     if (this.readonly) {
       return html`
-        <wa-card style="--border-color: ${borderColor}">
+        <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'} style="--border-color: ${borderColor}">
           ${this._hasStart
             ? this._renderEndpointDisplay(this.item.icon, this.item.name)
             : nothing}
@@ -137,7 +138,7 @@ export class RouteCard extends LitElement {
     }
 
     return html`
-      <wa-card style="--border-color: ${borderColor}">
+      <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'} style="--border-color: ${borderColor}">
         <div class="header-row wa-cluster wa-align-items-center wa-gap-xs">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
           <span class="route-title">${this._title}</span>

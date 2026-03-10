@@ -184,6 +184,10 @@ export class MapController {
   private _labelFont: string[];
   private _labelColor: string;
   private _labelHaloColor: string;
+  private _onItemClick?: (itemId: string) => void;
+  private _clickHandler?: (e: maplibregl.MapMouseEvent) => void;
+  private _pointerEnterHandler?: () => void;
+  private _pointerLeaveHandler?: () => void;
 
   /** Offset marker coordinates used for rendering. Used by export to match live map positions. */
   get markerFeatures(): GeoJSON.Feature<GeoJSON.Point>[] {
@@ -195,6 +199,7 @@ export class MapController {
     this._labelFont = options?.labelFont ?? ['Noto Sans Bold'];
     this._labelColor = options?.labelColor ?? '#333333';
     this._labelHaloColor = options?.labelHaloColor ?? 'rgba(255, 255, 255, 0.85)';
+    this._onItemClick = options?.onItemClick;
     _activeMap = map;
   }
 
@@ -273,7 +278,7 @@ export class MapController {
     const coordKey = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
     const markerFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
     const usedIcons = new Set<string>();
-    const addFeature = (icon: string, name: string, lngLat: [number, number], sortKey: number) => {
+    const addFeature = (icon: string, name: string, lngLat: [number, number], sortKey: number, itemId: string) => {
       const key = coordKey(lngLat[0], lngLat[1]);
       if (placedCoords.has(key)) return;
       placedCoords.add(key);
@@ -282,24 +287,24 @@ export class MapController {
       markerFeatures.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: lngLat },
-        properties: { name, icon: imageId, sortKey },
+        properties: { name, icon: imageId, sortKey, itemId },
       });
     };
 
     for (const item of items) {
       if (item.type === 'point' && !isDraftCoord(item.latitude, item.longitude)) {
         const icon = item.icon ?? 'location-dot';
-        if (icon !== 'none') addFeature(icon, item.name, [item.longitude, item.latitude], 0);
+        if (icon !== 'none') addFeature(icon, item.name, [item.longitude, item.latitude], 0, item.id);
       }
     }
-    
+
     for (const item of items) {
       if (item.type === 'route') {
         if (!routeGeometries.has(item.id)) continue;
         const startIcon = item.icon ?? 'location-dot';
         const endIcon = item.dest_icon ?? item.icon ?? 'location-dot';
-        if (startIcon !== 'none') addFeature(startIcon, item.name, [item.longitude, item.latitude], 1);
-        if (endIcon !== 'none') addFeature(endIcon, item.dest_name ?? item.name, [item.dest_longitude!, item.dest_latitude!], 1);
+        if (startIcon !== 'none') addFeature(startIcon, item.name, [item.longitude, item.latitude], 1, item.id);
+        if (endIcon !== 'none') addFeature(endIcon, item.dest_name ?? item.name, [item.dest_longitude!, item.dest_latitude!], 1, item.id);
       }
     }
 
@@ -334,6 +339,9 @@ export class MapController {
       // true positions as the user zooms in, and spread apart when zoomed out.
       this._zoomHandler = () => this._recalculateOffsets();
       this._map.on('zoomend', this._zoomHandler);
+
+      // Set up click handlers for map→sidebar interactivity
+      this._setupClickHandlers();
     } else {
       this._originalFeatures = [];
       this._markerFeatures = [];
@@ -347,6 +355,7 @@ export class MapController {
 
   /** Remove all layers and sources. */
   clear(): void {
+    this._teardownClickHandlers();
     if (this._zoomHandler) {
       this._map.off('zoomend', this._zoomHandler);
       this._zoomHandler = undefined;
@@ -586,8 +595,8 @@ export class MapController {
       geometry: { ...f.geometry, coordinates: [...f.geometry.coordinates] as [number, number] },
     }));
 
-    const ringRadius = thresholdLat * 0.7;
-    const ringRadiusLng = thresholdLng * 0.7;
+    const ringRadius = thresholdLat;
+    const ringRadiusLng = thresholdLng;
     for (const members of clusters.values()) {
       if (members.length < 2) continue;
       // Compute centroid
@@ -598,13 +607,75 @@ export class MapController {
       }
       cLng /= members.length;
       cLat /= members.length;
-      // Distribute in ring
-      for (let k = 0; k < members.length; k++) {
-        const angle = (2 * Math.PI * k) / members.length;
-        result[members[k]].geometry.coordinates = [
-          cLng + ringRadiusLng * Math.cos(angle),
-          cLat + ringRadius * Math.sin(angle),
-        ];
+
+      const n = members.length;
+      const minGap = (2 * Math.PI) / n;
+
+      // Compute each member's bearing from centroid, sorted to preserve
+      // relative angular order when we need to redistribute.
+      const memberAngles: { idx: number; angle: number }[] = members.map((idx) => {
+        const [lng, lat] = features[idx].geometry.coordinates;
+        return { idx, angle: Math.atan2(lat - cLat, lng - cLng) };
+      });
+
+      // Detect degenerate case: all members at the exact same spot
+      const allSameSpot = memberAngles.every(({ idx }) => {
+        const [lng, lat] = features[idx].geometry.coordinates;
+        return Math.abs(lng - cLng) < 1e-10 && Math.abs(lat - cLat) < 1e-10;
+      });
+
+      if (allSameSpot) {
+        // Evenly-spaced ring for coincident points
+        for (let k = 0; k < n; k++) {
+          const angle = minGap * k;
+          result[members[k]].geometry.coordinates = [
+            cLng + ringRadiusLng * Math.cos(angle),
+            cLat + ringRadius * Math.sin(angle),
+          ];
+        }
+        continue;
+      }
+
+      // Sort by bearing so we can check/enforce angular gaps
+      memberAngles.sort((a, b) => a.angle - b.angle);
+
+      // Check if any adjacent pair (including wrap-around) is too close
+      let needsRedistribute = false;
+      for (let k = 0; k < n; k++) {
+        const next = (k + 1) % n;
+        let gap = memberAngles[next].angle - memberAngles[k].angle;
+        if (next === 0) gap += 2 * Math.PI;
+        if (gap < minGap * 0.8) {
+          needsRedistribute = true;
+          break;
+        }
+      }
+
+      if (needsRedistribute) {
+        // Bearings are bunched — redistribute evenly, preserving angular
+        // order, centered on the circular mean direction.
+        let sinSum = 0, cosSum = 0;
+        for (const { angle } of memberAngles) {
+          sinSum += Math.sin(angle);
+          cosSum += Math.cos(angle);
+        }
+        const circularMean = Math.atan2(sinSum, cosSum);
+
+        for (let k = 0; k < n; k++) {
+          const angle = circularMean + minGap * (k - (n - 1) / 2);
+          result[memberAngles[k].idx].geometry.coordinates = [
+            cLng + ringRadiusLng * Math.cos(angle),
+            cLat + ringRadius * Math.sin(angle),
+          ];
+        }
+      } else {
+        // Natural bearings are well-separated — use them directly
+        for (const { idx, angle } of memberAngles) {
+          result[idx].geometry.coordinates = [
+            cLng + ringRadiusLng * Math.cos(angle),
+            cLat + ringRadius * Math.sin(angle),
+          ];
+        }
       }
     }
 
@@ -624,5 +695,68 @@ export class MapController {
         });
       }
     }
+  }
+
+  // ── Click handlers for map→sidebar interactivity ───────────────────────
+
+  private _setupClickHandlers(): void {
+    if (!this._onItemClick) return;
+
+    // All clickable layer IDs: symbol layers + route line layers
+    const clickableLayers = this._layerIds.filter(
+      (id) => id.endsWith('-symbol') || id.startsWith('route-'),
+    );
+    if (clickableLayers.length === 0) return;
+
+    this._clickHandler = (e: maplibregl.MapMouseEvent) => {
+      // Query all clickable layers at the click point
+      const features = this._map.queryRenderedFeatures(e.point, { layers: clickableLayers });
+      if (!features.length) return;
+
+      const feature = features[0];
+      let itemId: string | undefined;
+
+      // Symbol layers carry itemId in properties
+      if (feature.properties?.itemId) {
+        itemId = feature.properties.itemId;
+      }
+      // Route line layers are named "route-{itemId}"
+      else if (feature.layer?.id?.startsWith('route-')) {
+        itemId = feature.layer.id.slice('route-'.length);
+      }
+
+      if (itemId) this._onItemClick!(itemId);
+    };
+
+    this._pointerEnterHandler = () => {
+      this._map.getCanvas().style.cursor = 'pointer';
+    };
+    this._pointerLeaveHandler = () => {
+      this._map.getCanvas().style.cursor = '';
+    };
+
+    for (const layerId of clickableLayers) {
+      this._map.on('click', layerId, this._clickHandler);
+      this._map.on('mouseenter', layerId, this._pointerEnterHandler);
+      this._map.on('mouseleave', layerId, this._pointerLeaveHandler);
+    }
+  }
+
+  private _teardownClickHandlers(): void {
+    if (!this._clickHandler) return;
+
+    const clickableLayers = this._layerIds.filter(
+      (id) => id.endsWith('-symbol') || id.startsWith('route-'),
+    );
+
+    for (const layerId of clickableLayers) {
+      this._map.off('click', layerId, this._clickHandler);
+      if (this._pointerEnterHandler) this._map.off('mouseenter', layerId, this._pointerEnterHandler);
+      if (this._pointerLeaveHandler) this._map.off('mouseleave', layerId, this._pointerLeaveHandler);
+    }
+
+    this._clickHandler = undefined;
+    this._pointerEnterHandler = undefined;
+    this._pointerLeaveHandler = undefined;
   }
 }

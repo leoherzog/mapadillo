@@ -12,6 +12,7 @@ import { formatDistance } from '../utils/geo.js';
 import { exportMap, PAPER_SIZES, type ExportFormat, type PaperSize, type Orientation } from '../map/map-export.js';
 import { updateMap } from '../services/maps.js';
 import { MapPageBase } from './map-page-base.js';
+import { getUnits, type Units } from '../units.js';
 import type { MapView } from '../components/map-view.js';
 import '../components/map-view.js';
 
@@ -43,7 +44,9 @@ export class MapPreviewPage extends MapPageBase {
   @state() private _orientation: Orientation = 'landscape';
   @state() private _exporting = false;
   @state() private _exportError = '';
+  @state() private _units: Units = getUnits();
 
+  private _onUnitsChange = () => { this._units = getUnits(); };
   private _detailsInitDone = false;
   private _settingsLoaded = false;
   private _restoring = false;
@@ -150,7 +153,7 @@ export class MapPreviewPage extends MapPageBase {
       width: min(85cqw, 85cqh * var(--pw) / var(--ph));
       aspect-ratio: var(--pw) / var(--ph);
       box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.3);
-      border: 2px dashed rgba(255, 255, 255, 0.8);
+      border: var(--wa-border-width-m) dashed rgba(255, 255, 255, 0.8);
     }
 
     /* ── Loading ──────────────────────────────────────────── */
@@ -191,12 +194,18 @@ export class MapPreviewPage extends MapPageBase {
     jpeg: 'Compressed image',
   };
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    document.addEventListener('units-change', this._onUnitsChange);
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    document.removeEventListener('units-change', this._onUnitsChange);
     clearTimeout(this._saveTimer);
   }
 
-  protected override async _onMapReady() {
+  protected override _onMapReady() {
     // Attach moveend listener before sync so it catches the initial viewport
     if (!this._moveListenerAdded) {
       const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
@@ -207,7 +216,7 @@ export class MapPreviewPage extends MapPageBase {
         });
       }
     }
-    await super._onMapReady();
+    super._onMapReady();
   }
 
   protected override async _syncMap() {
@@ -292,7 +301,7 @@ export class MapPreviewPage extends MapPageBase {
   }
 
   render() {
-    const units = this._map?.units ?? 'km';
+    const units = this._units;
 
     return html`
       <div class="map-panel">
@@ -446,7 +455,7 @@ export class MapPreviewPage extends MapPageBase {
         this._map,
         this._items,
         this._mapController.markerFeatures,
-        this._map.units ?? 'km',
+        this._units,
         this._paperSize,
         this._orientation,
         this._routeDistances,

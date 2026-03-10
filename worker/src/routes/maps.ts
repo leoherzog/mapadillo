@@ -14,7 +14,6 @@ import { VALID_TRAVEL_MODES } from '../../../shared/travel-modes.js';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const VALID_TYPES = new Set(['point', 'route']);
-const VALID_UNITS = new Set(['km', 'mi']);
 
 function isValidLat(v: number): boolean {
   return isFinite(v) && v >= -90 && v <= 90;
@@ -84,7 +83,7 @@ const maps = new Hono<AppEnv>();
 
 // POST / — create map
 maps.post('/', async (c) => {
-  let body: { name?: string; family_name?: string; units?: string };
+  let body: { name?: string; family_name?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -99,7 +98,6 @@ maps.post('/', async (c) => {
   if (body.family_name && typeof body.family_name === 'string' && body.family_name.trim().length > 200) {
     return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
   }
-  const units = (body.units && VALID_UNITS.has(body.units) ? body.units : 'km') as 'km' | 'mi';
 
   const id = crypto.randomUUID();
   const userId = c.get('user')!.id;
@@ -109,12 +107,12 @@ maps.post('/', async (c) => {
   const familyName = body.family_name?.trim() ?? null;
 
   await c.env.DB.prepare(
-    'INSERT INTO maps (id, owner_id, name, family_name, units, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).bind(id, userId, name, familyName, units, now, now).run();
+    'INSERT INTO maps (id, owner_id, name, family_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind(id, userId, name, familyName, now, now).run();
 
   const map: MapData = {
     id, owner_id: userId, name, family_name: familyName,
-    visibility: 'private', style_preferences: '{}', export_settings: '{}', units,
+    visibility: 'private', export_settings: '{}',
     created_at: now, updated_at: now,
   };
   return c.json(map, 201);
@@ -191,7 +189,7 @@ maps.put('/:id', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const allowed = ['name', 'family_name', 'style_preferences', 'export_settings', 'units'] as const;
+  const allowed = ['name', 'family_name', 'export_settings'] as const;
   const updates: string[] = [];
   const values: unknown[] = [];
 
@@ -210,10 +208,7 @@ maps.put('/:id', async (c) => {
       if (key === 'family_name' && typeof val === 'string' && val.trim().length > 200) {
         return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
       }
-      if (key === 'units' && !VALID_UNITS.has(val as string)) {
-        return c.json({ error: 'units must be "km" or "mi"' }, 400);
-      }
-      if (key === 'style_preferences' || key === 'export_settings') {
+      if (key === 'export_settings') {
         if (typeof val === 'object') val = JSON.stringify(val);
         if (typeof val === 'string' && (val as string).length > 10_000) {
           return c.json({ error: `${key} is too large` }, 400);
@@ -247,7 +242,7 @@ maps.put('/:id', async (c) => {
   for (const key of allowed) {
     if (key in body) {
       let val = body[key];
-      if ((key === 'style_preferences' || key === 'export_settings') && typeof val === 'object') val = JSON.stringify(val);
+      if (key === 'export_settings' && typeof val === 'object') val = JSON.stringify(val);
       else if (typeof val === 'string' && (key === 'name' || key === 'family_name')) val = (val as string).trim();
       updatedMap[key] = val;
     }

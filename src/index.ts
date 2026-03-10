@@ -62,6 +62,8 @@ initDarkMode();
 // Start session check immediately so the auth guard doesn't delay the
 // first protected navigation. Non-blocking — components await via initAuth().
 import { initAuth } from './auth/auth-state.js';
+import { initUnits } from './units.js';
+initUnits();
 initAuth();
 
 // ── App Shell ──────────────────────────────────────────────────────────────

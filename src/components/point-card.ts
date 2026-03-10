@@ -20,6 +20,7 @@ export class PointCard extends LitElement {
   @property({ type: Object }) item!: Stop;
   @property({ type: Array }) allItems: Stop[] = [];
   @property({ type: Boolean }) readonly = false;
+  @property({ type: Boolean }) highlighted = false;
 
   @state() private _editingLocation = false;
 
@@ -33,7 +34,7 @@ export class PointCard extends LitElement {
     }
 
     wa-card::part(base) {
-      border-left: 4px solid var(--wa-color-brand-50);
+      border-left: var(--wa-border-width-l) solid var(--wa-color-brand-50);
     }
 
     .name-input {
@@ -62,7 +63,7 @@ export class PointCard extends LitElement {
   render() {
     if (this.readonly) {
       return html`
-        <wa-card>
+        <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'}>
           <div class="wa-cluster wa-align-items-center wa-gap-xs">
             <wa-icon class="point-icon" name=${this.item.icon ?? 'location-dot'}></wa-icon>
             <span class="name-input point-name">${this.item.name}</span>
@@ -72,7 +73,7 @@ export class PointCard extends LitElement {
     }
 
     return html`
-      <wa-card>
+      <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'}>
         <div class="wa-cluster wa-align-items-center wa-gap-xs card-header">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
           <span class="name-input point-name">${this._hasLocation ? this.item.name : 'New Point'}</span>

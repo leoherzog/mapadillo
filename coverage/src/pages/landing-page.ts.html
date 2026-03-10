@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/23</span>
+                <span class='fraction'>0/26</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/23</span>
+                <span class='fraction'>0/26</span>
             </div>
         
             
@@ -179,18 +179,16 @@
 <a name='L114'></a><a href='#L114'>114</a>
 <a name='L115'></a><a href='#L115'>115</a>
 <a name='L116'></a><a href='#L116'>116</a>
-<a name='L117'></a><a href='#L117'>117</a>
-<a name='L118'></a><a href='#L118'>118</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
+<a name='L117'></a><a href='#L117'>117</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -262,7 +260,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -300,11 +298,13 @@
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import { LitElement, html, css } from 'lit';<span class="fstat-no" title="function not covered" ><span class="branch-0 cbranch-no" title="branch not covered" ></span></span></span>
 <span class="cstat-no" title="statement not covered" >import { customElement } from 'lit/decorators.js';</span>
 <span class="cstat-no" title="statement not covered" >import { navClick } from '../nav.js';</span>
+<span class="cstat-no" title="statement not covered" >import { isAuthenticated } from '../auth/auth-state.js';</span>
 <span class="cstat-no" title="statement not covered" >import { waUtilities } from '../styles/wa-utilities.js';</span>
+<span class="cstat-no" title="statement not covered" >import { headingStyles } from '../styles/heading-shared.js';</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >@customElement('landing-page')</span>
 <span class="cstat-no" title="statement not covered" >export class LandingPage extends LitElement {</span>
-<span class="cstat-no" title="statement not covered" >  static styles = [waUtilities, css`</span>
+<span class="cstat-no" title="statement not covered" >  static styles = [waUtilities, headingStyles, css`</span>
     :host {
       display: flex;
       flex-direction: column;
@@ -317,21 +317,18 @@
     }
 &nbsp;
     .hero-icon {
-      font-size: 5rem;
+      font-size: var(--wa-font-size-4xl);
       line-height: 1;
     }
 &nbsp;
     h1 {
       font-size: clamp(2rem, 6vw, 3.5rem);
-      font-weight: 900;
-      margin: 0;
-      color: var(--wa-color-brand-60, #e05e00);
       line-height: 1.15;
     }
 &nbsp;
     .tagline {
       font-size: clamp(1rem, 3vw, 1.35rem);
-      color: var(--wa-color-neutral-600);
+      color: var(--wa-color-text-quiet);
       max-width: 36ch;
       margin: 0 auto;
     }
@@ -348,17 +345,17 @@
     }
 &nbsp;
     .feature-icon {
-      font-size: 2.25rem;
+      font-size: var(--wa-font-size-2xl);
     }
 &nbsp;
     .feature-label {
       font-size: var(--wa-font-size-m);
-      font-weight: 700;
-      color: var(--wa-color-neutral-700);
+      font-weight: var(--wa-font-weight-bold);
+      color: var(--wa-color-text-normal);
     }
 &nbsp;
     .hero-icon wa-icon {
-      color: var(--wa-color-brand-60, #e05e00);
+      color: var(--wa-color-brand-60);
     }
 <span class="cstat-no" title="statement not covered" >  `];</span>
 &nbsp;
@@ -379,8 +376,8 @@
         &lt;wa-button
           size="large"
           variant="brand"
-          href="/sign-in"
-<span class="cstat-no" title="statement not covered" >          @click=${navClick('/sign-in')}</span>
+<span class="cstat-no" title="statement not covered" >          href=${isAuthenticated() ? '/dashboard' : '/sign-in'}</span>
+<span class="cstat-no" title="statement not covered" >          @click=${navClick(isAuthenticated() ? '/dashboard' : '/sign-in')}</span>
         &gt;
           &lt;wa-icon slot="start" name="paper-plane"&gt;&lt;/wa-icon&gt;
           Start Planning
@@ -421,7 +418,7 @@ declare global {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-04T18:58:15.442Z
+                at 2026-03-10T20:30:32.197Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -8,9 +8,7 @@ export interface MapData {
   name: string;
   family_name: string | null;
   visibility: 'public' | 'private';
-  style_preferences: string;
   export_settings: string;
-  units: 'km' | 'mi';
   created_at: string;
   updated_at: string;
 }

@@ -82,11 +82,11 @@ describe('updateMap', () => {
   });
 
   it('sends only provided fields', async () => {
-    mockApiPut.mockResolvedValue({ id: '1', units: 'mi' });
+    mockApiPut.mockResolvedValue({ id: '1', family_name: 'Smith' });
 
-    await updateMap('1', { units: 'mi' });
+    await updateMap('1', { family_name: 'Smith' });
 
-    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { units: 'mi' });
+    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { family_name: 'Smith' });
   });
 });
 

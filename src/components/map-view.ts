@@ -1,7 +1,7 @@
 /**
  * Map view — Lit wrapper around MapLibre GL JS.
  *
- * Uses OpenFreeMap Bright style (free OSM vector tiles, no API key).
+ * Uses OpenFreeMap Bright style with kid-drawn transform (free OSM vector tiles, no API key).
  * Renders inside shadow DOM with MapLibre's CSS adopted into the shadow root.
  */
 import { LitElement, html, css, unsafeCSS } from 'lit';
@@ -9,13 +9,11 @@ import { customElement } from 'lit/decorators.js';
 import maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import { resolveMapStyle } from '../config/map.js';
-import type { MapThemeId } from '../config/map-themes.js';
 
 @customElement('map-view')
 export class MapView extends LitElement {
   private _map?: maplibregl.Map;
   private _resizeObserver?: ResizeObserver;
-  private _currentTheme: MapThemeId = 'bright';
 
   static styles = [
     unsafeCSS(maplibreCss),
@@ -40,7 +38,7 @@ export class MapView extends LitElement {
       '.map-container',
     ) as HTMLElement;
 
-    const style = await resolveMapStyle('bright');
+    const style = await resolveMapStyle();
 
     this._map = new maplibregl.Map({
       container,
@@ -61,25 +59,6 @@ export class MapView extends LitElement {
     // Resize map when container dimensions change
     this._resizeObserver = new ResizeObserver(() => this._map?.resize());
     this._resizeObserver.observe(container);
-  }
-
-  /** Switch the map style at runtime. Fires `map-ready` when the new style loads. */
-  async setTheme(themeId: MapThemeId): Promise<void> {
-    if (themeId === this._currentTheme || !this._map) return;
-    this._currentTheme = themeId;
-
-    const style = await resolveMapStyle(themeId);
-
-    // Register listener BEFORE setStyle to avoid race condition
-    this._map.once('style.load', () => {
-      this.dispatchEvent(new CustomEvent('map-ready', { bubbles: true, composed: true }));
-    });
-
-    this._map.setStyle(style);
-  }
-
-  get currentTheme(): MapThemeId {
-    return this._currentTheme;
   }
 
   disconnectedCallback(): void {

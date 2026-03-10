@@ -16,7 +16,6 @@ import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
 import { resolveMapStyle } from '../config/map.js';
 import { HEX_COLOR_BY_MODE } from '../config/travel-modes.js';
-import { type MapThemeId, DEFAULT_THEME } from '../config/map-themes.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
@@ -66,30 +65,18 @@ export class MapCard extends LitElement {
       }
 
       .meta {
-        margin-top: 0.35rem;
+        margin-top: var(--wa-space-2xs);
         font-size: var(--wa-font-size-s);
         color: var(--wa-color-text-quiet);
       }
     `,
   ];
 
-  private _getThemeId(): MapThemeId {
-    if (!this.map.style_preferences) return DEFAULT_THEME;
-    try {
-      const prefs = typeof this.map.style_preferences === 'string'
-        ? JSON.parse(this.map.style_preferences) as Record<string, unknown>
-        : this.map.style_preferences as Record<string, unknown>;
-      return (prefs.theme as MapThemeId) ?? DEFAULT_THEME;
-    } catch {
-      return DEFAULT_THEME;
-    }
-  }
-
   protected async firstUpdated(): Promise<void> {
     const container = this.shadowRoot!.querySelector('.map-container') as HTMLElement;
     if (!container) return;
 
-    const style = await resolveMapStyle(this._getThemeId());
+    const style = await resolveMapStyle();
 
     this._mapInstance = new maplibregl.Map({
       container,

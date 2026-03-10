@@ -20,12 +20,13 @@ import {
 } from '../services/maps.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
-import { formatDistance, getDefaultUnits, isDraftCoord } from '../utils/geo.js';
+import { formatDistance, isDraftCoord } from '../utils/geo.js';
 import { MapPageBase } from './map-page-base.js';
-import { MAP_THEMES, type MapThemeId } from '../config/map-themes.js';
-import type { MapView } from '../components/map-view.js';
+import type { MapControllerOptions } from '../config/map-themes.js';
+import { getUnits, type Units } from '../units.js';
 import '../components/map-view.js';
 import '../components/item-list.js';
+import type { ItemList } from '../components/item-list.js';
 import '../components/share-dialog.js';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -44,6 +45,7 @@ export class TripBuilderPage extends MapPageBase {
   @state() private _duplicating = false;
   @state() private _isMobile = false;
   @state() private _drawerOpen = false;
+  @state() private _units: Units = getUnits();
 
   private _saveTimer?: ReturnType<typeof setTimeout>;
   private _pendingSaves = 0;
@@ -77,14 +79,6 @@ export class TripBuilderPage extends MapPageBase {
       }
     }
 
-    wa-details::part(base) {
-      border-radius: var(--wa-border-radius-m);
-    }
-
-    wa-details::part(content) {
-      padding-top: var(--wa-space-s);
-    }
-
     .section-heading {
       margin: 0;
       font-size: var(--wa-font-size-l);
@@ -102,23 +96,6 @@ export class TripBuilderPage extends MapPageBase {
 
     .add-trigger {
       width: 100%;
-    }
-
-    .section-summary {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-xs);
-      font-weight: var(--wa-font-weight-bold);
-      font-size: var(--wa-font-size-s);
-    }
-
-    .section-summary wa-icon {
-      font-size: var(--wa-font-size-m);
-      color: var(--wa-color-brand-60);
-    }
-
-    .section-summary wa-badge {
-      margin-left: auto;
     }
 
     .header-icon--saving {
@@ -142,14 +119,6 @@ export class TripBuilderPage extends MapPageBase {
       color: var(--wa-color-text-quiet);
     }
 
-    .setting-row label {
-      display: block;
-      font-weight: var(--wa-font-weight-semibold);
-      font-size: var(--wa-font-size-s);
-      color: var(--wa-color-text-normal);
-      margin-bottom: var(--wa-space-2xs);
-    }
-
     .map-fab {
       position: absolute;
       bottom: var(--wa-space-l);
@@ -157,11 +126,6 @@ export class TripBuilderPage extends MapPageBase {
       z-index: 1;
     }
 
-    .drawer-body {
-      display: flex;
-      flex-direction: column;
-      gap: var(--wa-space-m);
-    }
 
     wa-drawer {
       --size: min(85vw, 380px);
@@ -192,16 +156,20 @@ export class TripBuilderPage extends MapPageBase {
     }
   `];
 
+  private _onUnitsChange = () => { this._units = getUnits(); };
+
   connectedCallback(): void {
     super.connectedCallback();
     this._mediaQuery = window.matchMedia('(max-width: 700px)');
     this._isMobile = this._mediaQuery.matches;
     this._mediaQuery.addEventListener('change', this._boundMediaHandler);
+    document.addEventListener('units-change', this._onUnitsChange);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this._mediaQuery?.removeEventListener('change', this._boundMediaHandler);
+    document.removeEventListener('units-change', this._onUnitsChange);
     clearTimeout(this._saveTimer);
     clearTimeout(this._statusTimer);
     clearTimeout(this._routeDebounceTimer);
@@ -226,7 +194,7 @@ export class TripBuilderPage extends MapPageBase {
       this._error = '';
       this._creatingMap = true;
       try {
-        const newMap = await createMap({ name: 'Untitled Trip', units: getDefaultUnits() });
+        const newMap = await createMap({ name: 'Untitled Trip' });
         this._map = newMap;
         this._items = [];
         this._role = 'owner';
@@ -254,7 +222,7 @@ export class TripBuilderPage extends MapPageBase {
     }
   }
 
-  private _renderSidebarContent(canEdit: boolean, isOwner: boolean, isReadOnly: boolean, units: 'km' | 'mi') {
+  private _renderSidebarContent(canEdit: boolean, isOwner: boolean, isReadOnly: boolean) {
     return html`
       <div class="wa-split wa-gap-xs">
         <h1>
@@ -353,7 +321,7 @@ export class TripBuilderPage extends MapPageBase {
             .items=${this._items}
             .readonly=${isReadOnly}
             .distances=${this._routeDistances}
-            .units=${this._map?.units ?? 'km'}
+            .units=${this._units}
             @item-update=${this._onItemUpdate}
             @item-update-batch=${this._onItemUpdateBatch}
             @item-delete=${this._onItemDelete}
@@ -363,7 +331,7 @@ export class TripBuilderPage extends MapPageBase {
           ${this._totalDistance ? html`
             <div class="stat-row wa-cluster wa-gap-xs wa-align-items-center">
               <span class="stat-label">Total distance:</span>
-              <span class="stat-value">${formatDistance(this._totalDistance, units)}</span>
+              <span class="stat-value">${formatDistance(this._totalDistance, this._units)}</span>
             </div>
           ` : nothing}
 
@@ -376,39 +344,6 @@ export class TripBuilderPage extends MapPageBase {
         </div>
       </div>
 
-      <div class="wa-stack wa-gap-xs">
-        ${canEdit ? html`
-          <wa-details>
-            <span slot="summary" class="section-summary">
-              <wa-icon name="gear"></wa-icon>
-              Settings
-            </span>
-            <div class="wa-stack wa-gap-m">
-              <div class="setting-row">
-                <label>Units</label>
-                <wa-radio-group
-                  .value=${units}
-                  @change=${this._onUnitsChange}
-                >
-                  <wa-radio appearance="button" value="km">Kilometers</wa-radio>
-                  <wa-radio appearance="button" value="mi">Miles</wa-radio>
-                </wa-radio-group>
-              </div>
-              <div class="setting-row">
-                <label>Map theme</label>
-                <wa-radio-group
-                  .value=${this._getThemeId()}
-                  @change=${this._onThemeChange}
-                >
-                  ${MAP_THEMES.map(t => html`
-                    <wa-radio appearance="button" value=${t.id}>${t.name}</wa-radio>
-                  `)}
-                </wa-radio-group>
-              </div>
-            </div>
-          </wa-details>
-        ` : nothing}
-      </div>
     `;
   }
 
@@ -440,18 +375,13 @@ export class TripBuilderPage extends MapPageBase {
       return html`
         <wa-split-panel primary="start" position-in-pixels="380">
           <div slot="start" class="sidebar">
-            <div class="loading-center"><wa-spinner></wa-spinner></div>
+            <div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>
           </div>
           <div slot="end" class="map-panel">
             <map-view></map-view>
-          </div>
-        </wa-split-panel>
-        ${this._isMobile ? html`
-          <div class="map-panel">
-            <map-view></map-view>
             <div class="map-overlay"><wa-spinner></wa-spinner></div>
           </div>
-        ` : nothing}
+        </wa-split-panel>
       `;
     }
 
@@ -466,11 +396,6 @@ export class TripBuilderPage extends MapPageBase {
           </div>
           <div slot="end" class="map-panel">
             <map-view></map-view>
-          </div>
-        </wa-split-panel>
-        ${this._isMobile ? html`
-          <div class="map-panel">
-            <map-view></map-view>
             <div class="map-overlay">
               <wa-callout variant="danger">
                 <wa-icon slot="icon" name="circle-xmark"></wa-icon>
@@ -478,11 +403,10 @@ export class TripBuilderPage extends MapPageBase {
               </wa-callout>
             </div>
           </div>
-        ` : nothing}
+        </wa-split-panel>
       `;
     }
 
-    const units = this._map?.units ?? 'km';
     const canEdit = this._role === 'owner' || this._role === 'editor';
     const isOwner = this._role === 'owner';
     const isReadOnly = !canEdit;
@@ -490,10 +414,21 @@ export class TripBuilderPage extends MapPageBase {
     return html`
       <wa-split-panel primary="start" position-in-pixels="380">
         <div slot="start" class="sidebar">
-          ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
+          ${this._renderSidebarContent(canEdit, isOwner, isReadOnly)}
         </div>
         <div slot="end" class="map-panel">
           <map-view @map-ready=${this._onMapReady}></map-view>
+          ${this._isMobile ? html`
+            <wa-button
+              class="map-fab"
+              variant="brand"
+              size="large"
+              pill
+              @click=${() => { this._drawerOpen = true; }}
+            >
+              <wa-icon name="pencil" label="Edit trip"></wa-icon>
+            </wa-button>
+          ` : nothing}
         </div>
       </wa-split-panel>
 
@@ -509,23 +444,10 @@ export class TripBuilderPage extends MapPageBase {
             Trip Builder
           </span>
           ${this._renderDrawerHeaderActions(isOwner)}
-          <div class="drawer-body">
-            ${this._renderSidebarContent(canEdit, isOwner, isReadOnly, units)}
+          <div class="wa-stack wa-gap-m">
+            ${this._renderSidebarContent(canEdit, isOwner, isReadOnly)}
           </div>
         </wa-drawer>
-
-        <div class="map-panel">
-          <map-view @map-ready=${this._onMapReady}></map-view>
-          <wa-button
-            class="map-fab"
-            variant="brand"
-            size="large"
-            pill
-            @click=${() => { this._drawerOpen = true; }}
-          >
-            <wa-icon name="pencil" label="Edit trip"></wa-icon>
-          </wa-button>
-        </div>
       ` : nothing}
 
       ${isOwner ? html`
@@ -562,38 +484,6 @@ export class TripBuilderPage extends MapPageBase {
     this._debounceSave();
   }
 
-  private _onUnitsChange(e: Event) {
-    const value = (e.target as HTMLInputElement).value as 'km' | 'mi';
-    if (this._map) this._map = { ...this._map, units: value };
-    this._debounceSave();
-    // Distance display updates reactively (re-render)
-  }
-
-  private async _onThemeChange(e: Event) {
-    const themeId = (e.target as HTMLInputElement).value as MapThemeId;
-    if (!this._map) return;
-
-    // Update style_preferences in local state
-    let prefs: Record<string, unknown> = {};
-    try {
-      prefs = this._map.style_preferences ? JSON.parse(this._map.style_preferences) : {};
-    } catch { /* empty */ }
-    prefs.theme = themeId;
-    this._map = { ...this._map, style_preferences: JSON.stringify(prefs) };
-
-    // Switch the map theme
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (mapView) {
-      // Update the controller options for the new theme
-      this._mapController?.destroy();
-      this._mapController = undefined;
-      await mapView.setTheme(themeId);
-      // map-ready event will re-create controller and sync
-    }
-
-    this._debounceSave();
-  }
-
   private _debounceSave() {
     clearTimeout(this._saveTimer);
     this._setSaveStatus('saving');
@@ -607,8 +497,6 @@ export class TripBuilderPage extends MapPageBase {
       await updateMap(this._map.id, {
         name: this._map.name,
         family_name: this._map.family_name,
-        units: this._map.units,
-        style_preferences: this._map.style_preferences,
       });
       this._setSaveStatus('saved');
     } catch {
@@ -858,6 +746,28 @@ export class TripBuilderPage extends MapPageBase {
     } finally {
       this._duplicating = false;
     }
+  }
+
+  // ── Map → sidebar interactivity ──────────────────────────────────────
+
+  protected override _getExtraControllerOptions(): Partial<MapControllerOptions> {
+    return {
+      onItemClick: (itemId: string) => this._onMapItemClick(itemId),
+    };
+  }
+
+  private async _onMapItemClick(itemId: string) {
+    // On mobile, open the drawer first so the item-list is visible
+    if (this._isMobile) {
+      this._drawerOpen = true;
+      await this.updateComplete;
+      // Wait for drawer show animation to start so item-list is in the DOM
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+
+    const selector = this._isMobile ? 'wa-drawer item-list' : '.sidebar item-list';
+    const itemList = this.shadowRoot?.querySelector(selector) as ItemList | null;
+    itemList?.scrollToItem(itemId);
   }
 
   // ── Map sync (routes + markers) ────────────────────────────────────────

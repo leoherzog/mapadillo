@@ -12,6 +12,7 @@ import type { PropertyValues } from 'lit';
 import type { Stop } from '../services/maps.js';
 import './point-card.js';
 import './route-card.js';
+import '@web.awesome.me/webawesome-pro/dist/components/animation/animation.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('item-list')
@@ -21,6 +22,7 @@ export class ItemList extends LitElement {
   @property({ type: Object }) distances: Map<string, number> = new Map();
   @property() units = 'km';
 
+  @state() private _highlightedItemId = '';
   @state() private _draggedIndex = -1;
   @state() private _dropTargetIndex = -1;
 
@@ -48,7 +50,7 @@ export class ItemList extends LitElement {
     .drop-indicator {
       height: var(--wa-border-width-l);
       background: var(--wa-color-brand-50);
-      border-radius: 2px;
+      border-radius: var(--wa-border-radius-s);
       margin: -2px 0;
       pointer-events: none;
     }
@@ -86,20 +88,31 @@ export class ItemList extends LitElement {
             : nothing}
           <div
             class="card-wrapper ${this._draggedIndex === i ? 'dragging' : ''}"
+            data-item-id=${item.id}
           >
-            ${item.type === 'route'
-              ? html`<route-card
-                  .item=${item}
-                  .allItems=${this.items}
-                  ?readonly=${this.readonly}
-                  .distance=${this.distances.get(item.id) ?? 0}
-                  .units=${this.units}
-                ></route-card>`
-              : html`<point-card
-                  .item=${item}
-                  .allItems=${this.items}
-                  ?readonly=${this.readonly}
-                ></point-card>`}
+            <wa-animation
+              name="pulse"
+              duration="600"
+              iterations="2"
+              ?play=${this._highlightedItemId === item.id}
+              @wa-finish=${this._onHighlightFinish}
+            >
+              ${item.type === 'route'
+                ? html`<route-card
+                    .item=${item}
+                    .allItems=${this.items}
+                    ?readonly=${this.readonly}
+                    ?highlighted=${this._highlightedItemId === item.id}
+                    .distance=${this.distances.get(item.id) ?? 0}
+                    .units=${this.units}
+                  ></route-card>`
+                : html`<point-card
+                    .item=${item}
+                    .allItems=${this.items}
+                    ?readonly=${this.readonly}
+                    ?highlighted=${this._highlightedItemId === item.id}
+                  ></point-card>`}
+            </wa-animation>
           </div>
           ${this._dropTargetIndex === this.items.length && i === this.items.length - 1
             ? html`<div class="drop-indicator"></div>`
@@ -107,6 +120,21 @@ export class ItemList extends LitElement {
         `)}
       </div>
     `;
+  }
+
+  /** Scroll the card for the given item into view and briefly highlight it. */
+  scrollToItem(itemId: string): void {
+    this._highlightedItemId = itemId;
+
+    // After Lit renders the play attribute, scroll the wrapper into view
+    this.updateComplete.then(() => {
+      const wrapper = this.shadowRoot?.querySelector(`[data-item-id="${itemId}"]`) as HTMLElement | null;
+      wrapper?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+
+  private _onHighlightFinish() {
+    this._highlightedItemId = '';
   }
 
   protected firstUpdated(): void {

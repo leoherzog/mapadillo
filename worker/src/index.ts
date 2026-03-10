@@ -20,6 +20,7 @@ import { geocodeHandler } from './routes/geocode.js';
 import { routeHandler } from './routes/route.js';
 import maps from './routes/maps.js';
 import sharing, { claimShareHandler } from './routes/sharing.js';
+import userPreferences from './routes/user-preferences.js';
 import type { AppEnv } from './types.js';
 import type { Context } from 'hono';
 
@@ -88,6 +89,10 @@ app.use('/api/*', async (c, next) => {
   }
   return c.json({ error: 'Forbidden' }, 403);
 });
+
+// ── User preferences ─────────────────────────────────────────────────────
+app.use('/api/user/*', requireAuth);
+app.route('/api/user', userPreferences);
 
 // ── Claim share route (requires auth, outside /api/maps) ─────────────────
 app.post('/api/shares/claim/:token', requireAuth, claimShareHandler);

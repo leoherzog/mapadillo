@@ -87,9 +87,6 @@ export class AppShell extends LitElement {
       font-size: var(--wa-font-size-xl);
     }
 
-    .header-nav {
-      margin-left: auto;
-    }
 
     .footer-inner {
       display: block;
@@ -184,13 +181,13 @@ export class AppShell extends LitElement {
 
     return html`
       <wa-page disable-sticky="header">
-        <div slot="header" class="header-inner wa-cluster wa-align-items-center wa-gap-m">
+        <div slot="header" class="header-inner wa-split wa-align-items-center wa-gap-m">
           <a class="logo wa-cluster wa-align-items-center wa-gap-xs" href="/" @click=${navClick('/')}>
             <wa-icon name="map"></wa-icon>
             Mapadillo
           </a>
 
-          <nav class="header-nav wa-cluster wa-align-items-center wa-gap-s" aria-label="Site navigation">
+          <nav class="wa-cluster wa-align-items-center wa-gap-s" aria-label="Site navigation">
             ${this._user
               ? html`<user-menu .user=${this._user}></user-menu>`
               : html`

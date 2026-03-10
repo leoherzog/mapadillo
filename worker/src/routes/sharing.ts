@@ -176,10 +176,10 @@ sharing.post('/:id/duplicate', async (c) => {
   const now = new Date().toISOString();
 
   await c.env.DB.prepare(
-    'INSERT INTO maps (id, owner_id, name, family_name, visibility, style_preferences, export_settings, units, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO maps (id, owner_id, name, family_name, visibility, export_settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   ).bind(
     newMapId, userId, `${map.name} (copy)`, map.family_name,
-    'private', map.style_preferences, map.export_settings, map.units, now, now,
+    'private', map.export_settings, now, now,
   ).run();
 
   // Copy all stops with new IDs
@@ -207,8 +207,7 @@ sharing.post('/:id/duplicate', async (c) => {
   const newMap: MapData = {
     id: newMapId, owner_id: userId, name: `${map.name} (copy)`,
     family_name: map.family_name, visibility: 'private',
-    style_preferences: map.style_preferences,
-    export_settings: map.export_settings, units: map.units,
+    export_settings: map.export_settings,
     created_at: now, updated_at: now,
   };
   return c.json({ ...newMap, stops: newStops }, 201);

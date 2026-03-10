@@ -67,8 +67,6 @@ export class DashboardPage extends LitElement {
     }
 
     .loading-center {
-      display: flex;
-      justify-content: center;
       padding: var(--wa-space-2xl);
     }
   `];
@@ -99,7 +97,7 @@ export class DashboardPage extends LitElement {
       </h1>
 
       ${this._loading
-        ? html`<div class="loading-center"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
         : this._fetchError
           ? html`
               <wa-callout variant="danger">
@@ -136,7 +134,7 @@ export class DashboardPage extends LitElement {
       </h2>
 
       ${this._loading
-        ? html`<div class="loading-center"><wa-spinner></wa-spinner></div>`
+        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
         : this._sharedMaps.length === 0
           ? html`
               <wa-callout variant="neutral">
