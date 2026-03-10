@@ -124,6 +124,10 @@ class MapExporter extends MapGeneratorBase {
       bearing: sourceMap.getBearing(),
       pitch: sourceMap.getPitch(),
       pixelRatio: this._renderPixelRatio,
+      // MapLibre v5 defaults maxCanvasSize to [4096, 4096] and silently
+      // clamps pixelRatio to fit.  Override to match our intended export
+      // dimensions so the canvas is not downscaled behind our back.
+      maxCanvasSize: [this.width, this.height] as [number, number],
       canvasContextAttributes: { preserveDrawingBuffer: true },
       interactive: false,
       attributionControl: false,
@@ -223,7 +227,10 @@ class MapExporter extends MapGeneratorBase {
 
             // Draw composite marker images onto the output canvas (they are not part of the style).
             // tempMap.project() returns CSS pixel coords — scale by pixelRatio for canvas coords.
-            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures, this._renderPixelRatio)
+            // Use the actual canvas-to-CSS ratio rather than the pre-computed _renderPixelRatio
+            // in case MapLibre clamped the pixel ratio (e.g. due to GPU limits).
+            const actualPixelRatio = canvas.width / container.clientWidth;
+            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures, actualPixelRatio)
               .then(() => { cleanup(); resolve(outputCanvas); })
               .catch(() => { cleanup(); reject(new Error(RENDER_ERROR_MSG)); });
           } catch {
