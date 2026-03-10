@@ -43,7 +43,7 @@ export function getMap(id: string): Promise<MapWithRole> {
 
 export function updateMap(
   id: string,
-  data: Partial<Pick<MapData, 'name' | 'family_name' | 'style_preferences' | 'units'>>,
+  data: Partial<Pick<MapData, 'name' | 'family_name' | 'style_preferences' | 'export_settings' | 'units'>>,
 ): Promise<MapData> {
   return apiPut<MapData>(`${BASE}/${id}`, data);
 }

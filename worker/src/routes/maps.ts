@@ -114,7 +114,7 @@ maps.post('/', async (c) => {
 
   const map: MapData = {
     id, owner_id: userId, name, family_name: familyName,
-    visibility: 'private', style_preferences: '{}', units,
+    visibility: 'private', style_preferences: '{}', export_settings: '{}', units,
     created_at: now, updated_at: now,
   };
   return c.json(map, 201);
@@ -191,7 +191,7 @@ maps.put('/:id', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const allowed = ['name', 'family_name', 'style_preferences', 'units'] as const;
+  const allowed = ['name', 'family_name', 'style_preferences', 'export_settings', 'units'] as const;
   const updates: string[] = [];
   const values: unknown[] = [];
 
@@ -213,8 +213,11 @@ maps.put('/:id', async (c) => {
       if (key === 'units' && !VALID_UNITS.has(val as string)) {
         return c.json({ error: 'units must be "km" or "mi"' }, 400);
       }
-      if (key === 'style_preferences' && typeof val === 'object') {
-        val = JSON.stringify(val);
+      if (key === 'style_preferences' || key === 'export_settings') {
+        if (typeof val === 'object') val = JSON.stringify(val);
+        if (typeof val === 'string' && (val as string).length > 10_000) {
+          return c.json({ error: `${key} is too large` }, 400);
+        }
       }
       updates.push(`${key} = ?`);
       values.push(val);
@@ -244,7 +247,7 @@ maps.put('/:id', async (c) => {
   for (const key of allowed) {
     if (key in body) {
       let val = body[key];
-      if (key === 'style_preferences' && typeof val === 'object') val = JSON.stringify(val);
+      if ((key === 'style_preferences' || key === 'export_settings') && typeof val === 'object') val = JSON.stringify(val);
       else if (typeof val === 'string' && (key === 'name' || key === 'family_name')) val = (val as string).trim();
       updatedMap[key] = val;
     }

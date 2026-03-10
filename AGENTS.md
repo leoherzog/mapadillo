@@ -83,7 +83,7 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 - **Lib:** `worker/src/lib/` — `hash.ts` (crypto hashing helpers). *Note: Prodigi and Stripe helpers are planned but not yet implemented.*
 - **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic)
 - **DB types:** `worker/src/db/types.ts` re-exports from `shared/types.ts`
-- **Migrations:** `worker/src/db/migrations/` — 6 migrations (0001–0006)
+- **Migrations:** `worker/src/db/migrations/` — 7 migrations (0001–0007)
 
 ### Cloudflare bindings (`worker/wrangler.toml`)
 
@@ -107,6 +107,8 @@ Two stop types stored in the `stops` table:
 Each endpoint (point or route start/dest) has an icon from the curated Jelly set. The special icon value `'none'` hides the marker and label on the map entirely. When an icon changes, it propagates to all other items sharing the exact same coordinates.
 
 `travel_mode` is stored on the destination stop (NULL on the first stop). Five modes: `drive`, `walk`, `bike`, `plane`, `boat`. Plane = great-circle arc (client-computed, no ORS call). Boat = straight line.
+
+`export_settings` (JSON TEXT on `maps` table) persists export preferences and map viewport per map: `{ format, paperSize, orientation, center, zoom, bearing, pitch }`. Saved with 1s debounce on the preview/export page; restored on next visit (viewport via `jumpTo()` after `drawItems` auto-fit). Only saved for authenticated owners/editors. Follows the same pattern as `style_preferences`.
 
 ### CSRF protection
 

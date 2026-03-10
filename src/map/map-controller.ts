@@ -178,6 +178,9 @@ export class MapController {
   private _sourceIds: string[] = [];
   private _abortController?: AbortController;
   private _markerFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  /** Original (true lat/lng) features before any overlap offset. */
+  private _originalFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  private _zoomHandler?: () => void;
   private _labelFont: string[];
   private _labelColor: string;
   private _labelHaloColor: string;
@@ -305,12 +308,14 @@ export class MapController {
     // while preserving their placement priority (lower sortKey = higher priority).
     markerFeatures.sort((a, b) => b.properties!.sortKey - a.properties!.sortKey);
 
-    // Compute bounds once — used for both marker offset and camera fitting
+    // Compute bounds once — used for initial offset calculation and camera fitting
     const bounds = this._computeBounds(items, routeGeometries);
 
     if (markerFeatures.length > 0) {
-      let offsetFeatures = markerFeatures;
+      this._originalFeatures = markerFeatures;
 
+      // Calculate initial offsets using the camera zoom that fitBounds will target
+      let offsetFeatures = markerFeatures;
       if (bounds && markerFeatures.length >= 2) {
         const camera = this._map.cameraForBounds(bounds, { padding: 60, maxZoom: 14 });
         if (camera?.zoom != null && camera.center) {
@@ -324,7 +329,13 @@ export class MapController {
       this._markerFeatures = offsetFeatures;
       await this._registerMarkerImages(usedIcons);
       this._addMarkerLayers(offsetFeatures);
+
+      // Recalculate offsets on every zoom change so markers converge to
+      // true positions as the user zooms in, and spread apart when zoomed out.
+      this._zoomHandler = () => this._recalculateOffsets();
+      this._map.on('zoomend', this._zoomHandler);
     } else {
+      this._originalFeatures = [];
       this._markerFeatures = [];
     }
 
@@ -336,6 +347,10 @@ export class MapController {
 
   /** Remove all layers and sources. */
   clear(): void {
+    if (this._zoomHandler) {
+      this._map.off('zoomend', this._zoomHandler);
+      this._zoomHandler = undefined;
+    }
     for (const id of this._layerIds) {
       if (this._map.getLayer(id)) this._map.removeLayer(id);
     }
@@ -344,6 +359,7 @@ export class MapController {
     }
     this._layerIds = [];
     this._sourceIds = [];
+    this._originalFeatures = [];
     this._markerFeatures = [];
   }
 
@@ -431,6 +447,7 @@ export class MapController {
         'icon-image': ['get', 'icon'],
         'icon-size': 0.5,
         'icon-allow-overlap': true,
+        'icon-padding': 2,
         'text-field': ['get', 'name'],
         'text-font': this._labelFont,
         'text-size': 11,
@@ -442,8 +459,7 @@ export class MapController {
         'text-justify': 'auto',
         'text-max-width': 10,
         'text-overlap': 'always',
-        'text-padding': 1,
-        'text-optional': true,
+        'text-padding': 4,
       },
       paint: {
         'text-color': this._labelColor,
@@ -493,9 +509,31 @@ export class MapController {
     return coordCount >= 2 ? bounds : null;
   }
 
+  /** Recalculate marker offsets for the current zoom and update GeoJSON sources. */
+  private _recalculateOffsets(): void {
+    if (this._originalFeatures.length < 2) return;
+
+    const zoom = this._map.getZoom();
+    const centerLat = this._map.getCenter().lat;
+    const offsetFeatures = this._offsetOverlappingFeatures(this._originalFeatures, zoom, centerLat);
+    this._markerFeatures = offsetFeatures;
+
+    // Update existing GeoJSON sources in-place
+    const routeFeatures = offsetFeatures.filter((f) => f.properties!.sortKey === 1);
+    const pointFeatures = offsetFeatures.filter((f) => f.properties!.sortKey === 0);
+
+    const routeSrc = this._map.getSource('route-markers') as maplibregl.GeoJSONSource | undefined;
+    if (routeSrc) routeSrc.setData({ type: 'FeatureCollection', features: routeFeatures });
+
+    const pointSrc = this._map.getSource('point-markers') as maplibregl.GeoJSONSource | undefined;
+    if (pointSrc) pointSrc.setData({ type: 'FeatureCollection', features: pointFeatures });
+  }
+
   /**
    * Offset features that overlap at the given zoom so all icons are visible.
    * Groups nearby features into clusters and distributes them in a ring.
+   * At high zoom levels the pixel threshold maps to negligible geographic
+   * distance, so markers converge to their true lat/lng positions.
    */
   private _offsetOverlappingFeatures(
     features: GeoJSON.Feature<GeoJSON.Point>[],
@@ -534,6 +572,13 @@ export class MapController {
       if (!group) { group = []; clusters.set(root, group); }
       group.push(i);
     }
+
+    // Check if any cluster has >1 member — if not, skip the copy
+    let hasOverlap = false;
+    for (const members of clusters.values()) {
+      if (members.length > 1) { hasOverlap = true; break; }
+    }
+    if (!hasOverlap) return features;
 
     // Deep-copy features and offset clusters with size > 1
     const result = features.map((f) => ({

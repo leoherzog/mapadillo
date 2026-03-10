@@ -2,7 +2,7 @@
  * Map preview & export page — full-screen map with floating overlay for
  * trip info, stats, and export controls.
  */
-import { html, css, nothing } from 'lit';
+import { html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { familyNameStyles } from '../styles/page-layout.js';
@@ -10,9 +10,20 @@ import { navigateTo } from '../nav.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { formatDistance } from '../utils/geo.js';
 import { exportMap, PAPER_SIZES, type ExportFormat, type PaperSize, type Orientation } from '../map/map-export.js';
+import { updateMap } from '../services/maps.js';
 import { MapPageBase } from './map-page-base.js';
 import type { MapView } from '../components/map-view.js';
 import '../components/map-view.js';
+
+interface ExportSettings {
+  format?: ExportFormat;
+  paperSize?: PaperSize;
+  orientation?: Orientation;
+  center?: [number, number];
+  zoom?: number;
+  bearing?: number;
+  pitch?: number;
+}
 
 const PAPER_SIZE_LABELS: Partial<Record<PaperSize, string>> = {
   letter: 'Letter (8.5 \u00d7 11\u2033)',
@@ -32,6 +43,12 @@ export class MapPreviewPage extends MapPageBase {
   @state() private _orientation: Orientation = 'landscape';
   @state() private _exporting = false;
   @state() private _exportError = '';
+
+  private _detailsInitDone = false;
+  private _settingsLoaded = false;
+  private _restoring = false;
+  private _moveListenerAdded = false;
+  private _saveTimer?: ReturnType<typeof setTimeout>;
 
   static styles = [waUtilities, familyNameStyles, css`
     :host {
@@ -74,6 +91,24 @@ export class MapPreviewPage extends MapPageBase {
       font-size: var(--wa-font-size-m);
       font-weight: var(--wa-font-weight-bold);
       color: var(--wa-color-text-normal);
+    }
+
+    wa-details {
+      --spacing: 0;
+    }
+
+    wa-details::part(header) {
+      padding: 0;
+    }
+
+    wa-details::part(content) {
+      padding-top: var(--wa-space-s);
+    }
+
+    .overlay-summary h2 {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .stat-label {
@@ -156,6 +191,106 @@ export class MapPreviewPage extends MapPageBase {
     jpeg: 'Compressed image',
   };
 
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    clearTimeout(this._saveTimer);
+  }
+
+  protected override async _onMapReady() {
+    // Attach moveend listener before sync so it catches the initial viewport
+    if (!this._moveListenerAdded) {
+      const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+      if (mapView?.map) {
+        this._moveListenerAdded = true;
+        mapView.map.on('moveend', () => {
+          if (this._settingsLoaded && !this._restoring) this._scheduleSave();
+        });
+      }
+    }
+    await super._onMapReady();
+  }
+
+  protected override async _syncMap() {
+    await super._syncMap();
+    this._restoreSettings();
+  }
+
+  private _restoreSettings() {
+    if (this._settingsLoaded || !this._map) return;
+    this._settingsLoaded = true;
+
+    let settings: ExportSettings = {};
+    try {
+      const raw = this._map.export_settings;
+      if (raw && raw !== '{}') settings = JSON.parse(raw);
+    } catch { /* use defaults */ }
+
+    if (settings.format) this._format = settings.format;
+    if (settings.paperSize) this._paperSize = settings.paperSize;
+    if (settings.orientation) this._orientation = settings.orientation;
+
+    // Restore saved viewport (overrides the auto-fit from drawItems).
+    // Set _restoring flag to suppress the moveend-triggered save.
+    if (settings.center && settings.zoom != null) {
+      const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+      if (mapView?.map) {
+        this._restoring = true;
+        mapView.map.jumpTo({
+          center: settings.center,
+          zoom: settings.zoom,
+          bearing: settings.bearing ?? 0,
+          pitch: settings.pitch ?? 0,
+        });
+        this._restoring = false;
+      }
+    }
+  }
+
+  private _scheduleSave() {
+    if (!isAuthenticated() || !this._map) return;
+    const role = (this._map as unknown as { role?: string }).role;
+    if (role !== 'owner' && role !== 'editor') return;
+    clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => this._saveSettings(), 1000);
+  }
+
+  private async _saveSettings() {
+    if (!this._map) return;
+    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+    const map = mapView?.map;
+
+    const settings: ExportSettings = {
+      format: this._format,
+      paperSize: this._paperSize,
+      orientation: this._orientation,
+    };
+
+    if (map) {
+      const center = map.getCenter();
+      settings.center = [center.lng, center.lat];
+      settings.zoom = map.getZoom();
+      settings.bearing = map.getBearing();
+      settings.pitch = map.getPitch();
+    }
+
+    try {
+      await updateMap(this.mapId, { export_settings: JSON.stringify(settings) });
+    } catch { /* user may not have edit permission */ }
+  }
+
+  protected override updated(changed: PropertyValues) {
+    super.updated(changed);
+    if (!this._detailsInitDone && !this._loading && !this._error) {
+      const details = this.shadowRoot?.querySelector('wa-details') as HTMLElement & { open: boolean } | null;
+      if (details) {
+        this._detailsInitDone = true;
+        if (!window.matchMedia('(max-width: 700px)').matches) {
+          details.open = true;
+        }
+      }
+    }
+  }
+
   render() {
     const units = this._map?.units ?? 'km';
 
@@ -179,89 +314,94 @@ export class MapPreviewPage extends MapPageBase {
             </wa-callout>
           </div>
         ` : html`
-          <div class="overlay wa-stack wa-gap-s">
-            <h2>${this._map?.name ?? 'Untitled Trip'}</h2>
-
-            ${this._map?.family_name
-              ? html`<p class="family-name">${this._map.family_name}</p>`
-              : nothing}
-
-            ${this._items.length > 0 ? html`
-              <div class="wa-cluster wa-gap-m">
-                <span class="stat-label">Items: <span class="stat-value">${this._items.length}</span></span>
-                ${this._totalDistance ? html`
-                  <span class="stat-label">Distance: <span class="stat-value">${formatDistance(this._totalDistance, units)}</span></span>
-                ` : nothing}
+          <div class="overlay">
+            <wa-details appearance="plain">
+              <div slot="summary" class="overlay-summary">
+                <h2>${this._map?.name ?? 'Untitled Trip'}</h2>
+                ${this._map?.family_name
+                  ? html`<p class="family-name">${this._map.family_name}</p>`
+                  : nothing}
               </div>
-            ` : nothing}
 
-            <wa-divider></wa-divider>
+              <div class="wa-stack wa-gap-s">
+                ${this._items.length > 0 ? html`
+                  <div class="wa-cluster wa-gap-m">
+                    <span class="stat-label">Items: <span class="stat-value">${this._items.length}</span></span>
+                    ${this._totalDistance ? html`
+                      <span class="stat-label">Distance: <span class="stat-value">${formatDistance(this._totalDistance, units)}</span></span>
+                    ` : nothing}
+                  </div>
+                ` : nothing}
 
-            <wa-radio-group
-              .value=${this._format}
-              @change=${this._onFormatChange}
-            >
-              <wa-radio appearance="button" value="pdf">PDF</wa-radio>
-              <wa-radio appearance="button" value="png">PNG</wa-radio>
-              <wa-radio appearance="button" value="jpeg">JPEG</wa-radio>
-            </wa-radio-group>
+                <wa-divider></wa-divider>
 
-            <div class="format-description">
-              ${MapPreviewPage._formatDescriptions[this._format]}
-            </div>
+                <wa-radio-group
+                  .value=${this._format}
+                  @change=${this._onFormatChange}
+                >
+                  <wa-radio appearance="button" value="pdf">PDF</wa-radio>
+                  <wa-radio appearance="button" value="png">PNG</wa-radio>
+                  <wa-radio appearance="button" value="jpeg">JPEG</wa-radio>
+                </wa-radio-group>
 
-            <wa-select
-              label="Paper size"
-              @change=${this._onPaperSizeChange}
-            >
-              ${Object.entries(PAPER_SIZE_LABELS).map(
-                ([value, label]) => html`<wa-option value=${value} ?selected=${value === this._paperSize}>${label}</wa-option>`,
-              )}
-            </wa-select>
+                <div class="format-description">
+                  ${MapPreviewPage._formatDescriptions[this._format]}
+                </div>
 
-            <wa-radio-group
-              .value=${this._orientation}
-              @change=${this._onOrientationChange}
-            >
-              <wa-radio appearance="button" value="landscape">
-                <wa-icon slot="start" name="rectangle-wide"></wa-icon>
-                Landscape
-              </wa-radio>
-              <wa-radio appearance="button" value="portrait">
-                <wa-icon slot="start" name="rectangle-vertical"></wa-icon>
-                Portrait
-              </wa-radio>
-            </wa-radio-group>
+                <wa-select
+                  label="Paper size"
+                  @change=${this._onPaperSizeChange}
+                >
+                  ${Object.entries(PAPER_SIZE_LABELS).map(
+                    ([value, label]) => html`<wa-option value=${value} ?selected=${value === this._paperSize}>${label}</wa-option>`,
+                  )}
+                </wa-select>
 
-            ${this._exportError ? html`
-              <wa-callout variant="danger">
-                <wa-icon slot="icon" name="circle-info" library="default"></wa-icon>
-                ${this._exportError}
-              </wa-callout>
-            ` : nothing}
+                <wa-radio-group
+                  .value=${this._orientation}
+                  @change=${this._onOrientationChange}
+                >
+                  <wa-radio appearance="button" value="landscape">
+                    <wa-icon slot="start" name="rectangle-wide"></wa-icon>
+                    Landscape
+                  </wa-radio>
+                  <wa-radio appearance="button" value="portrait">
+                    <wa-icon slot="start" name="rectangle-vertical"></wa-icon>
+                    Portrait
+                  </wa-radio>
+                </wa-radio-group>
 
-            <wa-button
-              variant="brand"
-              class="download-btn"
-              ?loading=${this._exporting}
-              ?disabled=${this._exporting}
-              @click=${this._onDownload}
-            >
-              <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
-              Download
-            </wa-button>
+                ${this._exportError ? html`
+                  <wa-callout variant="danger">
+                    <wa-icon slot="icon" name="circle-info" library="default"></wa-icon>
+                    ${this._exportError}
+                  </wa-callout>
+                ` : nothing}
 
-            <wa-divider></wa-divider>
+                <wa-button
+                  variant="brand"
+                  class="download-btn"
+                  ?loading=${this._exporting}
+                  ?disabled=${this._exporting}
+                  @click=${this._onDownload}
+                >
+                  <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
+                  Download
+                </wa-button>
 
-            <wa-button
-              size="small"
-              variant="neutral"
-              appearance="outlined"
-              @click=${this._onBackToEditor}
-            >
-              <wa-icon slot="start" name="arrow-left"></wa-icon>
-              Back to editor
-            </wa-button>
+                <wa-divider></wa-divider>
+
+                <wa-button
+                  size="small"
+                  variant="neutral"
+                  appearance="outlined"
+                  @click=${this._onBackToEditor}
+                >
+                  <wa-icon slot="start" name="arrow-left"></wa-icon>
+                  Back to editor
+                </wa-button>
+              </div>
+            </wa-details>
           </div>
         `}
       </div>
@@ -272,14 +412,17 @@ export class MapPreviewPage extends MapPageBase {
 
   private _onFormatChange(e: Event) {
     this._format = (e.target as HTMLInputElement).value as ExportFormat;
+    this._scheduleSave();
   }
 
   private _onPaperSizeChange(e: Event) {
     this._paperSize = (e.target as HTMLSelectElement).value as PaperSize;
+    this._scheduleSave();
   }
 
   private _onOrientationChange(e: Event) {
     this._orientation = (e.target as HTMLInputElement).value as Orientation;
+    this._scheduleSave();
   }
 
   private async _onDownload() {

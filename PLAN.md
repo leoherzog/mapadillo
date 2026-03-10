@@ -1451,6 +1451,10 @@ mapadillo/
 
 **Trip builder integration:** Added Preview and Export buttons to `trip-builder-page.ts` below the map details section, linking to `/preview/:id` and `/export/:id`.
 
+**Mobile collapsible overlay:** On the preview/export page, the floating overlay (trip name, export options, download button) is wrapped in `<wa-details appearance="plain">`. On mobile (`≤700px`) it starts collapsed — just a thin header bar with the trip name and chevron toggle, leaving the map and paper frame fully visible. On desktop it auto-opens via an imperative `details.open = true` in `updated()`. The `<wa-details>` manages its own open/close state after initialization.
+
+**Export settings persistence (migration 0007):** Added `export_settings TEXT DEFAULT '{}'` column to the `maps` table. Stores `{ format, paperSize, orientation, center, zoom, bearing, pitch }` as JSON. Saved with 1-second debounce on every format/paper/orientation change and on map `moveend`. Only saved for authenticated owners/editors (checks role before scheduling saves). On page load, `_restoreSettings()` runs after `_syncMap()`'s `drawItems` auto-fit — applies saved format/paper/orientation as state, then calls `jumpTo()` to restore the viewport (overriding the auto-fit animation). A `_restoring` flag suppresses the moveend listener during `jumpTo()` to avoid a redundant save of the just-loaded settings. Backend validates `export_settings` and `style_preferences` JSON blob size (10KB limit).
+
 **Files created (5 new):**
 
 ```
