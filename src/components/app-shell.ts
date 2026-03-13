@@ -19,6 +19,10 @@ import '../pages/dashboard-page.js';
 import '../pages/trip-builder-page.js';
 import '../pages/claim-page.js';
 import '../pages/map-preview-page.js';
+import '../pages/export-page.js';
+import '../pages/order-page.js';
+import '../pages/order-confirmation-page.js';
+import '../pages/admin-page.js';
 import './user-menu.js';
 
 @customElement('app-shell')
@@ -56,13 +60,26 @@ export class AppShell extends LitElement {
     },
     {
       path: '/export/:id',
-      enter: ({ id }) => `/preview/${id}`,
-      render: () => html``,
+      render: ({ id }) => html`<export-page .mapId=${id ?? ''}></export-page>`,
     },
     {
       path: '/claim/:token',
       enter: requireAuth,
       render: ({ token }) => html`<claim-page .token=${token ?? ''}></claim-page>`,
+    },
+    {
+      path: '/order/:id',
+      enter: requireAuth,
+      render: ({ id }) => html`<order-page .mapId=${id ?? ''}></order-page>`,
+    },
+    {
+      path: '/order-confirmation/:orderId',
+      enter: requireAuth,
+      render: ({ orderId }) => html`<order-confirmation-page .orderId=${orderId ?? ''}></order-confirmation-page>`,
+    },
+    {
+      path: '/admin',
+      render: () => html`<admin-page></admin-page>`,
     },
   ]);
 

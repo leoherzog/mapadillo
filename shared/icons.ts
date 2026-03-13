@@ -17,3 +17,5 @@ const ICON_NAMES = [
 export type ValidIcon = (typeof ICON_NAMES)[number];
 
 export const VALID_ICONS: ReadonlySet<string> = new Set<string>(ICON_NAMES);
+
+export const DEFAULT_ICON = 'location-dot';

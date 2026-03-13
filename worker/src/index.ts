@@ -8,7 +8,7 @@
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
  *
- * Milestone 8: polish & launch prep.
+ * Milestone 9: print ordering (Stripe + Prodigi).
  */
 
 import { Hono } from 'hono';
@@ -21,6 +21,8 @@ import { routeHandler } from './routes/route.js';
 import maps from './routes/maps.js';
 import sharing, { claimShareHandler } from './routes/sharing.js';
 import userPreferences from './routes/user-preferences.js';
+import orderRoutes from './routes/orders.js';
+import webhookRoutes from './routes/webhooks.js';
 import type { AppEnv } from './types.js';
 import type { Context } from 'hono';
 
@@ -46,7 +48,7 @@ app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 8 });
+  return c.json({ status: 'ok', milestone: 9 });
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
@@ -68,7 +70,7 @@ app.use('/api/*', async (c, next) => {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
     return next();
   }
-  if (c.req.path.startsWith('/api/webhooks/')) {
+  if (c.req.path.startsWith('/api/webhooks/') || c.req.path.startsWith('/api/admin/')) {
     return next();
   }
 
@@ -120,6 +122,21 @@ app.use('/api/maps/*', async (c, next) => {
 app.use('/api/maps', requireAuth);
 app.route('/api/maps', maps);
 app.route('/api/maps', sharing);
+
+// ── Order + image routes (Milestone 9) ───────────────────────────────────
+// GET /api/images/* is public (unguessable UUID keys, served from R2).
+// POST /api/images/:mapId, checkout, print-quote, and orders require auth.
+// Admin order routes use Bearer token auth internally.
+app.use('/api/images/:mapId', requireAuth);   // POST upload
+app.use('/api/checkout', requireAuth);
+app.use('/api/print-quote', requireAuth);
+app.use('/api/orders', requireAuth);
+app.use('/api/orders/*', requireAuth);
+app.route('/api', orderRoutes);
+
+// ── Webhook routes (Milestone 9) ─────────────────────────────────────────
+// No auth middleware — webhooks verify signatures/secrets internally.
+app.route('/api/webhooks', webhookRoutes);
 
 // ── Geocoding proxy (Milestone 3) ─────────────────────────────────────────
 // Auth required + 30 req/min per user via RATE_LIMITER_PROXY.

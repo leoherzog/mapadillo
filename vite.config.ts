@@ -4,6 +4,16 @@ export default defineConfig({
   build: {
     target: 'es2022',
     outDir: 'dist',
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-maplibre', test: /maplibre-gl/, priority: 20 },
+            { name: 'vendor-webawesome', test: /@web\.awesome\.me/, priority: 15 },
+          ],
+        },
+      },
+    },
   },
   // Vite serves index.html at root; all non-API routes fall back to it
   // (SPA mode — worker handles the true fallback in production)

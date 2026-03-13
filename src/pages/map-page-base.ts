@@ -6,7 +6,7 @@
  */
 import { LitElement, type PropertyValues } from 'lit';
 import { property, state } from 'lit/decorators.js';
-import type { MapData, Stop } from '../services/maps.js';
+import type { Stop, MapWithRole } from '../services/maps.js';
 import { getMap } from '../services/maps.js';
 import { ApiError } from '../services/api-client.js';
 import { isAuthenticated } from '../auth/auth-state.js';
@@ -20,7 +20,7 @@ export class MapPageBase extends LitElement {
 
   private _loadGeneration = 0;
 
-  @state() protected _map: MapData | null = null;
+  @state() protected _map: MapWithRole | null = null;
   @state() protected _items: Stop[] = [];
   @state() protected _loading = true;
   @state() protected _error = '';
@@ -106,6 +106,21 @@ export class MapPageBase extends LitElement {
   /** Override in subclasses to provide additional MapController options (e.g., onItemClick). */
   protected _getExtraControllerOptions(): Partial<MapControllerOptions> {
     return {};
+  }
+
+  /** Parse and apply saved viewport from export_settings. */
+  protected _restoreViewport(settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number }): void {
+    if (settings.center && settings.zoom != null) {
+      const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+      if (mapView?.map) {
+        mapView.map.jumpTo({
+          center: settings.center,
+          zoom: settings.zoom,
+          bearing: settings.bearing ?? 0,
+          pitch: settings.pitch ?? 0,
+        });
+      }
+    }
   }
 
   protected async _syncMap() {

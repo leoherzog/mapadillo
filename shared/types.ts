@@ -60,3 +60,36 @@ export interface SessionUser {
   email: string;
   image?: string | null;
 }
+
+export interface ShippingAddress {
+  name: string;
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
+export type OrderStatus = 'pending_payment' | 'paid' | 'pending_render' | 'submitted' | 'in_production' | 'shipped' | 'completed' | 'cancelled' | 'failed';
+
+export interface Order {
+  id: string;
+  map_id: string;
+  user_id: string;
+  product_type: string;
+  product_sku: string;
+  poster_size: string;
+  status: OrderStatus;
+  stripe_session_id: string | null;
+  prodigi_order_id: string | null;
+  image_url: string | null;
+  shipping_address: string | null;
+  subtotal: number | null;
+  shipping_cost: number | null;
+  currency: string;
+  tracking_url: string | null;
+  discord_notified: number;
+  created_at: string;
+  updated_at: string;
+}

@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/13</span>
+                <span class='fraction'>13/13</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>1/1</span>
+                <span class='fraction'>2/2</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>1/1</span>
+                <span class='fraction'>0/0</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/13</span>
+                <span class='fraction'>13/13</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -112,23 +112,23 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Single source of truth for travel mode definitions.
  *
@@ -145,23 +145,23 @@ interface TravelModeConfig {
   orsProfile?: string;
 }
 &nbsp;
-<span class="cstat-no" title="statement not covered" >export const TRAVEL_MODES: TravelModeConfig[] = [</span>
-<span class="cstat-no" title="statement not covered" >  { mode: 'drive', icon: 'car',            cssColor: 'var(--wa-color-brand-50)',  hexColor: '#ff6b00', orsProfile: 'driving-car' },</span>
-<span class="cstat-no" title="statement not covered" >  { mode: 'plane', icon: 'plane',          cssColor: 'var(--wa-color-blue-50)',   hexColor: '#146bff' },</span>
-<span class="cstat-no" title="statement not covered" >  { mode: 'boat',  icon: 'ship',           cssColor: 'var(--wa-color-indigo-70)', hexColor: '#a2a7ff' },</span>
-<span class="cstat-no" title="statement not covered" >  { mode: 'bike',  icon: 'person-biking',  cssColor: 'var(--wa-color-cyan-50)',   hexColor: '#008098', orsProfile: 'cycling-regular' },</span>
-<span class="cstat-no" title="statement not covered" >  { mode: 'walk',  icon: 'compass',        cssColor: 'var(--wa-color-green-50)',  hexColor: '#0f881d', orsProfile: 'foot-walking' },</span>
-<span class="cstat-no" title="statement not covered" >];</span>
+export const TRAVEL_MODES: TravelModeConfig[] = [
+  { mode: 'drive', icon: 'car',            cssColor: 'var(--wa-color-brand-50)',  hexColor: '#ff6b00', orsProfile: 'driving-car' },
+  { mode: 'plane', icon: 'plane',          cssColor: 'var(--wa-color-blue-50)',   hexColor: '#146bff' },
+  { mode: 'boat',  icon: 'ship',           cssColor: 'var(--wa-color-indigo-70)', hexColor: '#a2a7ff' },
+  { mode: 'bike',  icon: 'person-biking',  cssColor: 'var(--wa-color-cyan-50)',   hexColor: '#008098', orsProfile: 'cycling-regular' },
+  { mode: 'walk',  icon: 'compass',        cssColor: 'var(--wa-color-green-50)',  hexColor: '#0f881d', orsProfile: 'foot-walking' },
+];
 &nbsp;
 /** Pre-built lookup: mode → CSS custom property color (for component styles). */
-<span class="cstat-no" title="statement not covered" >export const CSS_COLOR_BY_MODE: Record&lt;string, string&gt; = Object.fromEntries(</span>
-<span class="cstat-no" title="statement not covered" >  TRAVEL_MODES.map((m) =&gt; [m.mode, m.cssColor]),</span>
-<span class="cstat-no" title="statement not covered" >);</span>
+export const CSS_COLOR_BY_MODE: Record&lt;string, string&gt; = Object.fromEntries(
+  TRAVEL_MODES.map((m) =&gt; [m.mode, m.cssColor]),
+);
 &nbsp;
 /** Pre-built lookup: mode → hex color (for canvas/MapLibre rendering). */
-<span class="cstat-no" title="statement not covered" >export const HEX_COLOR_BY_MODE: Record&lt;string, string&gt; = Object.fromEntries(</span>
-<span class="cstat-no" title="statement not covered" >  TRAVEL_MODES.map((m) =&gt; [m.mode, m.hexColor]),</span>
-<span class="cstat-no" title="statement not covered" >);</span>
+export const HEX_COLOR_BY_MODE: Record&lt;string, string&gt; = Object.fromEntries(
+  TRAVEL_MODES.map((m) =&gt; [m.mode, m.hexColor]),
+);
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -169,7 +169,7 @@ interface TravelModeConfig {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-10T20:30:32.197Z
+                at 2026-03-12T01:50:03.033Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

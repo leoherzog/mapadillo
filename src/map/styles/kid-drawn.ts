@@ -6,6 +6,7 @@
  * Reuses the same vector tile sources and sprites from Bright.
  */
 import type { StyleSpecification, LayerSpecification } from 'maplibre-gl';
+import type { DataDrivenPropertyValueSpecification } from '@maplibre/maplibre-gl-style-spec';
 
 // ── Color palette ─────────────────────────────────────────────────────────
 
@@ -32,8 +33,9 @@ function idStartsWith(id: string, ...prefixes: string[]): boolean {
 }
 
 /** Multiply a numeric value or the first stop value of an interpolation expression. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function widenWidth(value: any, factor: number): any {
+type NumericStyleValue = DataDrivenPropertyValueSpecification<number> | undefined;
+
+function widenWidth(value: NumericStyleValue, factor: number): NumericStyleValue {
   if (typeof value === 'number') return value * factor;
   // For interpolation/step expressions, return scaled — keep expression structure
   if (Array.isArray(value)) {
@@ -41,7 +43,7 @@ function widenWidth(value: any, factor: number): any {
       // Scale numeric stop outputs (every other value after the first few expression args)
       if (typeof v === 'number' && i > 1) return v * factor;
       return v;
-    });
+    }) as NumericStyleValue;
   }
   return value;
 }
@@ -125,7 +127,7 @@ function transformLayer(layer: LayerSpecification): void {
 
     // Schools, hospitals, cemeteries — soft tints
     else if (id === 'landuse-school') {
-      paint['fill-color'] = '#FFE0B2';
+      paint['fill-color'] = PEACH;
       paint['fill-opacity'] = 0.4;
     } else if (id === 'landuse-hospital') {
       paint['fill-color'] = '#FFCDD2';
@@ -186,8 +188,19 @@ function transformLayer(layer: LayerSpecification): void {
     // Roads — categorize by type
     const isCasing = id.includes('-casing');
 
+    // Motorway link (must be checked before motorway — startsWith would match both)
+    if (idStartsWith(id, 'highway-motorway-link', 'tunnel-motorway-link', 'bridge-motorway-link')) {
+      if (isCasing) {
+        paint['line-color'] = '#E55A3A';
+      } else {
+        paint['line-color'] = ROAD_MOTORWAY;
+      }
+      layout['line-cap'] = 'round';
+      layout['line-join'] = 'round';
+    }
+
     // Motorway
-    if (idStartsWith(id, 'highway-motorway', 'tunnel-motorway', 'bridge-motorway')) {
+    else if (idStartsWith(id, 'highway-motorway', 'tunnel-motorway', 'bridge-motorway')) {
       if (isCasing) {
         paint['line-color'] = '#E55A3A';
         paint['line-width'] = widenWidth(paint['line-width'], 1.2);
@@ -257,17 +270,6 @@ function transformLayer(layer: LayerSpecification): void {
         paint['line-dasharray'] = [2, 2];
       } else {
         paint['line-color'] = '#FFAB91';
-      }
-      layout['line-cap'] = 'round';
-      layout['line-join'] = 'round';
-    }
-
-    // Motorway link
-    else if (idStartsWith(id, 'highway-motorway-link', 'tunnel-motorway-link', 'bridge-motorway-link')) {
-      if (isCasing) {
-        paint['line-color'] = '#E55A3A';
-      } else {
-        paint['line-color'] = ROAD_MOTORWAY;
       }
       layout['line-cap'] = 'round';
       layout['line-join'] = 'round';

@@ -21,9 +21,12 @@ const RENDER_TIMEOUT_MS = 30_000;
 /** Query the GPU's max texture size once, with a conservative fallback. */
 const MAX_CANVAS_DIM = (() => {
   try {
-    const gl = document.createElement('canvas').getContext('webgl');
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl');
     if (gl) {
       const max = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+      // Release the WebGL context — they are a limited resource
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
       // Leave ~20% headroom — MapLibre uses multiple framebuffers internally
       return Math.floor(max * 0.8);
     }
@@ -40,6 +43,7 @@ export const PAPER_SIZES: Record<string, [number, number]> = {
   tabloid: [279.4, 431.8],
   '18x24': [457.2, 609.6],
   '24x36': [609.6, 914.4],
+  '40x60': [1016, 1524],
   a2: [420, 594],
   a1: [594, 841],
 };
@@ -308,7 +312,7 @@ async function drawMarkersOnCanvas(
 
 // ── File download helper ─────────────────────────────────────────────────────
 
-function triggerDownload(blob: Blob, filename: string): void {
+export function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -325,7 +329,7 @@ function triggerDownload(blob: Blob, filename: string): void {
 
 // ── Canvas → Blob helper ────────────────────────────────────────────────────
 
-function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
+export function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
@@ -358,31 +362,134 @@ function drawAttribution(canvas: HTMLCanvasElement): void {
   ctx.fillText(text, canvas.width - padding, canvas.height - padding);
 }
 
+// ── Trip details overlay (shared by raster + PDF) ────────────────────────────
+
+/** Data needed to draw poster overlays on any export format. */
+export interface TripDetails {
+  mapData: MapData;
+  stops: Stop[];
+  units: string;
+  routeDistances?: Map<string, number>;
+}
+
+/**
+ * Composite a rendered map canvas with poster overlays (title, itinerary,
+ * stats, attribution) onto a new canvas at the paper's DPI dimensions.
+ * Used for PNG/JPEG exports with "Include trip details" enabled.
+ */
+function compositeWithOverlays(
+  mapCanvas: HTMLCanvasElement,
+  paperSize: PaperSize,
+  orientation: Orientation,
+  details: TripDetails,
+): HTMLCanvasElement {
+  const effectiveSize = paperSize === 'auto' ? 'a3' : paperSize;
+  const effectiveOrientation: Orientation = paperSize === 'auto' ? 'landscape' : orientation;
+  const [pw, ph] = PAPER_SIZES[effectiveSize];
+  const pageW_mm = effectiveOrientation === 'landscape' ? Math.max(pw, ph) : Math.min(pw, ph);
+  const pageH_mm = effectiveOrientation === 'landscape' ? Math.min(pw, ph) : Math.max(pw, ph);
+
+  // Compute poster pixel dimensions. Cap to MAX_CANVAS_DIM so browsers
+  // don't silently fail on huge canvases (e.g. 40×60" at 300 DPI = 12000×18000).
+  const pxPerMm = DEFAULT_DPI / 25.4;
+  let posterW = Math.round(pageW_mm * pxPerMm);
+  let posterH = Math.round(pageH_mm * pxPerMm);
+  let effectivePxPerMm = pxPerMm;
+
+  if (posterW > MAX_CANVAS_DIM || posterH > MAX_CANVAS_DIM) {
+    const ratio = Math.min(MAX_CANVAS_DIM / posterW, MAX_CANVAS_DIM / posterH);
+    posterW = Math.round(posterW * ratio);
+    posterH = Math.round(posterH * ratio);
+    effectivePxPerMm = pxPerMm * ratio;
+  }
+
+  const posterCanvas = document.createElement('canvas');
+  posterCanvas.width = posterW;
+  posterCanvas.height = posterH;
+  const ctx = posterCanvas.getContext('2d')!;
+
+  // Dark background
+  ctx.fillStyle = '#1C1C1E';
+  ctx.fillRect(0, 0, posterW, posterH);
+
+  // Draw map fitted into poster
+  const mapAspect = mapCanvas.width / mapCanvas.height;
+  const posterAspect = posterW / posterH;
+  let mw: number, mh: number, mx: number, my: number;
+  if (mapAspect > posterAspect) {
+    mw = posterW; mh = posterW / mapAspect;
+    mx = 0; my = (posterH - mh) / 2;
+  } else {
+    mh = posterH; mw = posterH * mapAspect;
+    mx = (posterW - mw) / 2; my = 0;
+  }
+  ctx.drawImage(mapCanvas, mx, my, mw, mh);
+
+  // Compute stats and draw overlays
+  const { mapData, stops, units, routeDistances } = details;
+  const routes = stops.filter((s) => s.type === 'route');
+  const points = stops.filter((s) => s.type === 'point');
+  let totalMeters = 0;
+  if (routeDistances?.size) {
+    for (const d of routeDistances.values()) totalMeters += d;
+  } else {
+    for (const stop of routes) {
+      if (stop.dest_latitude != null && stop.dest_longitude != null) {
+        totalMeters += haversineDistance(
+          [stop.longitude, stop.latitude],
+          [stop.dest_longitude, stop.dest_latitude],
+        );
+      }
+    }
+  }
+
+  drawPosterOverlays(
+    ctx, posterW, posterH, effectivePxPerMm,
+    mapData.name,
+    mapData.family_name,
+    buildItinerary(stops),
+    totalMeters > 0 ? formatDistance(totalMeters, units) : '',
+    points.length,
+    routes.length,
+  );
+
+  return posterCanvas;
+}
+
 // ── Raster export (PNG / JPEG) ───────────────────────────────────────────────
 
 async function downloadRaster(
   map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
   mimeType: string, filename: string, quality?: number,
+  tripDetails?: TripDetails,
 ): Promise<void> {
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(markerFeatures);
-  drawAttribution(canvas);
-  const blob = await canvasToBlob(canvas, mimeType, quality);
+  const mapCanvas = await exporter.renderCanvas(markerFeatures);
+
+  let outputCanvas: HTMLCanvasElement;
+  if (tripDetails) {
+    outputCanvas = compositeWithOverlays(mapCanvas, paperSize, orientation, tripDetails);
+  } else {
+    drawAttribution(mapCanvas);
+    outputCanvas = mapCanvas;
+  }
+
+  const blob = await canvasToBlob(outputCanvas, mimeType, quality);
   triggerDownload(blob, filename);
 }
 
 async function downloadPNG(
   map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
-  filename = 'mapadillo-map.png',
+  filename = 'mapadillo-map.png', tripDetails?: TripDetails,
 ): Promise<void> {
-  return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/png', filename);
+  return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/png', filename, undefined, tripDetails);
 }
 
 async function downloadJPEG(
   map: maplibregl.Map, markerFeatures: GeoJSON.Feature<GeoJSON.Point>[], paperSize: PaperSize, orientation: Orientation,
-  filename = 'mapadillo-map.jpg',
+  filename = 'mapadillo-map.jpg', tripDetails?: TripDetails,
 ): Promise<void> {
-  return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/jpeg', filename, 0.92);
+  return downloadRaster(map, markerFeatures, paperSize, orientation, 'image/jpeg', filename, 0.92, tripDetails);
 }
 
 // ── PDF helpers ──────────────────────────────────────────────────────────────
@@ -568,91 +675,58 @@ function drawPosterOverlays(
 
 async function downloadPDF(
   map: maplibregl.Map,
-  mapData: MapData,
-  stops: Stop[],
   markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
-  units: string,
   paperSize: PaperSize,
   orientation: Orientation,
-  routeDistances?: Map<string, number>,
+  filename: string,
+  tripDetails?: TripDetails,
 ): Promise<void> {
   // 1. Render the map at high resolution
   const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
   const mapCanvas = await exporter.renderCanvas(markerFeatures);
 
-  // 2. Compute page dimensions in mm (pass explicitly — jsPDF doesn't know custom sizes like '18x24')
+  // 2. Compute page dimensions in mm
   const effectiveSize = paperSize === 'auto' ? 'a3' : paperSize;
   const pdfOrientation: Orientation = paperSize === 'auto' ? 'landscape' : orientation;
   const [pw, ph] = PAPER_SIZES[effectiveSize];
   const pageW_mm = pdfOrientation === 'landscape' ? Math.max(pw, ph) : Math.min(pw, ph);
   const pageH_mm = pdfOrientation === 'landscape' ? Math.min(pw, ph) : Math.max(pw, ph);
-  const pdf = new jsPDF({ unit: 'mm', format: [pageW_mm, pageH_mm] });
+  const pdf = new jsPDF({ unit: 'mm', format: [pageW_mm, pageH_mm], orientation: pdfOrientation });
 
-  // 3. Create poster canvas at exact page dimensions (200 DPI)
-  const pxPerMm = DEFAULT_DPI / 25.4;
-  const posterW = Math.round(pageW_mm * pxPerMm);
-  const posterH = Math.round(pageH_mm * pxPerMm);
+  let outputCanvas: HTMLCanvasElement;
 
-  const posterCanvas = document.createElement('canvas');
-  posterCanvas.width = posterW;
-  posterCanvas.height = posterH;
-  const ctx = posterCanvas.getContext('2d')!;
-
-  // 4. Dark background (visible only if map doesn't fill the page, e.g. 'auto')
-  ctx.fillStyle = '#1C1C1E';
-  ctx.fillRect(0, 0, posterW, posterH);
-
-  // 5. Draw map canvas fitted into the poster (preserving aspect ratio)
-  const mapAspect = mapCanvas.width / mapCanvas.height;
-  const posterAspect = posterW / posterH;
-  let mw: number, mh: number, mx: number, my: number;
-  if (mapAspect > posterAspect) {
-    mw = posterW; mh = posterW / mapAspect;
-    mx = 0; my = (posterH - mh) / 2;
+  if (tripDetails) {
+    // Poster layout with overlays (no DPI cap — jsPDF handles encoding)
+    outputCanvas = compositeWithOverlays(mapCanvas, paperSize, orientation, tripDetails);
   } else {
-    mh = posterH; mw = posterH * mapAspect;
-    mx = (posterW - mw) / 2; my = 0;
-  }
-  ctx.drawImage(mapCanvas, mx, my, mw, mh);
-
-  // 6. Compute trip stats
-  const routes = stops.filter((s) => s.type === 'route');
-  const points = stops.filter((s) => s.type === 'point');
-  let totalMeters = 0;
-  if (routeDistances?.size) {
-    for (const d of routeDistances.values()) totalMeters += d;
-  } else {
-    for (const stop of routes) {
-      if (stop.dest_latitude != null && stop.dest_longitude != null) {
-        totalMeters += haversineDistance(
-          [stop.longitude, stop.latitude],
-          [stop.dest_longitude, stop.dest_latitude],
-        );
-      }
-    }
+    // Plain map, just add attribution
+    drawAttribution(mapCanvas);
+    outputCanvas = mapCanvas;
   }
 
-  // 7. Draw poster overlays (title, itinerary, stats, attribution)
-  drawPosterOverlays(
-    ctx, posterW, posterH, pxPerMm,
-    mapData.name,
-    mapData.family_name,
-    buildItinerary(stops),
-    totalMeters > 0 ? formatDistance(totalMeters, units) : '',
-    points.length,
-    routes.length,
-  );
+  // Embed in PDF and trigger download
+  pdf.addImage(outputCanvas, 'PNG', 0, 0, pageW_mm, pageH_mm);
+  await pdf.save(filename);
+}
 
-  // 8. Embed composited poster in PDF and trigger download
-  const imgData = posterCanvas.toDataURL('image/png');
-  pdf.addImage(imgData, 'PNG', 0, 0, pageW_mm, pageH_mm);
-  await pdf.save(`${sanitizeFilename(mapData.name)}.pdf`);
+// ── Render to Blob (for print ordering) ──────────────────────────────────────
+
+export async function renderToBlob(
+  map: maplibregl.Map,
+  markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
+  paperSize: PaperSize,
+  orientation: Orientation,
+): Promise<Blob> {
+  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
+  const canvas = await exporter.renderCanvas(markerFeatures);
+  drawAttribution(canvas);
+  return canvasToBlob(canvas, 'image/png');
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export type ExportFormat = 'png' | 'jpeg' | 'pdf';
-export type PaperSize = 'auto' | 'letter' | 'a4' | 'a3' | 'tabloid' | '18x24' | '24x36' | 'a2' | 'a1';
+export type PaperSize = 'auto' | 'letter' | 'a4' | 'a3' | 'tabloid' | '18x24' | '24x36' | '40x60' | 'a2' | 'a1';
 export type Orientation = 'landscape' | 'portrait';
 
 export async function exportMap(
@@ -665,16 +739,20 @@ export async function exportMap(
   paperSize: PaperSize,
   orientation: Orientation,
   routeDistances?: Map<string, number>,
+  includeTripDetails = false,
 ): Promise<void> {
   const baseName = sanitizeFilename(mapData.name);
+  const tripDetails: TripDetails | undefined = includeTripDetails
+    ? { mapData, stops, units, routeDistances }
+    : undefined;
 
   switch (format) {
     case 'png':
-      return downloadPNG(map, markerFeatures, paperSize, orientation, `${baseName}.png`);
+      return downloadPNG(map, markerFeatures, paperSize, orientation, `${baseName}.png`, tripDetails);
     case 'jpeg':
-      return downloadJPEG(map, markerFeatures, paperSize, orientation, `${baseName}.jpg`);
+      return downloadJPEG(map, markerFeatures, paperSize, orientation, `${baseName}.jpg`, tripDetails);
     case 'pdf':
-      return downloadPDF(map, mapData, stops, markerFeatures, units, paperSize, orientation, routeDistances);
+      return downloadPDF(map, markerFeatures, paperSize, orientation, `${baseName}.pdf`, tripDetails);
     default:
       throw new Error(`Unsupported export format: ${format as string}`);
   }

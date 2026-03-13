@@ -1,6 +1,7 @@
 /**
- * Map preview & export page — full-screen map with floating overlay for
- * trip info, stats, and export controls.
+ * Map preview page — full-screen map with floating overlay for
+ * paper size/orientation selection. User positions the map here,
+ * then continues to /export/:id for download and print ordering.
  */
 import { html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
@@ -9,7 +10,7 @@ import { familyNameStyles } from '../styles/page-layout.js';
 import { navigateTo } from '../nav.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { formatDistance } from '../utils/geo.js';
-import { exportMap, PAPER_SIZES, type ExportFormat, type PaperSize, type Orientation } from '../map/map-export.js';
+import { PAPER_SIZES, type PaperSize, type Orientation } from '../map/map-export.js';
 import { updateMap } from '../services/maps.js';
 import { MapPageBase } from './map-page-base.js';
 import { getUnits, type Units } from '../units.js';
@@ -17,7 +18,6 @@ import type { MapView } from '../components/map-view.js';
 import '../components/map-view.js';
 
 interface ExportSettings {
-  format?: ExportFormat;
   paperSize?: PaperSize;
   orientation?: Orientation;
   center?: [number, number];
@@ -33,17 +33,15 @@ const PAPER_SIZE_LABELS: Partial<Record<PaperSize, string>> = {
   tabloid: 'Tabloid (11 \u00d7 17\u2033)',
   '18x24': 'Poster (18 \u00d7 24\u2033)',
   '24x36': 'Poster (24 \u00d7 36\u2033)',
+  '40x60': 'Poster (40 \u00d7 60\u2033)',
   a2: 'A2 (420 \u00d7 594 mm)',
   a1: 'A1 (594 \u00d7 841 mm)',
 };
 
 @customElement('map-preview-page')
 export class MapPreviewPage extends MapPageBase {
-  @state() private _format: ExportFormat = 'pdf';
   @state() private _paperSize: PaperSize = 'letter';
   @state() private _orientation: Orientation = 'landscape';
-  @state() private _exporting = false;
-  @state() private _exportError = '';
   @state() private _units: Units = getUnits();
 
   private _onUnitsChange = () => { this._units = getUnits(); };
@@ -124,12 +122,7 @@ export class MapPreviewPage extends MapPageBase {
       font-weight: var(--wa-font-weight-semibold);
     }
 
-    .format-description {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-    }
-
-    .download-btn {
+    .continue-btn {
       width: 100%;
     }
 
@@ -188,12 +181,6 @@ export class MapPreviewPage extends MapPageBase {
     return `--pw: ${pw}; --ph: ${ph}`;
   }
 
-  private static _formatDescriptions: Record<ExportFormat, string> = {
-    pdf: 'Print-ready PDF with trip details',
-    png: 'High-resolution image',
-    jpeg: 'Compressed image',
-  };
-
   override connectedCallback(): void {
     super.connectedCallback();
     document.addEventListener('units-change', this._onUnitsChange);
@@ -234,30 +221,19 @@ export class MapPreviewPage extends MapPageBase {
       if (raw && raw !== '{}') settings = JSON.parse(raw);
     } catch { /* use defaults */ }
 
-    if (settings.format) this._format = settings.format;
     if (settings.paperSize) this._paperSize = settings.paperSize;
     if (settings.orientation) this._orientation = settings.orientation;
 
     // Restore saved viewport (overrides the auto-fit from drawItems).
     // Set _restoring flag to suppress the moveend-triggered save.
-    if (settings.center && settings.zoom != null) {
-      const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-      if (mapView?.map) {
-        this._restoring = true;
-        mapView.map.jumpTo({
-          center: settings.center,
-          zoom: settings.zoom,
-          bearing: settings.bearing ?? 0,
-          pitch: settings.pitch ?? 0,
-        });
-        this._restoring = false;
-      }
-    }
+    this._restoring = true;
+    this._restoreViewport(settings);
+    this._restoring = false;
   }
 
   private _scheduleSave() {
     if (!isAuthenticated() || !this._map) return;
-    const role = (this._map as unknown as { role?: string }).role;
+    const role = this._map?.role;
     if (role !== 'owner' && role !== 'editor') return;
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this._saveSettings(), 1000);
@@ -269,7 +245,6 @@ export class MapPreviewPage extends MapPageBase {
     const map = mapView?.map;
 
     const settings: ExportSettings = {
-      format: this._format,
       paperSize: this._paperSize,
       orientation: this._orientation,
     };
@@ -344,19 +319,6 @@ export class MapPreviewPage extends MapPageBase {
 
                 <wa-divider></wa-divider>
 
-                <wa-radio-group
-                  .value=${this._format}
-                  @change=${this._onFormatChange}
-                >
-                  <wa-radio appearance="button" value="pdf">PDF</wa-radio>
-                  <wa-radio appearance="button" value="png">PNG</wa-radio>
-                  <wa-radio appearance="button" value="jpeg">JPEG</wa-radio>
-                </wa-radio-group>
-
-                <div class="format-description">
-                  ${MapPreviewPage._formatDescriptions[this._format]}
-                </div>
-
                 <wa-select
                   label="Paper size"
                   @change=${this._onPaperSizeChange}
@@ -380,22 +342,13 @@ export class MapPreviewPage extends MapPageBase {
                   </wa-radio>
                 </wa-radio-group>
 
-                ${this._exportError ? html`
-                  <wa-callout variant="danger">
-                    <wa-icon slot="icon" name="circle-info" library="default"></wa-icon>
-                    ${this._exportError}
-                  </wa-callout>
-                ` : nothing}
-
                 <wa-button
                   variant="brand"
-                  class="download-btn"
-                  ?loading=${this._exporting}
-                  ?disabled=${this._exporting}
-                  @click=${this._onDownload}
+                  class="continue-btn"
+                  @click=${this._onContinue}
                 >
-                  <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
-                  Download
+                  Continue
+                  <wa-icon slot="end" name="arrow-right"></wa-icon>
                 </wa-button>
 
                 <wa-divider></wa-divider>
@@ -419,11 +372,6 @@ export class MapPreviewPage extends MapPageBase {
 
   // ── Event handlers ────────────────────────────────────────────────────
 
-  private _onFormatChange(e: Event) {
-    this._format = (e.target as HTMLInputElement).value as ExportFormat;
-    this._scheduleSave();
-  }
-
   private _onPaperSizeChange(e: Event) {
     this._paperSize = (e.target as HTMLSelectElement).value as PaperSize;
     this._scheduleSave();
@@ -434,37 +382,8 @@ export class MapPreviewPage extends MapPageBase {
     this._scheduleSave();
   }
 
-  private async _onDownload() {
-    if (!isAuthenticated()) {
-      navigateTo(`/sign-in?returnTo=${encodeURIComponent(window.location.pathname)}`);
-      return;
-    }
-
-    if (!this._map || !this._mapController) return;
-
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (!mapView?.map) return;
-
-    this._exporting = true;
-    this._exportError = '';
-
-    try {
-      await exportMap(
-        mapView.map,
-        this._format,
-        this._map,
-        this._items,
-        this._mapController.markerFeatures,
-        this._units,
-        this._paperSize,
-        this._orientation,
-        this._routeDistances,
-      );
-    } catch (err) {
-      this._exportError = err instanceof Error ? err.message : 'Export failed';
-    } finally {
-      this._exporting = false;
-    }
+  private _onContinue() {
+    navigateTo(`/export/${this.mapId}`);
   }
 
   private _onBackToEditor() {

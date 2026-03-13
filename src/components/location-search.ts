@@ -184,7 +184,7 @@ export class LocationSearch extends LitElement {
 
     // Show the combobox immediately if we have existing matches
     if (matches.length) {
-      const combobox = this.shadowRoot?.querySelector<any>('wa-combobox');
+      const combobox = this.shadowRoot?.querySelector<HTMLElement & { open: boolean; show(): void }>('wa-combobox');
       if (combobox && !combobox.open) combobox.show();
     }
   }
@@ -210,7 +210,7 @@ export class LocationSearch extends LitElement {
       await this.updateComplete;
       this._updatingOptions = false;
       if (results.length) {
-        const combobox = this.shadowRoot!.querySelector<any>('wa-combobox')!;
+        const combobox = this.shadowRoot!.querySelector<HTMLElement & { open: boolean; show(): void }>('wa-combobox')!;
         // show() toggles closed when already open — only call when closed
         if (!combobox.open) combobox.show();
       }

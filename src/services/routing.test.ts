@@ -8,7 +8,7 @@ vi.mock('./api-client.js', () => ({
   apiPost: mockApiPost,
 }));
 
-import { getSegmentRoute, type SegmentGeometry } from './routing.js';
+import { getSegmentRoute } from './routing.js';
 
 beforeEach(() => {
   mockApiPost.mockReset();

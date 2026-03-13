@@ -61,3 +61,10 @@ export function apiPut<T>(path: string, data?: unknown, signal?: AbortSignal): P
 export function apiDelete<T>(path: string, signal?: AbortSignal): Promise<T> {
   return request<T>(path, { method: 'DELETE' }, signal);
 }
+
+export function apiPostForm<T>(path: string, formData: FormData, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    body: formData,
+  }, signal);
+}

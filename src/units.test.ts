@@ -44,7 +44,7 @@ function stubLocale(region: string | undefined) {
       region = region;
       constructor() {}
     },
-  } as typeof Intl);
+  } as unknown as typeof Intl);
 }
 
 /** Minimal EventTarget-based document stub for Node. */

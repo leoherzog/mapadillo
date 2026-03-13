@@ -28,8 +28,8 @@ const BASE = '/api/maps';
 export function createMap(data: {
   name: string;
   family_name?: string;
-}): Promise<MapData> {
-  return apiPost<MapData>(BASE, data);
+}): Promise<MapWithRole> {
+  return apiPost<MapWithRole>(BASE, data);
 }
 
 export function listMaps(): Promise<MapWithRole[]> {

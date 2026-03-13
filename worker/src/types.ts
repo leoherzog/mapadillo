@@ -30,8 +30,11 @@ export interface Env {
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   PRODIGI_API_KEY: string;
+  PRODIGI_SANDBOX: string;
   ORS_API_KEY: string;
   ADMIN_SECRET: string;
+  DISCORD_WEBHOOK_URL: string;
+  PRODIGI_WEBHOOK_SECRET: string;
 }
 
 export type { SessionUser } from '../../shared/types.js';

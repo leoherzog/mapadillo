@@ -25,6 +25,7 @@ import '@web.awesome.me/webawesome-pro/dist/components/avatar/avatar.js';
 import '@web.awesome.me/webawesome-pro/dist/components/button/button.js';
 import '@web.awesome.me/webawesome-pro/dist/components/callout/callout.js';
 import '@web.awesome.me/webawesome-pro/dist/components/card/card.js';
+import '@web.awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js';
 import '@web.awesome.me/webawesome-pro/dist/components/combobox/combobox.js';
 import '@web.awesome.me/webawesome-pro/dist/components/divider/divider.js';
 import '@web.awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js';

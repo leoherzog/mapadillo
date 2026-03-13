@@ -98,13 +98,15 @@ mapadillo/
 │   ├── pages/
 │   │   ├── landing-page.ts
 │   │   ├── sign-in-page.ts         # OAuth buttons (Google, Facebook) + passkey registration with native form validation
-│   │   ├── dashboard-page.ts       # "My Maps" + "Shared with me" lists
+│   │   ├── dashboard-page.ts       # "My Maps" + "Shared with me" + order history
 │   │   ├── trip-builder-page.ts
-│   │   ├── map-preview-page.ts
-│   │   ├── export-page.ts
-│   │   └── order-confirmation-page.ts
+│   │   ├── map-preview-page.ts     # Full map preview + "Order a Print" button (owner/editor, printable sizes only)
+│   │   ├── order-page.ts           # Product/size picker, shipping address, Prodigi quote, map render + R2 upload, Stripe redirect
+│   │   ├── order-confirmation-page.ts # Order status + tracking URL
+│   │   └── admin-page.ts           # Admin panel: order management, Prodigi submission (Bearer token auth)
 │   ├── utils/
-│   │   └── geo.ts                  # Shared utilities: isDraftCoord(), formatDistance()
+│   │   ├── geo.ts                  # Shared utilities: isDraftCoord(), formatDistance()
+│   │   └── countries.ts            # 30 supported shipping countries (US/CA/GB/AU prioritized)
 │   ├── components/
 │   │   ├── location-search.ts      # Geocoding autocomplete (location-biased via active map center)
 │   │   ├── item-list.ts            # Pointer-based drag-and-drop item list (points + routes)
@@ -125,9 +127,7 @@ mapadillo/
 │       ├── maps.ts                 # CRUD for maps + items + sharing, typed wrappers
 │       ├── geocoding.ts            # Calls Worker proxy → Photon
 │       ├── routing.ts              # Calls Worker proxy → OpenRouteService
-│       ├── image-upload.ts         # Renders map image, uploads to R2 via Worker
-│       ├── stripe.ts               # Stripe Checkout session creation
-│       └── print-order.ts          # Prodigi order placement
+│       └── orders.ts               # Upload print image, create checkout, get quote, list/get orders
 ├── worker/                         # Cloudflare Worker backend
 │   ├── wrangler.toml               # Worker config, D1 + KV + R2 bindings
 │   ├── src/
@@ -138,20 +138,23 @@ mapadillo/
 │   │   ├── routes/
 │   │   │   ├── maps.ts             # CRUD: map metadata + items (D1), role-based access (getMapWithRole)
 │   │   │   ├── sharing.ts          # Shares CRUD, visibility toggle, claim endpoint, duplicate
-│   │   │   ├── checkout.ts         # Create Stripe Checkout session
-│   │   │   ├── stripe-webhook.ts   # Handle Stripe payment confirmation
-│   │   │   ├── print-order.ts      # Place Prodigi fulfillment order
+│   │   │   ├── orders.ts           # Image upload (R2), Stripe Checkout, Prodigi quote, user/admin order CRUD
+│   │   │   ├── webhooks.ts         # Stripe + Prodigi webhook handlers
 │   │   │   ├── geocode.ts          # Proxy Photon geocoding (with KV cache)
-│   │   │   ├── route.ts            # Proxy OpenRouteService routing (with KV cache)
-│   │   │   └── images.ts           # Upload/serve print-ready images (R2)
+│   │   │   └── route.ts            # Proxy OpenRouteService routing (with KV cache)
 │   │   ├── db/
 │   │   │   ├── types.ts            # Shared D1 row types: MapRow, StopRow, ShareRow
 │   │   │   ├── schema.sql          # D1 schema: users, sessions, accounts, maps, stops, map_shares
 │   │   │   └── migrations/         # D1 migration files (0001–0006)
 │   │   └── lib/
-│   │       ├── prodigi.ts          # Prodigi API client
-│   │       └── stripe.ts           # Stripe API helpers
+│   │       ├── prodigi.ts          # Prodigi API client (quotes + order placement)
+│   │       ├── stripe.ts           # Stripe SDK init (Workers-compatible fetch HTTP client)
+│   │       └── discord.ts          # Discord webhook notifications (order events)
 │   └── package.json
+├── shared/
+│   ├── types.ts                    # Shared types (Map, Stop, Order, ShippingAddress)
+│   ├── icons.ts                    # Curated icon set for markers
+│   └── products.ts                 # Product catalog (poster/canvas SKUs, sizes, prices, status badges)
 └── public/
     ├── fonts/
     └── images/                     # Landing page art, decorative elements
@@ -1609,35 +1612,139 @@ The `_isFullHeight` getter checks `location.pathname.startsWith('/map/')` to app
 
 ---
 
-### Milestone 9: Print Ordering (Stripe + Prodigi)
+### Milestone 9: Print Ordering (Stripe + Prodigi) ✓
 
 **Goal:** Users can order a printed poster and receive it in the mail.
 
 *Depends on M7 — export renders the image that gets uploaded for printing.*
 
-**Build:**
-1. Implement R2 image upload route in Worker (`POST /api/images/:map_id`) + `services/image-upload.ts`
-2. Build client-side 200 DPI image render + upload flow — attempt render, upload on success, proceed to checkout regardless; pass `image_url` to checkout only if upload succeeded
-3. Build `print-order-form.ts` — poster size selection ($19.99 / $29.99), shipping address form, shipping cost display (fetched from Prodigi quote)
-4. Implement Prodigi quote route in Worker (`POST /api/print-quote`) — calls Prodigi quote API with poster size + shipping address → returns exact shipping cost
-5. Implement Stripe Checkout session creation in Worker (`POST /api/checkout`) — poster price + quoted shipping as separate line items, user ID in metadata; `image_url` is optional
-6. Build `services/stripe.ts` — Stripe Checkout session creation client
-7. Implement Stripe webhook handler in Worker (`POST /api/webhooks/stripe`) — verify signature; **idempotency check** (`stripe_session_id` already in D1 → return 200, skip); create order record in D1; if `image_url` present → place Prodigi order immediately (status: `submitted`); if absent → set status `pending_render`, send admin notification via Cloudflare Email Workers
-8. Implement Prodigi order placement in Worker (`worker/src/lib/prodigi.ts`) — called from both the webhook handler (auto path) and the admin endpoint (manual path)
-9. Implement admin endpoint (`PATCH /api/admin/orders/:id`) — accepts `{ image_url }`, places Prodigi order, updates status to `submitted`; protected by `Authorization: Bearer {ADMIN_SECRET}` header
-10. Implement Prodigi webhook handler in Worker (`POST /api/webhooks/prodigi`) — update order status + tracking URL
-11. Build `order-confirmation-page.ts` — shows vague "We're preparing your map for print — shipping notification within 1–2 business days" copy regardless of path; shows tracking info once available
-12. Dashboard: order history section (past print orders with status/tracking)
+#### Product Catalog (`shared/products.ts`)
+
+Two product types with three sizes each:
+
+| Product | SKU Prefix | 18×24" | 24×36" | 40×60" |
+|---------|-----------|--------|--------|--------|
+| **Budget Poster** (matte) | GLOBAL-BLP | $29.99 | $39.99 | $49.99 |
+| **Eco Rolled Canvas** (museum-quality) | ECO-ROL | $39.99 | $49.99 | $59.99 |
+
+Placeholder shipping: $9.99 (overridden by real Prodigi quotes at checkout).
+
+#### Database Schema
+
+New `orders` table in `0001_initial.sql`:
+- **Core:** `id`, `map_id` (FK → maps, RESTRICT), `user_id` (FK → user, RESTRICT)
+- **Product:** `product_type` (poster/canvas), `product_sku`, `poster_size` (18x24/24x36/40x60)
+- **Payment:** `stripe_session_id` (UNIQUE for idempotency), `subtotal`, `shipping_cost`, `currency`
+- **Fulfillment:** `prodigi_order_id`, `status`, `tracking_url`, `image_url` (R2 key), `shipping_address` (JSON)
+- **Observability:** `discord_notified` flag, `created_at`, `updated_at`
+- RESTRICT on delete to preserve financial records
+
+#### Order Lifecycle
+
+```
+1. User clicks "Order a Print" on map-preview-page (owner/editor, printable size only)
+2. /order/:mapId — select product + size, enter shipping address
+3. Real-time shipping quote fetched from Prodigi (500ms debounce)
+4. "Order Print" → render map PNG (800×600) → upload to R2 → create Stripe Checkout → redirect
+5. User pays on Stripe → webhook fires → order row created in D1
+6. If image uploaded: auto-submit to Prodigi (status: submitted)
+   If no image: status = pending_render (admin submits later via /admin)
+7. Prodigi webhooks update status: in_production → shipped (+ tracking URL) → completed
+8. User sees status + tracking on /order-confirmation/:orderId
+```
+
+#### API Routes (`worker/src/routes/orders.ts`)
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/images/:mapId` | Owner/Editor | Upload print image to R2 (multipart, ≤100MB) |
+| GET | `/api/images/*` | Public | Serve R2 images (1yr immutable cache) |
+| POST | `/api/checkout` | Auth | Create Stripe Checkout session, insert order row |
+| POST | `/api/print-quote` | Auth | Prodigi shipping quote (SKU + size + country → cost + days) |
+| GET | `/api/orders` | Auth | List user's orders (100 max) |
+| GET | `/api/orders/:id` | Auth | Single order with map name |
+| GET | `/api/admin/orders` | Bearer | List orders (200 max, optional `?status=` filter) |
+| GET | `/api/admin/orders/:id` | Bearer | Single order with user email |
+| PATCH | `/api/admin/orders/:id` | Bearer | Update image_url or submit to Prodigi |
+
+#### Webhook Routes (`worker/src/routes/webhooks.ts`)
+
+**Stripe** (`POST /api/webhooks/stripe`):
+- Verifies signature, handles `checkout.session.completed`
+- Idempotent via `stripe_session_id` UNIQUE constraint
+- Auto-submits to Prodigi if image exists, falls back to `pending_render`
+- Sends Discord notification
+
+**Prodigi** (`POST /api/webhooks/prodigi/:secret`):
+- Status mapping: `InProgress` → `in_production`, `Shipped` → `shipped` (extracts tracking URL), `Complete` → `completed`, `Cancelled` → `cancelled`
+
+#### Client Pages
+
+**Order Page** (`/order/:id`):
+- Product radio group + dynamic size picker
+- 6-field shipping address form (30 countries from `utils/countries.ts`)
+- Real-time Prodigi shipping quote (debounced)
+- Multi-step flow: form → rendering → uploading → Stripe redirect
+- Error handling with retry UI, responsive at 700px
+
+**Order Confirmation** (`/order-confirmation/:orderId`):
+- Order reference (first 8 chars uppercase), status badge, tracking link
+
+**Admin Page** (`/admin`):
+- Self-auth via admin secret → sessionStorage
+- Filterable order table (ID, email, map, product, size, status, date)
+- "Submit to Prodigi" action for pending orders
+
+#### Integration Libraries (`worker/src/lib/`)
+
+- **stripe.ts** — Stripe SDK with Workers-compatible fetch HTTP client
+- **prodigi.ts** — `getShippingQuote()` (POST `/v4.0/quotes`) + `createOrder()` (POST `/v4.0/orders`, order ID as idempotency key); sandbox/live via `PRODIGI_SANDBOX` env var
+- **discord.ts** — Fire-and-forget webhook POST for order notifications
+
+#### Client Service (`src/services/orders.ts`)
+
+Typed API wrappers: `uploadPrintImage()`, `createCheckout()`, `getOrder()`, `listOrders()`, `getPrintQuote()`
+
+#### Component Integrations
+
+- **map-preview-page.ts** — "Order a Print" button shown when user is owner/editor and paper size is in `PRINTABLE_SIZES` (18x24, 24x36, 40x60)
+- **dashboard-page.ts** — Order history section with status badges and tracking links
+- **app-shell.ts** — Routes registered: `/order/:id`, `/order-confirmation/:orderId`, `/admin`
+
+#### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `STRIPE_SECRET_KEY` | Stripe API key |
+| `STRIPE_WEBHOOK_SECRET` | Webhook signature verification |
+| `PRODIGI_API_KEY` | Prodigi API key |
+| `PRODIGI_SANDBOX` | `"true"` for sandbox API |
+| `PRODIGI_WEBHOOK_SECRET` | Prodigi webhook URL secret |
+| `ADMIN_SECRET` | Bearer token for `/admin` routes |
+| `DISCORD_WEBHOOK_URL` | (optional) Order event notifications |
+| `ROADTRIP_PRINTS` (R2) | Print image storage bucket |
+
+#### Dependencies Added
+
+- `stripe@^20.4.1` in worker/package.json
+
+#### Key Design Decisions
+
+- **Idempotency:** Stripe `session_id` UNIQUE in D1 + Prodigi order ID as idempotency key
+- **Graceful degradation:** Quote failure → placeholder cost; Prodigi auto-submit failure → `pending_render` for admin
+- **Security:** Admin routes use Bearer token, webhooks excluded from CSRF, R2 images use unguessable UUIDs
+- **Financial integrity:** Orders use RESTRICT on FK delete — cannot delete maps/users with orders
+- **Observability:** Discord webhooks on order creation/submission
 
 **Verify:**
 - Render succeeds: image uploaded to R2, checkout completes, webhook places Prodigi order automatically (status: `submitted`)
-- Render fails (simulate by skipping upload): checkout still completes, order created with `pending_render` status, admin notification email sent
-- Admin calls `PATCH /api/admin/orders/:id` with image URL → Prodigi sandbox order placed, status updates to `submitted`
+- Render fails (simulate by skipping upload): checkout still completes, order created with `pending_render` status, admin notified via Discord
+- Admin calls `PATCH /api/admin/orders/:id` with action → Prodigi sandbox order placed, status updates to `submitted`
 - Stripe webhook idempotency: deliver same webhook twice → only one order record, one Prodigi order
 - Stripe Checkout with test keys + test card numbers — payment succeeds on both paths
 - Prodigi webhook updates tracking info in D1
 - Order confirmation page shows appropriate copy at each status
-- End-to-end: sign up → create map → add stops → share with collaborator → export PDF → order print → confirm order
+- End-to-end: sign up → create map → add stops → order print → pay → confirm order → track shipment
 
 ---
 

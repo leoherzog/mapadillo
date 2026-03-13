@@ -4,18 +4,21 @@
  * M4: Fetches owned maps from the API and displays them as thumbnail cards
  * with mini MapLibre previews.
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import type { MapWithRole } from '../services/maps.js';
 import { listMaps, deleteMap } from '../services/maps.js';
+import { listOrders, type Order } from '../services/orders.js';
 import { navClick } from '../nav.js';
 import '../components/map-card.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
+import { STATUS_VARIANTS } from '../../shared/products.js';
 
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
   @state() private _maps: MapWithRole[] = [];
+  @state() private _orders: (Order & { map_name?: string })[] = [];
   @state() private _loading = true;
   @state() private _fetchError = false;
   @state() private _deleteMapId: string | null = null;
@@ -69,6 +72,24 @@ export class DashboardPage extends LitElement {
     .loading-center {
       padding: var(--wa-space-2xl);
     }
+
+    .order-row {
+      padding: var(--wa-space-xs) 0;
+      border-bottom: 1px solid var(--wa-color-border-normal);
+    }
+
+    .order-map-name {
+      font-weight: var(--wa-font-weight-semibold);
+    }
+
+    .order-detail {
+      font-size: var(--wa-font-size-xs);
+      color: var(--wa-color-text-quiet);
+    }
+
+    .order-track {
+      font-size: var(--wa-font-size-xs);
+    }
   `];
 
   connectedCallback(): void {
@@ -80,9 +101,12 @@ export class DashboardPage extends LitElement {
     this._loading = true;
     this._fetchError = false;
     try {
-      this._maps = await listMaps();
+      const [maps, orders] = await Promise.all([listMaps(), listOrders().catch(() => [])]);
+      this._maps = maps;
+      this._orders = orders as (Order & { map_name?: string })[];
     } catch {
       this._maps = [];
+      this._orders = [];
       this._fetchError = true;
     } finally {
       this._loading = false;
@@ -149,6 +173,26 @@ export class DashboardPage extends LitElement {
                 )}
               </div>
             `}
+
+      ${this._orders.length > 0 ? html`
+        <h2>
+          <wa-icon name="print"></wa-icon>
+          Print Orders
+        </h2>
+        <div class="wa-stack wa-gap-s" style="margin-top: var(--wa-space-m);">
+          ${this._orders.map(o => html`
+            <div class="wa-cluster wa-gap-m wa-align-items-center order-row">
+              <span class="order-map-name">${o.map_name ?? 'Unknown Map'}</span>
+              <span class="order-detail">${o.product_type} ${o.poster_size}</span>
+              <wa-badge variant=${STATUS_VARIANTS[o.status] ?? 'neutral'}>
+                ${o.status.replace(/_/g, ' ')}
+              </wa-badge>
+              <wa-relative-time .date=${new Date(o.created_at)} class="order-detail"></wa-relative-time>
+              ${o.tracking_url ? html`<a href=${o.tracking_url} target="_blank" rel="noopener" class="order-track">Track</a>` : nothing}
+            </div>
+          `)}
+        </div>
+      ` : nothing}
 
       <wa-dialog label="Delete Trip?" ?open=${this._dialogOpen} @wa-after-hide=${this._onDialogCancel}>
         <p>This cannot be undone.</p>
