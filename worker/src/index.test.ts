@@ -598,7 +598,7 @@ describe('Geocoding - /api/geocode', () => {
       expect(res.status).toBe(400);
     });
 
-    it('proxies to Photon and returns GeoJSON for valid query', async () => {
+    it('proxies to Photon and returns GeoJSON for valid query', { timeout: 15_000 }, async () => {
       const res = await request('/api/geocode?q=Berlin&lang=en&limit=3', {
         headers: { cookie },
       });
@@ -692,7 +692,7 @@ describe('Routing proxy - POST /api/route', () => {
       expect(res.status).toBe(400);
     });
 
-    it('proxies to ORS for valid request', async () => {
+    it('proxies to ORS for valid request', { timeout: 15_000 }, async () => {
       const res = await jsonRequest('/api/route', 'POST', {
         profile: 'driving-car',
         start: [13.388860, 52.517037],
