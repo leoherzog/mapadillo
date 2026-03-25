@@ -278,7 +278,7 @@ export class ShareDialog extends LitElement {
   }
 
   private async _onVisibilityToggle(e: Event) {
-    const isPublic = (e.target as HTMLInputElement & { checked: boolean }).checked;
+    const isPublic = (e.target as HTMLElement & { checked: boolean }).checked;
     const newVisibility = isPublic ? 'public' : 'private';
     try {
       await updateVisibility(this.mapId, newVisibility);
@@ -294,7 +294,7 @@ export class ShareDialog extends LitElement {
   }
 
   private _onLinkRoleChange(e: Event) {
-    this._linkRole = (e.target as HTMLInputElement).value as 'viewer' | 'editor';
+    this._linkRole = (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor';
   }
 
   private async _onGenerateLink() {

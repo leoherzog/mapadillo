@@ -74,7 +74,7 @@ export class ItemList extends LitElement {
     if (this.items.length === 0) {
       return html`
         <wa-callout class="empty">
-          <wa-icon slot="icon" name="map" library="default"></wa-icon>
+          <wa-icon slot="icon" name="map"></wa-icon>
           Add points or routes to build your map!
         </wa-callout>
       `;

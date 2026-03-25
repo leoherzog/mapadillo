@@ -90,7 +90,8 @@ export class OrderConfirmationPage extends LitElement {
             <wa-callout variant="success">
               <wa-icon slot="icon" name="truck"></wa-icon>
               Your order has shipped!
-              <wa-button slot="action" variant="brand" size="small" href=${this._order.tracking_url} target="_blank">
+              <br />
+              <wa-button variant="brand" size="small" href=${this._order.tracking_url} target="_blank" style="margin-top: var(--wa-space-s)">
                 <wa-icon slot="start" name="arrow-up-right-from-square"></wa-icon>
                 Track Package
               </wa-button>

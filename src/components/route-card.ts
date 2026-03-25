@@ -142,9 +142,11 @@ export class RouteCard extends LitElement {
         <div class="header-row wa-cluster wa-align-items-center wa-gap-xs">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
           <span class="route-title">${this._title}</span>
-          <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
-            <wa-icon name="xmark" label="Delete route"></wa-icon>
-          </wa-button>
+          <wa-tooltip content="Delete route">
+            <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
+              <wa-icon name="xmark" label="Delete route"></wa-icon>
+            </wa-button>
+          </wa-tooltip>
         </div>
 
         <!-- Start -->

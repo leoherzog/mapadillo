@@ -321,6 +321,7 @@ export class ExportPage extends MapPageBase {
 
           <!-- Format + Download -->
           <wa-radio-group
+            label="Export format"
             .value=${this._format}
             @change=${this._onFormatChange}
           >
@@ -379,11 +380,11 @@ export class ExportPage extends MapPageBase {
   // ── Event handlers ────────────────────────────────────────────────────
 
   private _onFormatChange(e: Event) {
-    this._format = (e.target as HTMLInputElement).value as ExportFormat;
+    this._format = (e.target as HTMLElement & { value: string }).value as ExportFormat;
   }
 
   private _onTripDetailsChange(e: Event) {
-    this._includeTripDetails = (e.target as HTMLInputElement).checked;
+    this._includeTripDetails = (e.target as HTMLElement & { checked: boolean }).checked;
   }
 
   private async _onDownload() {

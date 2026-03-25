@@ -54,7 +54,7 @@ beforeEach(() => {
   window.history.pushState(null, '', '/');
   // Ensure no Navigation API so popstate fallback is used
   if ('navigation' in window) {
-    delete (window as Record<string, unknown>).navigation;
+    delete (window as unknown as Record<string, unknown>).navigation;
   }
 });
 

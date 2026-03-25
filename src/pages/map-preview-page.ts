@@ -321,14 +321,16 @@ export class MapPreviewPage extends MapPageBase {
 
                 <wa-select
                   label="Paper size"
+                  .value=${this._paperSize}
                   @change=${this._onPaperSizeChange}
                 >
                   ${Object.entries(PAPER_SIZE_LABELS).map(
-                    ([value, label]) => html`<wa-option value=${value} ?selected=${value === this._paperSize}>${label}</wa-option>`,
+                    ([value, label]) => html`<wa-option value=${value}>${label}</wa-option>`,
                   )}
                 </wa-select>
 
                 <wa-radio-group
+                  label="Orientation"
                   .value=${this._orientation}
                   @change=${this._onOrientationChange}
                 >
@@ -373,12 +375,12 @@ export class MapPreviewPage extends MapPageBase {
   // ── Event handlers ────────────────────────────────────────────────────
 
   private _onPaperSizeChange(e: Event) {
-    this._paperSize = (e.target as HTMLSelectElement).value as PaperSize;
+    this._paperSize = (e.target as HTMLElement & { value: string }).value as PaperSize;
     this._scheduleSave();
   }
 
   private _onOrientationChange(e: Event) {
-    this._orientation = (e.target as HTMLInputElement).value as Orientation;
+    this._orientation = (e.target as HTMLElement & { value: string }).value as Orientation;
     this._scheduleSave();
   }
 

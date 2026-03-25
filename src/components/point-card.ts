@@ -77,9 +77,11 @@ export class PointCard extends LitElement {
         <div class="wa-cluster wa-align-items-center wa-gap-xs card-header">
           <wa-icon class="drag-handle" name="bars"></wa-icon>
           <span class="name-input point-name">${this._hasLocation ? this.item.name : 'New Point'}</span>
-          <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
-            <wa-icon name="xmark" label="Delete point"></wa-icon>
-          </wa-button>
+          <wa-tooltip content="Delete point">
+            <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
+              <wa-icon name="xmark" label="Delete point"></wa-icon>
+            </wa-button>
+          </wa-tooltip>
         </div>
 
         ${this._hasLocation && !this._editingLocation ? html`

@@ -97,7 +97,7 @@ export class SignInPage extends LitElement {
           ${this._error
             ? html`
                 <wa-callout variant="danger">
-                  <wa-icon slot="icon" name="circle-info" family="jelly"></wa-icon>
+                  <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                   ${this._error}
                 </wa-callout>
               `
@@ -264,7 +264,7 @@ export class SignInPage extends LitElement {
     try {
       const result = await authClient.signIn.passkey();
       if (result?.error) {
-        this._error = result.error.message ?? 'Passkey sign-in failed';
+        this._error = String(result.error.message ?? 'Passkey sign-in failed');
         this._loading = false;
         return;
       }
@@ -332,7 +332,7 @@ export class SignInPage extends LitElement {
       }
       if (passkeyResult?.error) {
         try { await authClient.signOut(); } catch { /* best-effort */ }
-        this._error = passkeyResult.error.message ?? 'Passkey registration failed. Please try again.';
+        this._error = String(passkeyResult.error.message ?? 'Passkey registration failed. Please try again.');
         this._loading = false;
         return;
       }

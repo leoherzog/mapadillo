@@ -88,8 +88,13 @@ export class Router implements ReactiveController {
     }));
   }
 
+  private get _nav(): NavigationInterface | undefined {
+    return (window as unknown as { navigation?: NavigationInterface }).navigation;
+  }
+
   hostConnected(): void {
-    if (!('navigation' in window)) {
+    const nav = this._nav;
+    if (!nav) {
       console.warn('[Router] Navigation API not available, using popstate fallback.');
       this._popstateHandler = () => void this._renderForUrl(window.location.href);
       window.addEventListener('popstate', this._popstateHandler);
@@ -97,8 +102,7 @@ export class Router implements ReactiveController {
       return;
     }
 
-    (window as unknown as { navigation: NavigationInterface }).navigation
-      .addEventListener('navigate', this._onNavigate as EventListener);
+    nav.addEventListener('navigate', this._onNavigate as EventListener);
 
     void this._renderForUrl(window.location.href);
   }
@@ -108,10 +112,7 @@ export class Router implements ReactiveController {
       window.removeEventListener('popstate', this._popstateHandler);
       this._popstateHandler = null;
     }
-    if ('navigation' in window) {
-      (window as unknown as { navigation: NavigationInterface }).navigation
-        .removeEventListener('navigate', this._onNavigate as EventListener);
-    }
+    this._nav?.removeEventListener('navigate', this._onNavigate as EventListener);
   }
 
   private _onNavigate = (rawEvent: Event): void => {
@@ -160,9 +161,9 @@ export class Router implements ReactiveController {
       this._currentTemplate = html`
         <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; }</style>
         <wa-callout class="router-callout" variant="danger">
-          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
           <strong>Something went wrong</strong><br />
-          <a href="/">Go home</a>
+          <wa-button href="/" size="small" variant="brand" appearance="outlined" style="margin-top: var(--wa-space-xs)">Go home</wa-button>
         </wa-callout>
       `;
     }
@@ -200,7 +201,7 @@ export class Router implements ReactiveController {
       <wa-callout class="router-callout" variant="warning">
         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
         <strong>404 — Page not found</strong><br />
-        <a href="/">Go home</a>
+        <wa-button href="/" size="small" variant="brand" appearance="outlined" style="margin-top: var(--wa-space-xs)">Go home</wa-button>
       </wa-callout>
     `;
   }

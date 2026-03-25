@@ -9,12 +9,8 @@ export function navigateTo(path: string, options?: { replace?: boolean }): void 
   // Avoid duplicate history entries if already at this URL
   if (new URL(path, location.origin).href === location.href) return;
 
-  if ('navigation' in window) {
-    const nav = (
-      window as unknown as {
-        navigation: { navigate: (url: string, opts?: { history?: string }) => void };
-      }
-    ).navigation;
+  const nav = (window as unknown as { navigation?: { navigate: (url: string, opts?: { history?: string }) => void } }).navigation;
+  if (nav) {
     nav.navigate(path, options?.replace ? { history: 'replace' } : undefined);
   } else {
     if (options?.replace) window.history.replaceState(null, '', path);
