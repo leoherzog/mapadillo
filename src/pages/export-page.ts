@@ -9,6 +9,8 @@ import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 import { familyNameStyles } from '../styles/page-layout.js';
+import { contentPageStyles } from '../styles/content-page.js';
+import { hiddenMapStyles } from '../styles/hidden-map.js';
 import { navigateTo, navClick } from '../nav.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import {
@@ -60,15 +62,7 @@ export class ExportPage extends MapPageBase {
   private _units: Units = getUnits();
   private _onUnitsChange = () => { this._units = getUnits(); };
 
-  static styles = [waUtilities, headingStyles, familyNameStyles, css`
-    :host {
-      display: block;
-      padding: var(--wa-space-xl) var(--wa-space-m);
-      max-width: 1100px;
-      margin: 0 auto;
-      overflow-y: auto;
-    }
-
+  static styles = [waUtilities, headingStyles, familyNameStyles, contentPageStyles('1100px'), hiddenMapStyles('1400px', '900px'), css`
     h1 {
       margin-top: var(--wa-space-s);
       font-size: var(--wa-font-size-2xl);
@@ -84,6 +78,10 @@ export class ExportPage extends MapPageBase {
       display: block;
       width: 100%;
       height: auto;
+    }
+
+    .rendering-status {
+      padding: var(--wa-space-3xl) 0;
     }
 
     .rendering-status wa-spinner {
@@ -106,20 +104,6 @@ export class ExportPage extends MapPageBase {
       font-weight: var(--wa-font-weight-semibold);
     }
 
-    .hidden-map {
-      position: fixed;
-      left: -99999px;
-      top: -99999px;
-      width: 1400px;
-      height: 900px;
-      visibility: hidden;
-    }
-
-    @media (max-width: 700px) {
-      :host {
-        padding: var(--wa-space-m) var(--wa-space-s);
-      }
-    }
   `];
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -287,7 +271,7 @@ export class ExportPage extends MapPageBase {
   private _renderBody() {
     if (this._rendering) {
       return html`
-        <div class="rendering-status wa-stack wa-align-items-center wa-gap-m" style="padding: var(--wa-space-3xl) 0;">
+        <div class="rendering-status wa-stack wa-align-items-center wa-gap-m">
           <wa-spinner></wa-spinner>
           <p class="hint">Rendering your map at print resolution...</p>
         </div>

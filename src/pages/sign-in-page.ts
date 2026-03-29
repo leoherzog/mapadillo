@@ -150,7 +150,7 @@ export class SignInPage extends LitElement {
           autocomplete="name"
           required
           .value=${this._name}
-          @input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this._name = (e.target as HTMLElement & { value: string }).value; }}
         ></wa-input>
         <wa-input
           label="Email"
@@ -159,7 +159,7 @@ export class SignInPage extends LitElement {
           autocomplete="email"
           required
           .value=${this._email}
-          @input=${(e: Event) => { this._email = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this._email = (e.target as HTMLElement & { value: string }).value; }}
         ></wa-input>
         <wa-button
           variant="brand"

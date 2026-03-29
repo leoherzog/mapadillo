@@ -58,9 +58,6 @@ export class LocationSearch extends LitElement {
       display: block;
       font-size: var(--wa-font-size-s);
       color: var(--wa-color-text-quiet);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
   `;
 
@@ -90,7 +87,6 @@ export class LocationSearch extends LitElement {
   render() {
     return html`
       <wa-combobox
-        autocomplete="none"
         placeholder=${this.placeholder}
         with-clear
         @wa-clear=${this._onClear}
@@ -130,7 +126,7 @@ export class LocationSearch extends LitElement {
               name="star"
             ></wa-icon>
             ${r.name}
-            <span class="option-detail">
+            <span class="option-detail wa-text-truncate">
               ${this._formatDetail(r)}
             </span>
           </wa-option>
@@ -147,7 +143,7 @@ export class LocationSearch extends LitElement {
               name="location-dot"
             ></wa-icon>
             ${r.name}
-            <span class="option-detail">
+            <span class="option-detail wa-text-truncate">
               ${this._formatDetail(r)}
             </span>
           </wa-option>

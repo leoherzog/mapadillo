@@ -5,6 +5,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
+import { contentPageStyles } from '../styles/content-page.js';
 import { navClick } from '../nav.js';
 import { getOrder, type Order } from '../services/orders.js';
 import { STATUS_VARIANTS } from '../../shared/products.js';
@@ -16,14 +17,7 @@ export class OrderConfirmationPage extends LitElement {
   @state() private _loading = true;
   @state() private _error = '';
 
-  static styles = [waUtilities, headingStyles, css`
-    :host {
-      display: block;
-      padding: var(--wa-space-xl) var(--wa-space-m);
-      max-width: 600px;
-      margin: 0 auto;
-    }
-
+  static styles = [waUtilities, headingStyles, contentPageStyles('600px'), css`
     .success-icon {
       font-size: 3rem;
       color: var(--wa-color-success-50);

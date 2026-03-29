@@ -55,28 +55,17 @@ export class IconPicker extends LitElement {
     }
 
     .icon-btn {
-      padding: var(--wa-space-2xs) var(--wa-space-3xs);
-      background: none;
-      border: var(--wa-border-width-m) solid transparent;
-      border-radius: var(--wa-border-radius-m);
-      cursor: pointer;
       font-size: var(--wa-font-size-l);
     }
 
-    .icon-btn:hover {
-      background: var(--wa-color-surface-lowered);
-    }
-
     .icon-btn.selected {
-      border-color: var(--wa-color-brand-50);
+      outline: var(--wa-border-width-m) solid var(--wa-color-brand-50);
+      outline-offset: -1px;
     }
 
     .icon-btn .label {
       font-size: var(--wa-font-size-2xs);
       color: var(--wa-color-text-quiet);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
       max-width: 100%;
     }
   `];
@@ -93,14 +82,16 @@ export class IconPicker extends LitElement {
             <div class="wa-grid wa-gap-3xs" style="--min-column-size: 4rem">
               ${icons.map(
                 (icon) => html`
-                  <button
+                  <wa-button
                     class="icon-btn wa-stack wa-align-items-center wa-gap-0 ${icon === this.value ? 'selected' : ''}"
+                    appearance="plain"
+                    size="small"
                     aria-label=${icon === 'none' ? 'No icon' : icon}
                     @click=${() => this._select(icon)}
                   >
                     <wa-icon name=${displayIcon(icon)}></wa-icon>
-                    <span class="label">${icon === 'none' ? 'none' : icon}</span>
-                  </button>
+                    <span class="label wa-text-truncate">${icon === 'none' ? 'none' : icon}</span>
+                  </wa-button>
                 `,
               )}
             </div>

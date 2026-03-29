@@ -8,6 +8,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
+import { contentPageStyles } from '../styles/content-page.js';
 import { STATUS_VARIANTS } from '../../shared/products.js';
 import type { Order } from '../../shared/types.js';
 
@@ -26,15 +27,7 @@ export class AdminPage extends LitElement {
   @state() private _statusFilter = '';
   @state() private _actionLoading: string | null = null;
 
-  static styles = [waUtilities, headingStyles, css`
-    :host {
-      display: block;
-      padding: var(--wa-space-xl) var(--wa-space-m);
-      max-width: 1200px;
-      margin: 0 auto;
-      overflow-y: auto;
-    }
-
+  static styles = [waUtilities, headingStyles, contentPageStyles('1200px'), css`
     h1 { font-size: var(--wa-font-size-2xl); margin-bottom: var(--wa-space-l); }
 
     .auth-form {
@@ -63,8 +56,9 @@ export class AdminPage extends LitElement {
 
     .mono { font-family: monospace; font-size: var(--wa-font-size-xs); }
 
+    .filter-bar { margin-bottom: var(--wa-space-l); }
+
     @media (max-width: 700px) {
-      :host { padding: var(--wa-space-m) var(--wa-space-xs); }
       table { font-size: var(--wa-font-size-xs); }
       th, td { padding: var(--wa-space-2xs) var(--wa-space-xs); }
     }
@@ -143,7 +137,7 @@ export class AdminPage extends LitElement {
             label="Admin Secret"
             type="password"
             .value=${this._secret}
-            @input=${(e: Event) => { this._secret = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._secret = (e.target as HTMLElement & { value: string }).value; }}
             @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this._authenticate(); }}
           ></wa-input>
           ${this._error ? html`<wa-callout variant="danger"><wa-icon slot="icon" name="circle-xmark"></wa-icon>${this._error}</wa-callout>` : nothing}
@@ -155,13 +149,13 @@ export class AdminPage extends LitElement {
     return html`
       <h1><wa-icon name="lock"></wa-icon> Admin — Orders</h1>
 
-      <div class="wa-cluster wa-gap-s wa-align-items-end" style="margin-bottom: var(--wa-space-l);">
+      <div class="wa-cluster wa-gap-s wa-align-items-end filter-bar">
         <wa-select
           label="Status filter"
           placeholder="All statuses"
           with-clear
           .value=${this._statusFilter}
-          @change=${(e: Event) => { this._statusFilter = (e.target as HTMLSelectElement).value; this._fetchOrders(); }}
+          @change=${(e: Event) => { this._statusFilter = (e.target as HTMLElement & { value: string }).value; this._fetchOrders(); }}
           @wa-clear=${() => { this._statusFilter = ''; this._fetchOrders(); }}
         >
           <wa-option value="pending_payment">Pending Payment</wa-option>

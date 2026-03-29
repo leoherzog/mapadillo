@@ -194,11 +194,10 @@ export class MapCard extends LitElement {
         <div class="meta wa-split wa-align-items-center">
           <span>${itemCount} item${itemCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
           ${!this.roleBadge ? html`
-            <wa-tooltip content="Delete map">
-              <wa-button class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
-                <wa-icon name="trash" label="Delete map"></wa-icon>
-              </wa-button>
-            </wa-tooltip>
+            <wa-button id="delete-map" class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
+              <wa-icon name="trash" label="Delete map"></wa-icon>
+            </wa-button>
+            <wa-tooltip for="delete-map">Delete map</wa-tooltip>
           ` : nothing}
         </div>
       </wa-card>

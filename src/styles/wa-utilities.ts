@@ -3,5 +3,6 @@ import layoutCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/layo
 import gapCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/gap.css?inline';
 import alignCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/align-items.css?inline';
 import justifyCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/justify-content.css?inline';
+import textCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/text.css?inline';
 
-export const waUtilities = unsafeCSS(`${layoutCSS}\n${gapCSS}\n${alignCSS}\n${justifyCSS}`);
+export const waUtilities = unsafeCSS(`${layoutCSS}\n${gapCSS}\n${alignCSS}\n${justifyCSS}\n${textCSS}`);

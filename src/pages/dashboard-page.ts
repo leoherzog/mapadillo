@@ -13,6 +13,7 @@ import { navClick } from '../nav.js';
 import '../components/map-card.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
+import { contentPageStyles } from '../styles/content-page.js';
 import { STATUS_VARIANTS } from '../../shared/products.js';
 
 @customElement('dashboard-page')
@@ -33,15 +34,7 @@ export class DashboardPage extends LitElement {
 
   @state() private _dialogOpen = false;
 
-  static styles = [waUtilities, headingStyles, css`
-    :host {
-      display: block;
-      padding: var(--wa-space-xl) var(--wa-space-m);
-      max-width: 1000px;
-      margin: 0 auto;
-      overflow-y: auto;
-    }
-
+  static styles = [waUtilities, headingStyles, contentPageStyles('1000px'), css`
     h1 {
       font-size: var(--wa-font-size-3xl);
       margin-bottom: var(--wa-space-xs);
@@ -71,6 +64,10 @@ export class DashboardPage extends LitElement {
 
     .loading-center {
       padding: var(--wa-space-2xl);
+    }
+
+    .orders-list {
+      margin-top: var(--wa-space-m);
     }
 
     .order-row {
@@ -179,7 +176,7 @@ export class DashboardPage extends LitElement {
           <wa-icon name="print"></wa-icon>
           Print Orders
         </h2>
-        <div class="wa-stack wa-gap-s" style="margin-top: var(--wa-space-m);">
+        <div class="wa-stack wa-gap-s orders-list">
           ${this._orders.map(o => html`
             <div class="wa-cluster wa-gap-m wa-align-items-center order-row">
               <span class="order-map-name">${o.map_name ?? 'Unknown Map'}</span>

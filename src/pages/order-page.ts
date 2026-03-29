@@ -8,6 +8,8 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
+import { contentPageStyles } from '../styles/content-page.js';
+import { hiddenMapStyles } from '../styles/hidden-map.js';
 import { navigateTo, navClick } from '../nav.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { getMap, type MapWithRole } from '../services/maps.js';
@@ -54,15 +56,7 @@ export class OrderPage extends LitElement {
   private _mapController?: MapController;
   private _quoteTimer?: ReturnType<typeof setTimeout>;
 
-  static styles = [waUtilities, headingStyles, css`
-    :host {
-      display: block;
-      padding: var(--wa-space-xl) var(--wa-space-m);
-      max-width: 700px;
-      margin: 0 auto;
-      overflow-y: auto;
-    }
-
+  static styles = [waUtilities, headingStyles, contentPageStyles('700px'), hiddenMapStyles('800px', '600px'), css`
     h1 {
       font-size: var(--wa-font-size-2xl);
       margin-bottom: var(--wa-space-xs);
@@ -109,15 +103,6 @@ export class OrderPage extends LitElement {
       width: 100%;
     }
 
-    .hidden-map {
-      position: fixed;
-      left: -99999px;
-      top: -99999px;
-      width: 800px;
-      height: 600px;
-      visibility: hidden;
-    }
-
     .step-status {
       padding-top: var(--wa-space-2xl);
       text-align: center;
@@ -133,10 +118,6 @@ export class OrderPage extends LitElement {
     }
 
     @media (max-width: 700px) {
-      :host {
-        padding: var(--wa-space-m) var(--wa-space-s);
-      }
-
       .address-grid {
         grid-template-columns: 1fr;
       }
@@ -202,10 +183,6 @@ export class OrderPage extends LitElement {
     return size.priceCents + shipping;
   }
 
-  private _formatPrice(cents: number): string {
-    return `$${(cents / 100).toFixed(2)}`;
-  }
-
   render() {
     if (this._loading) {
       return html`<div class="wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`;
@@ -269,7 +246,7 @@ export class OrderPage extends LitElement {
         >
           ${product.sizes.map(s => html`
             <wa-radio appearance="button" value=${s.size}>
-              ${s.label} — ${this._formatPrice(s.priceCents)}
+              ${s.label} — <wa-format-number type="currency" currency="USD" .value=${s.priceCents / 100}></wa-format-number>
             </wa-radio>
           `)}
         </wa-radio-group>
@@ -278,14 +255,14 @@ export class OrderPage extends LitElement {
 
         <!-- Shipping address -->
         <h2>Shipping Address</h2>
-        <div class="address-grid">
+        <form class="address-grid" @submit=${(e: Event) => e.preventDefault()}>
           <wa-input
             class="full-width"
             label="Full name"
             required
             autocomplete="name"
             .value=${this._name}
-            @input=${(e: Event) => { this._name = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._name = (e.target as HTMLElement & { value: string }).value; }}
           ></wa-input>
 
           <wa-input
@@ -294,7 +271,7 @@ export class OrderPage extends LitElement {
             required
             autocomplete="address-line1"
             .value=${this._line1}
-            @input=${(e: Event) => { this._line1 = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._line1 = (e.target as HTMLElement & { value: string }).value; }}
           ></wa-input>
 
           <wa-input
@@ -302,7 +279,7 @@ export class OrderPage extends LitElement {
             label="Address line 2"
             autocomplete="address-line2"
             .value=${this._line2}
-            @input=${(e: Event) => { this._line2 = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._line2 = (e.target as HTMLElement & { value: string }).value; }}
           ></wa-input>
 
           <wa-input
@@ -310,14 +287,14 @@ export class OrderPage extends LitElement {
             required
             autocomplete="address-level2"
             .value=${this._city}
-            @input=${(e: Event) => { this._city = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._city = (e.target as HTMLElement & { value: string }).value; }}
           ></wa-input>
 
           <wa-input
             label="State / Province"
             autocomplete="address-level1"
             .value=${this._state}
-            @input=${(e: Event) => { this._state = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._state = (e.target as HTMLElement & { value: string }).value; }}
           ></wa-input>
 
           <wa-input
@@ -325,7 +302,7 @@ export class OrderPage extends LitElement {
             required
             autocomplete="postal-code"
             .value=${this._postalCode}
-            @input=${(e: Event) => { this._postalCode = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this._postalCode = (e.target as HTMLElement & { value: string }).value; }}
           ></wa-input>
 
           <wa-select
@@ -335,10 +312,10 @@ export class OrderPage extends LitElement {
             @change=${this._onCountryChange}
           >
             ${COUNTRIES.map(c => html`
-              <wa-option value=${c.code} ?selected=${c.code === this._country}>${c.name}</wa-option>
+              <wa-option value=${c.code}>${c.name}</wa-option>
             `)}
           </wa-select>
-        </div>
+        </form>
 
         <!-- Shipping quote -->
         ${this._quoteLoading ? html`
@@ -348,7 +325,7 @@ export class OrderPage extends LitElement {
           </div>
         ` : this._shippingQuote ? html`
           <div class="wa-cluster wa-gap-m">
-            <span>Shipping: <strong>${this._formatPrice(this._shippingQuote.cents)}</strong></span>
+            <span>Shipping: <strong><wa-format-number type="currency" currency="USD" .value=${this._shippingQuote.cents / 100}></wa-format-number></strong></span>
             <span class="price-note">Est. ${this._shippingQuote.days} business days</span>
           </div>
         ` : this._quoteError ? html`
@@ -359,7 +336,7 @@ export class OrderPage extends LitElement {
 
         <!-- Total + order button -->
         <div class="wa-split wa-align-items-center">
-          <span class="price">Total: ${this._formatPrice(this._totalCents)}</span>
+          <span class="price">Total: <wa-format-number type="currency" currency="USD" .value=${this._totalCents / 100}></wa-format-number></span>
           <span class="price-note">${sizeInfo ? `${product.name} — ${sizeInfo.label}` : ''}</span>
         </div>
 
@@ -417,7 +394,7 @@ export class OrderPage extends LitElement {
   // ── Event handlers ──────────────────────────────────────────────────────
 
   private _onProductChange(e: Event) {
-    this._productSku = (e.target as HTMLInputElement).value;
+    this._productSku = (e.target as HTMLElement & { value: string }).value;
     // Reset size if not available for new product
     const product = this._currentProduct;
     if (!product.sizes.find(s => s.size === this._size)) {
@@ -427,12 +404,12 @@ export class OrderPage extends LitElement {
   }
 
   private _onSizeChange(e: Event) {
-    this._size = (e.target as HTMLInputElement).value;
+    this._size = (e.target as HTMLElement & { value: string }).value;
     this._fetchQuote();
   }
 
   private _onCountryChange(e: Event) {
-    this._country = (e.target as HTMLSelectElement).value;
+    this._country = (e.target as HTMLElement & { value: string }).value;
     this._fetchQuote();
   }
 
@@ -459,18 +436,12 @@ export class OrderPage extends LitElement {
     }, 500);
   }
 
-  private _validateForm(): boolean {
-    if (!this._name.trim()) { this._orderError = 'Please enter your full name.'; return false; }
-    if (!this._line1.trim()) { this._orderError = 'Please enter your address.'; return false; }
-    if (!this._city.trim()) { this._orderError = 'Please enter your city.'; return false; }
-    if (!this._postalCode.trim()) { this._orderError = 'Please enter your postal code.'; return false; }
-    if (!this._country) { this._orderError = 'Please select a country.'; return false; }
-    return true;
-  }
-
   private async _onOrder() {
     this._orderError = '';
-    if (!this._validateForm()) return;
+
+    // Validate form using native constraint validation
+    const form = this.shadowRoot?.querySelector('form');
+    if (form && !form.reportValidity()) return;
 
     // Immediately prevent double-click
     this._step = 'rendering';

@@ -161,6 +161,7 @@ export class ShareDialog extends LitElement {
           <div class="wa-stack wa-gap-s">
             <p class="section-label">Invite Link</p>
             <wa-radio-group
+              label="Invite role"
               .value=${this._linkRole}
               @change=${this._onLinkRoleChange}
             >
@@ -243,11 +244,10 @@ export class ShareDialog extends LitElement {
               <wa-icon slot="copy-icon" name="clone"></wa-icon>
             </wa-copy-button>
           ` : nothing}
-          <wa-tooltip content="Remove">
-            <wa-button appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
-              <wa-icon name="trash"></wa-icon>
-            </wa-button>
-          </wa-tooltip>
+          <wa-button id="remove-${share.id}" appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
+            <wa-icon name="trash"></wa-icon>
+          </wa-button>
+          <wa-tooltip for="remove-${share.id}">Remove</wa-tooltip>
         </div>
       `;
     }
@@ -260,6 +260,7 @@ export class ShareDialog extends LitElement {
           ${share.user_email ? html`<div class="collaborator-email">${share.user_email}</div>` : nothing}
         </div>
         <wa-select
+          label="Role"
           size="small"
           .value=${share.role}
           @change=${(e: Event) => this._onRoleChange(share.id, (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor')}
@@ -268,11 +269,10 @@ export class ShareDialog extends LitElement {
           <wa-option value="viewer">Viewer</wa-option>
           <wa-option value="editor">Editor</wa-option>
         </wa-select>
-        <wa-tooltip content="Remove">
-          <wa-button appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
-            <wa-icon name="trash"></wa-icon>
-          </wa-button>
-        </wa-tooltip>
+        <wa-button id="remove-claimed-${share.id}" appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
+          <wa-icon name="trash"></wa-icon>
+        </wa-button>
+        <wa-tooltip for="remove-claimed-${share.id}">Remove</wa-tooltip>
       </div>
     `;
   }

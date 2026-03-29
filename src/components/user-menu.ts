@@ -10,6 +10,7 @@ import { signOut, type User } from '../auth/auth-state.js';
 import { navigateTo, navClick } from '../nav.js';
 import { isDark, toggleDarkMode } from '../dark-mode.js';
 import { getUnits, toggleUnits } from '../units.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('user-menu')
 export class UserMenu extends LitElement {
@@ -22,7 +23,7 @@ export class UserMenu extends LitElement {
   private _onDarkModeChange = () => { this._dark = isDark(); };
   private _onUnitsChange = () => { this._units = getUnits(); };
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: inline-flex;
       align-items: center;
@@ -36,15 +37,12 @@ export class UserMenu extends LitElement {
       margin-left: var(--wa-space-xs);
       font-size: var(--wa-font-size-s);
       max-width: 120px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     wa-spinner {
       font-size: 1em;
     }
-  `;
+  `];
 
   connectedCallback() {
     super.connectedCallback();
@@ -69,7 +67,7 @@ export class UserMenu extends LitElement {
             initials=${this._initials}
             label=${this.user.name ?? 'User avatar'}
           ></wa-avatar>
-          <span class="trigger-label">${this.user.name}</span>
+          <span class="trigger-label wa-text-truncate">${this.user.name}</span>
         </wa-button>
 
         <wa-dropdown-item @click=${navClick('/dashboard')}>

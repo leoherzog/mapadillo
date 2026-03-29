@@ -28,15 +28,39 @@ export class TravelModePicker extends LitElement {
     }
 
     wa-radio-group::part(form-control-label) {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
     }
 
     wa-radio {
       position: relative;
+      border: none !important;
+      background: none !important;
+      box-shadow: none !important;
+    }
+
+    wa-radio::part(control) {
+      border: none !important;
+      background: none !important;
+      box-shadow: none !important;
+    }
+
+    wa-radio::part(label) {
+      border: none !important;
+      background: none !important;
+      box-shadow: none !important;
+      padding: var(--wa-space-3xs);
     }
 
     wa-radio:state(checked)::part(label) {
       color: var(--mode-color, currentColor);
+      border: none !important;
+      background: none !important;
+      box-shadow: none !important;
     }
 
     wa-radio:state(checked)::after {
@@ -61,6 +85,7 @@ export class TravelModePicker extends LitElement {
   render() {
     return html`
       <wa-radio-group
+        label="Travel mode"
         size="small"
         orientation="horizontal"
         .value=${this.value}

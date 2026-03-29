@@ -98,8 +98,8 @@ export class TripBuilderPage extends MapPageBase {
       width: 100%;
     }
 
-    .header-icon--saving {
-      animation: spin 1s linear infinite;
+    .callout-action {
+      margin-top: var(--wa-space-xs);
     }
 
     .header-icon--saved {
@@ -110,8 +110,8 @@ export class TripBuilderPage extends MapPageBase {
       color: var(--wa-color-danger-60);
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    .header-spinner {
+      font-size: var(--wa-font-size-xl);
     }
 
     .route-loading {
@@ -226,16 +226,19 @@ export class TripBuilderPage extends MapPageBase {
     return html`
       <div class="wa-split wa-gap-xs">
         <h1>
-          <wa-icon name=${this._saveStatus === 'saving' ? 'arrow-rotate-right' : this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>
+          ${this._saveStatus === 'saving'
+            ? html`<wa-spinner class="header-spinner"></wa-spinner>`
+            : html`<wa-icon name=${this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>`}
           Trip Builder
         </h1>
         <div class="wa-cluster wa-gap-xs wa-align-items-center">
           ${!isOwner ? html`<wa-badge variant=${this._role === 'editor' ? 'brand' : 'neutral'}>${this._role}</wa-badge>` : nothing}
           ${this._map?.id ? html`
             <wa-dropdown placement="bottom-end" @wa-select=${this._onActionSelect}>
-              <wa-button slot="trigger" appearance="outlined" size="small" variant="neutral">
+              <wa-button id="more-actions-btn" slot="trigger" appearance="outlined" size="small" variant="neutral">
                 <wa-icon name="ellipsis" label="More actions"></wa-icon>
               </wa-button>
+              <wa-tooltip for="more-actions-btn">More actions</wa-tooltip>
               ${isOwner ? html`
                 <wa-dropdown-item value="share">
                   <wa-icon slot="icon" name="share-nodes"></wa-icon>
@@ -261,7 +264,7 @@ export class TripBuilderPage extends MapPageBase {
               variant="brand"
               ?loading=${this._duplicating}
               @click=${this._onDuplicate}
-              style="margin-top: var(--wa-space-xs);"
+              class="callout-action"
             >
               <wa-icon slot="start" name="clone" library="fa-jelly"></wa-icon>
               Duplicate this trip
@@ -271,7 +274,7 @@ export class TripBuilderPage extends MapPageBase {
               size="small"
               variant="brand"
               href="/sign-in?returnTo=${encodeURIComponent(`/map/${this.mapId}`)}"
-              style="margin-top: var(--wa-space-xs);"
+              class="callout-action"
             >
               <wa-icon slot="start" name="arrow-right-to-bracket" library="fa-jelly"></wa-icon>
               Sign in to duplicate this trip
@@ -420,6 +423,7 @@ export class TripBuilderPage extends MapPageBase {
           <map-view @map-ready=${this._onMapReady}></map-view>
           ${this._isMobile ? html`
             <wa-button
+              id="edit-trip-fab"
               class="map-fab"
               variant="brand"
               size="large"
@@ -428,6 +432,7 @@ export class TripBuilderPage extends MapPageBase {
             >
               <wa-icon name="pencil" label="Edit trip"></wa-icon>
             </wa-button>
+            <wa-tooltip for="edit-trip-fab">Edit trip</wa-tooltip>
           ` : nothing}
         </div>
       </wa-split-panel>
@@ -440,7 +445,9 @@ export class TripBuilderPage extends MapPageBase {
           @wa-after-hide=${this._onDrawerHide}
         >
           <span slot="label">
-            <wa-icon name=${this._saveStatus === 'saving' ? 'arrow-rotate-right' : this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>
+            ${this._saveStatus === 'saving'
+            ? html`<wa-spinner class="header-spinner"></wa-spinner>`
+            : html`<wa-icon name=${this._saveStatus === 'saved' ? 'check' : this._saveStatus === 'error' ? 'circle-xmark' : 'compass'} class="header-icon ${this._saveStatus !== 'idle' ? `header-icon--${this._saveStatus}` : ''}"></wa-icon>`}
             Trip Builder
           </span>
           ${this._renderDrawerHeaderActions(isOwner)}
@@ -473,13 +480,13 @@ export class TripBuilderPage extends MapPageBase {
   // ── Metadata auto-save (debounced) ──────────────────────────────────────
 
   private _onNameInput(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
+    const value = (e.target as HTMLElement & { value: string }).value;
     if (this._map) this._map = { ...this._map, name: value };
     this._debounceSave();
   }
 
   private _onFamilyInput(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
+    const value = (e.target as HTMLElement & { value: string }).value;
     if (this._map) this._map = { ...this._map, family_name: value || null };
     this._debounceSave();
   }
