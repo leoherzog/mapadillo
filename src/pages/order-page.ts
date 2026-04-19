@@ -14,8 +14,8 @@ import { navigateTo, navClick } from '../nav.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { getMap, type MapWithRole } from '../services/maps.js';
 import { uploadPrintImage, createCheckout, getPrintQuote } from '../services/orders.js';
-import { PRODUCTS, getProductSize } from '../../shared/products.js';
-import { renderToBlob, type PaperSize, type Orientation } from '../map/map-export.js';
+import { PRODUCTS, getProductSize, skuToPaperSize } from '../../shared/products.js';
+import { renderToBlob, type Orientation } from '../map/map-export.js';
 import { MapController } from '../map/map-controller.js';
 import { MAP_CONTROLLER_OPTIONS } from '../config/map-themes.js';
 import { COUNTRIES } from '../utils/countries.js';
@@ -55,6 +55,8 @@ export class OrderPage extends LitElement {
 
   private _mapController?: MapController;
   private _quoteTimer?: ReturnType<typeof setTimeout>;
+  /** Resolves once drawItems + saved-viewport restore are done; gates the render. */
+  private _mapDrawn?: Promise<void>;
 
   static styles = [waUtilities, headingStyles, contentPageStyles('700px'), hiddenMapStyles('800px', '600px'), css`
     h1 {
@@ -165,7 +167,45 @@ export class OrderPage extends LitElement {
 
     this._mapController?.destroy();
     this._mapController = new MapController(mapView.map, MAP_CONTROLLER_OPTIONS);
-    void this._mapController.drawItems(this._map.stops);
+
+    // Kick off drawItems + restore saved viewport. _onOrder awaits this
+    // promise before rendering to guarantee the correct camera.
+    this._mapDrawn = this._drawAndRestore(mapView.map);
+  }
+
+  /**
+   * Draw stops, then apply the saved viewport from export_settings and wait
+   * for the map to settle. Required so renderToBlob captures the user's
+   * chosen view (not the auto-fit view) and so fitBounds's late moveend
+   * doesn't clobber our jumpTo mid-render.
+   */
+  private async _drawAndRestore(map: import('maplibre-gl').Map): Promise<void> {
+    if (!this._map || !this._mapController) return;
+    await this._mapController.drawItems(this._map.stops);
+
+    // Parse saved viewport (same shape as preview/export pages)
+    let settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number } = {};
+    try {
+      const raw = this._map.export_settings;
+      if (raw && raw !== '{}') settings = JSON.parse(raw);
+    } catch { /* use defaults */ }
+
+    if (settings.center && settings.zoom != null) {
+      map.jumpTo({
+        center: settings.center,
+        zoom: settings.zoom,
+        bearing: settings.bearing ?? 0,
+        pitch: settings.pitch ?? 0,
+      });
+    }
+
+    // Wait for map to fully settle — drains any late moveend from fitBounds/jumpTo.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(); } };
+      map.once('idle', done);
+      setTimeout(done, 3000);
+    });
   }
 
   private get _currentProduct() {
@@ -470,11 +510,23 @@ export class OrderPage extends LitElement {
         }
       } catch { /* use default */ }
 
+      // Wait for drawItems + saved-viewport restore before rendering —
+      // otherwise renderToBlob captures the auto-fit viewport, not the
+      // viewport the user actually saved on the preview page.
+      if (this._mapDrawn) {
+        await this._mapDrawn;
+      }
+
+      // Convert the selected size (e.g. '18x24') to a PaperSize. Validates
+      // the size is a known printable paper; renderToBlob's paper-size aware
+      // render path needs a PaperSize literal, not a raw SKU size string.
+      const paperSize = skuToPaperSize(this._size);
+
       // Step 1: Render
       const blob = await renderToBlob(
         mapView.map,
         this._mapController.markerFeatures,
-        this._size as PaperSize,
+        paperSize,
         orientation,
       );
 
@@ -501,8 +553,18 @@ export class OrderPage extends LitElement {
         shipping_cost_cents: this._shippingQuote?.cents,
       });
 
-      // Redirect to Stripe
-      window.location.href = checkout.checkout_url;
+      // Redirect to Stripe — validate origin so a compromised/misconfigured
+      // backend response can't redirect users to an attacker-controlled site.
+      let redirectUrl: URL;
+      try {
+        redirectUrl = new URL(checkout.checkout_url);
+      } catch {
+        throw new Error('Invalid checkout URL returned by server.');
+      }
+      if (redirectUrl.protocol !== 'https:' || redirectUrl.host !== 'checkout.stripe.com') {
+        throw new Error('Refusing to redirect to non-Stripe checkout URL.');
+      }
+      window.location.href = redirectUrl.toString();
     } catch (err) {
       this._orderError = err instanceof Error ? err.message : 'Order failed. Please try again.';
       // Stay on progress view to show error with retry button (don't reset to form)

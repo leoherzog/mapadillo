@@ -4,11 +4,13 @@ const { mockApiPost } = vi.hoisted(() => ({
   mockApiPost: vi.fn(),
 }));
 
-vi.mock('./api-client.js', () => ({
-  apiPost: mockApiPost,
-}));
+vi.mock('./api-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api-client.js')>();
+  return { ...actual, apiPost: mockApiPost };
+});
 
-import { getSegmentRoute } from './routing.js';
+import { getSegmentRoute, getSegmentRouteResult } from './routing.js';
+import { ApiError } from './api-client.js';
 
 beforeEach(() => {
   mockApiPost.mockReset();
@@ -237,5 +239,90 @@ describe('getSegmentRoute — unknown mode', () => {
     expect(mockApiPost).not.toHaveBeenCalled();
     expect(result.coordinates).toEqual([berlin, munich]);
     expect(result.distance).toBeGreaterThan(0);
+  });
+});
+
+// ── Tagged-union variant ────────────────────────────────────────────────────
+
+describe('getSegmentRouteResult — success and failure reasons', () => {
+  it('returns ok with geometry on success', async () => {
+    mockApiPost.mockResolvedValue(orsResponse([berlin, munich], 585_000));
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.coordinates).toEqual([berlin, munich]);
+      expect(result.data.distance).toBe(585_000);
+    }
+  });
+
+  it('returns ok for plane mode without hitting the API', async () => {
+    const result = await getSegmentRouteResult('plane', berlin, munich);
+
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok for boat mode without hitting the API', async () => {
+    const result = await getSegmentRouteResult('boat', berlin, munich);
+
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns rate-limit reason on 429', async () => {
+    mockApiPost.mockRejectedValue(new ApiError(429, 'Too Many Requests'));
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result).toEqual({ ok: false, reason: 'rate-limit', status: 429 });
+  });
+
+  it('returns unauthorized reason on 401', async () => {
+    mockApiPost.mockRejectedValue(new ApiError(401, 'Unauthorized'));
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result).toEqual({ ok: false, reason: 'unauthorized', status: 401 });
+  });
+
+  it('returns unauthorized reason on 403', async () => {
+    mockApiPost.mockRejectedValue(new ApiError(403, 'Forbidden'));
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result).toEqual({ ok: false, reason: 'unauthorized', status: 403 });
+  });
+
+  it('returns upstream-error on other ApiError', async () => {
+    mockApiPost.mockRejectedValue(new ApiError(502, 'Bad Gateway'));
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result).toEqual({ ok: false, reason: 'upstream-error', status: 502 });
+  });
+
+  it('returns network reason on non-ApiError', async () => {
+    mockApiPost.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result).toEqual({ ok: false, reason: 'network' });
+  });
+
+  it('returns upstream-error when response has no features', async () => {
+    mockApiPost.mockResolvedValue({ type: 'FeatureCollection', features: [] });
+
+    const result = await getSegmentRouteResult('drive', berlin, munich);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('upstream-error');
+  });
+
+  it('rethrows AbortError', async () => {
+    mockApiPost.mockRejectedValue(new DOMException('aborted', 'AbortError'));
+
+    await expect(getSegmentRouteResult('drive', berlin, munich)).rejects.toThrow('aborted');
   });
 });

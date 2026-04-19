@@ -7,9 +7,10 @@
 
 import { Hono, type Context } from 'hono';
 import type { AppEnv } from '../types.js';
-import type { MapData, Stop, MapRole } from '../../../shared/types.js';
+import type { MapData, Stop, StopRow, MapRole } from '../../../shared/types.js';
+import { rowToStop } from '../../../shared/types.js';
 import { VALID_ICONS } from '../../../shared/icons.js';
-import { VALID_TRAVEL_MODES } from '../../../shared/travel-modes.js';
+import { VALID_TRAVEL_MODES, type TravelMode } from '../../../shared/travel-modes.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -149,13 +150,13 @@ maps.get('/', async (c) => {
 
   // Batch all stop queries in a single D1 round-trip
   const stopStmts = allMaps.map((map) =>
-    c.env.DB.prepare('SELECT id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, created_at FROM stops WHERE map_id = ? ORDER BY position').bind(map.id),
+    c.env.DB.prepare('SELECT id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at FROM stops WHERE map_id = ? ORDER BY position').bind(map.id),
   );
   const stopResults = await c.env.DB.batch(stopStmts);
 
   const mapsWithStops = allMaps.map((map, i) => ({
     ...map,
-    stops: (stopResults[i] as D1Result<Stop>).results,
+    stops: (stopResults[i] as D1Result<StopRow>).results.map(rowToStop),
   }));
 
   return c.json(mapsWithStops);
@@ -172,9 +173,9 @@ maps.get('/:id', async (c) => {
 
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(result.map.id).all<Stop>();
+  ).bind(result.map.id).all<StopRow>();
 
-  return c.json({ ...result.map, role: result.role, stops: stops.results });
+  return c.json({ ...result.map, role: result.role, stops: stops.results.map(rowToStop) });
 });
 
 // PUT /:id — update map (owner or editor)
@@ -209,9 +210,23 @@ maps.put('/:id', async (c) => {
         return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
       }
       if (key === 'export_settings') {
-        if (typeof val === 'object') val = JSON.stringify(val);
-        if (typeof val === 'string' && (val as string).length > 10_000) {
+        if (typeof val === 'object' && val !== null) val = JSON.stringify(val);
+        if (typeof val !== 'string') {
+          return c.json({ error: `${key} must be a string or object` }, 400);
+        }
+        if ((val as string).length > 10_000) {
           return c.json({ error: `${key} is too large` }, 400);
+        }
+        // Validate that it's well-formed JSON (or the sentinel empty-object).
+        if (val !== '' && val !== '{}') {
+          try {
+            const parsed = JSON.parse(val as string);
+            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+              return c.json({ error: `${key} must be a JSON object` }, 400);
+            }
+          } catch {
+            return c.json({ error: `${key} must be valid JSON` }, 400);
+          }
         }
       }
       updates.push(`${key} = ?`);
@@ -248,10 +263,17 @@ maps.put('/:id', async (c) => {
     }
   }
 
-  return c.json({ ...updatedMap, stops: (stopsResult as D1Result<Stop>).results });
+  return c.json({ ...updatedMap, stops: (stopsResult as D1Result<StopRow>).results.map(rowToStop) });
 });
 
-// DELETE /:id — delete map (owner only, cascade deletes stops)
+// DELETE /:id — delete map (owner only)
+//
+// FK enforcement note: D1 does not reliably honour `PRAGMA foreign_keys = ON`
+// per-connection, so the `ON DELETE CASCADE` / `ON DELETE RESTRICT` hints in
+// the schema are advisory only. This handler emulates them explicitly:
+//   • orders   → RESTRICT: refuse to delete if any order references the map.
+//   • stops    → CASCADE:  delete rows explicitly.
+//   • map_shares → CASCADE: delete rows explicitly.
 maps.delete('/:id', async (c) => {
   const userId = c.get('user')!.id;
   const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
@@ -259,7 +281,23 @@ maps.delete('/:id', async (c) => {
   if (!result) return c.json({ error: 'Map not found' }, 404);
   if (result.role !== 'owner') return c.json({ error: 'Forbidden' }, 403);
 
-  await c.env.DB.prepare('DELETE FROM maps WHERE id = ?').bind(result.map.id).run();
+  // RESTRICT emulation: orders are financial records and must survive.
+  const orderCount = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM orders WHERE map_id = ?',
+  ).bind(result.map.id).first<{ count: number }>();
+  if ((orderCount?.count ?? 0) > 0) {
+    return c.json(
+      { error: 'Cannot delete a map with existing orders. Cancel or archive orders first.' },
+      409,
+    );
+  }
+
+  // CASCADE emulation: remove child rows, then the map itself, atomically.
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM stops WHERE map_id = ?').bind(result.map.id),
+    c.env.DB.prepare('DELETE FROM map_shares WHERE map_id = ?').bind(result.map.id),
+    c.env.DB.prepare('DELETE FROM maps WHERE id = ?').bind(result.map.id),
+  ]);
   return c.json({ success: true });
 });
 
@@ -314,9 +352,9 @@ maps.put('/:id/stops/reorder', async (c) => {
 
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(result.map.id).all<Stop>();
+  ).bind(result.map.id).all<StopRow>();
 
-  return c.json(stops.results);
+  return c.json(stops.results.map(rowToStop));
 });
 
 // POST /:id/stops — add stop (owner or editor)
@@ -412,7 +450,9 @@ maps.post('/:id/stops', async (c) => {
   }
   const position = ((maxPosResult as D1Result<{ max_pos: number }>).results[0]?.max_pos ?? -1) + 1;
 
-  const travelMode = type === 'route' ? (body.travel_mode ?? 'drive') : null;
+  const travelMode: TravelMode | null = type === 'route'
+    ? ((body.travel_mode ?? 'drive') as TravelMode)
+    : null;
 
   const stopId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -435,14 +475,20 @@ maps.post('/:id/stops', async (c) => {
     touchMapStmt(c.env.DB, result.map.id, now),
   ]);
 
-  const newStop: Stop = {
-    id: stopId, map_id: result.map.id, position, type: type as 'point' | 'route',
-    name: stopName, label: stopLabel, latitude: body.lat, longitude: body.lng,
-    icon: stopIcon, travel_mode: travelMode, dest_name: destName,
-    dest_latitude: destLat, dest_longitude: destLng,
-    dest_icon: destIcon,
-    route_geometry: null, created_at: now,
+  const baseStop = {
+    id: stopId, map_id: result.map.id, position,
+    name: stopName, label: stopLabel,
+    latitude: body.lat, longitude: body.lng,
+    icon: stopIcon, created_at: now,
   };
+  const newStop: Stop = type === 'route'
+    ? {
+        ...baseStop, type: 'route',
+        travel_mode: travelMode,
+        dest_name: destName, dest_latitude: destLat, dest_longitude: destLng,
+        dest_icon: destIcon, route_geometry: null,
+      }
+    : { ...baseStop, type: 'point' };
   return c.json(newStop, 201);
 });
 
@@ -454,7 +500,7 @@ maps.put('/:id/stops/:stopId', async (c) => {
   const stopId = c.req.param('stopId');
   const stop = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE id = ? AND map_id = ?',
-  ).bind(stopId, result.map.id).first<Stop>();
+  ).bind(stopId, result.map.id).first<StopRow>();
 
   if (!stop) {
     return c.json({ error: 'Stop not found' }, 404);
@@ -590,21 +636,22 @@ maps.put('/:id/stops/:stopId', async (c) => {
     touchMapStmt(c.env.DB, result.map.id, now),
   ]);
 
-  // Build response from in-memory values instead of re-SELECTing
-  const updatedStop: Stop = { ...stop };
-  if ('name' in body) updatedStop.name = (body.name as string).trim();
-  if ('label' in body) updatedStop.label = typeof body.label === 'string' ? body.label.trim() : null;
-  if ('lat' in body) updatedStop.latitude = body.lat as number;
-  if ('lng' in body) updatedStop.longitude = body.lng as number;
-  if ('icon' in body) updatedStop.icon = (body.icon as string) ?? null;
-  if ('dest_icon' in body) updatedStop.dest_icon = (body.dest_icon as string) ?? null;
-  if ('travel_mode' in body) updatedStop.travel_mode = (body.travel_mode as string) ?? null;
-  if ('dest_name' in body) updatedStop.dest_name = typeof body.dest_name === 'string' ? body.dest_name.trim() : null;
-  if ('dest_lat' in body) updatedStop.dest_latitude = (body.dest_lat as number) ?? null;
-  if ('dest_lng' in body) updatedStop.dest_longitude = (body.dest_lng as number) ?? null;
-  if ('route_geometry' in body) updatedStop.route_geometry = (body.route_geometry as string) ?? null;
-  else if (geoFields.some((f) => f in body)) updatedStop.route_geometry = null;
-  return c.json(updatedStop);
+  // Build response from in-memory values instead of re-SELECTing.
+  // Apply body updates to a raw-row copy, then lift to the Stop union.
+  const updatedRow: StopRow = { ...stop };
+  if ('name' in body) updatedRow.name = (body.name as string).trim();
+  if ('label' in body) updatedRow.label = typeof body.label === 'string' ? body.label.trim() : null;
+  if ('lat' in body) updatedRow.latitude = body.lat as number;
+  if ('lng' in body) updatedRow.longitude = body.lng as number;
+  if ('icon' in body) updatedRow.icon = (body.icon as string) ?? null;
+  if ('dest_icon' in body) updatedRow.dest_icon = (body.dest_icon as string) ?? null;
+  if ('travel_mode' in body) updatedRow.travel_mode = (body.travel_mode as string) ?? null;
+  if ('dest_name' in body) updatedRow.dest_name = typeof body.dest_name === 'string' ? body.dest_name.trim() : null;
+  if ('dest_lat' in body) updatedRow.dest_latitude = (body.dest_lat as number) ?? null;
+  if ('dest_lng' in body) updatedRow.dest_longitude = (body.dest_lng as number) ?? null;
+  if ('route_geometry' in body) updatedRow.route_geometry = (body.route_geometry as string) ?? null;
+  else if (geoFields.some((f) => f in body)) updatedRow.route_geometry = null;
+  return c.json(rowToStop(updatedRow));
 });
 
 // DELETE /:id/stops/:stopId — delete stop (owner or editor)

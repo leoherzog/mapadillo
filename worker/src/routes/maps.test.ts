@@ -221,6 +221,56 @@ describe('DELETE /api/maps/:id — role-based access', () => {
     const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: editorCookie } });
     expect(res.status).toBe(403);
   });
+
+  it('deleting a map cascades to stops and map_shares (app-level cascade)', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { userId: collaboratorId } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    // Seed a stop + a share so we can verify they disappear.
+    await createStop(ownerCookie, mapId, { name: 'Stop A', lat: 10, lng: 20 });
+    await env.DB.prepare(
+      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), mapId, collaboratorId, 'viewer').run();
+
+    const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: ownerCookie } });
+    expect(res.status).toBe(200);
+
+    const stops = await env.DB.prepare('SELECT COUNT(*) AS c FROM stops WHERE map_id = ?')
+      .bind(mapId).first<{ c: number }>();
+    expect(stops?.c).toBe(0);
+
+    const shares = await env.DB.prepare('SELECT COUNT(*) AS c FROM map_shares WHERE map_id = ?')
+      .bind(mapId).first<{ c: number }>();
+    expect(shares?.c).toBe(0);
+
+    const map = await env.DB.prepare('SELECT id FROM maps WHERE id = ?')
+      .bind(mapId).first<{ id: string }>();
+    expect(map).toBeNull();
+  });
+
+  it('refuses to delete a map that still has orders (RESTRICT emulation)', async () => {
+    const { cookie: ownerCookie, userId } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    // Seed a fake order. Status literal must satisfy the CHECK constraint.
+    await env.DB.prepare(
+      `INSERT INTO orders (id, map_id, user_id, product_type, product_sku, poster_size, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), mapId, userId, 'poster', 'sku-1', '18x24', 'paid',
+    ).run();
+
+    const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: ownerCookie } });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('orders');
+
+    // Map must still exist.
+    const stillThere = await env.DB.prepare('SELECT id FROM maps WHERE id = ?')
+      .bind(mapId).first<{ id: string }>();
+    expect(stillThere?.id).toBe(mapId);
+  });
 });
 
 // ── Stop creation — validation edge cases ────────────────────────────────────
@@ -423,6 +473,19 @@ describe('POST /:id/stops — validation edge cases', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('dest_icon');
+  });
+
+  it('accepts DEFAULT_ICON as a valid icon', async () => {
+    const { DEFAULT_ICON, VALID_ICONS } = await import('../../../shared/icons.js');
+    expect(VALID_ICONS.has(DEFAULT_ICON)).toBe(true);
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
+      name: 'Default icon', lat: 50, lng: 10, icon: DEFAULT_ICON,
+    }, cookie);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { icon: string };
+    expect(body.icon).toBe(DEFAULT_ICON);
   });
 
   it('defaults type to point when not specified', async () => {
@@ -970,10 +1033,17 @@ describe('DELETE /:id/stops/:stopId — re-compaction edge cases', () => {
     await request(`/api/maps/${mapId}/stops/${r1}`, { method: 'DELETE', headers: { cookie } });
 
     const afterRes = await request(`/api/maps/${mapId}`, { headers: { cookie } });
-    const after = (await afterRes.json()) as { stops: Array<{ id: string; position: number; travel_mode: string | null; type: string }> };
+    const after = (await afterRes.json()) as { stops: Array<{ id: string; position: number; type: string }> };
     const promoted = after.stops.find(s => s.id === pointId)!;
     expect(promoted.position).toBe(0);
-    expect(promoted.travel_mode).toBeNull();
+    expect(promoted.type).toBe('point');
+    // Points no longer carry a travel_mode field in the API response
+    expect((promoted as { travel_mode?: unknown }).travel_mode).toBeUndefined();
+    // The underlying column is still nulled by the DELETE handler's safety guard
+    const dbRow = await env.DB.prepare(
+      'SELECT travel_mode FROM stops WHERE id = ?',
+    ).bind(pointId).first<{ travel_mode: string | null }>();
+    expect(dbRow?.travel_mode).toBeNull();
   });
 });
 
@@ -1085,10 +1155,17 @@ describe('PUT /:id/stops/reorder — edge cases', () => {
     expect(res.status).toBe(200);
 
     const mapRes = await request(`/api/maps/${mapId}`, { headers: { cookie } });
-    const mapData = (await mapRes.json()) as { stops: Array<{ id: string; travel_mode: string | null; position: number }> };
+    const mapData = (await mapRes.json()) as { stops: Array<{ id: string; type: string; position: number }> };
     const first = mapData.stops.find(s => s.position === 0)!;
     expect(first.id).toBe(pointId);
-    expect(first.travel_mode).toBeNull();
+    expect(first.type).toBe('point');
+    // Points no longer carry a travel_mode field in the API response
+    expect((first as { travel_mode?: unknown }).travel_mode).toBeUndefined();
+    // The underlying column is still nulled by the reorder handler's safety guard
+    const dbRow = await env.DB.prepare(
+      'SELECT travel_mode FROM stops WHERE id = ?',
+    ).bind(pointId).first<{ travel_mode: string | null }>();
+    expect(dbRow?.travel_mode).toBeNull();
   });
 });
 

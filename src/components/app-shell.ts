@@ -79,6 +79,7 @@ export class AppShell extends LitElement {
     },
     {
       path: '/admin',
+      enter: requireAuth,
       render: () => html`<admin-page></admin-page>`,
     },
   ]);

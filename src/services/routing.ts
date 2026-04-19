@@ -6,11 +6,18 @@
  * - Boat: straight line computed client-side (no API call)
  *
  * Returns GeoJSON LineString coordinates + distance in meters.
+ *
+ * For callers that need to surface "rate limited" or "session expired"
+ * feedback (instead of silently falling back to a straight line),
+ * {@link getSegmentRouteResult} returns a tagged union. The legacy
+ * {@link getSegmentRoute} entry point preserves the existing "always returns
+ * geometry" contract by falling back to a straight line on error.
  */
 
-import { apiPost } from './api-client.js';
+import { apiPost, ApiError } from './api-client.js';
 import { haversineDistance } from '../utils/geo.js';
 import { TRAVEL_MODES } from '../config/travel-modes.js';
+import type { ServiceResult } from './geocoding.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +28,8 @@ export interface SegmentGeometry {
   distance: number;
 }
 
+export type { ServiceResult, ServiceFailureReason } from './geocoding.js';
+
 /** ORS travel mode -> ORS profile mapping (derived from shared config) */
 const MODE_TO_PROFILE: Record<string, string> = Object.fromEntries(
   TRAVEL_MODES.filter((m) => m.orsProfile).map((m) => [m.mode, m.orsProfile!]),
@@ -29,12 +38,8 @@ const MODE_TO_PROFILE: Record<string, string> = Object.fromEntries(
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Get route geometry for a single segment between two points.
- *
- * @param mode Travel mode: drive, walk, bike, plane, boat
- * @param start [longitude, latitude]
- * @param end [longitude, latitude]
- * @returns GeoJSON coordinates + distance in meters
+ * Get route geometry for a single segment, falling back to a straight line on
+ * any API failure. Existing behavior used widely by the map controller.
  */
 export async function getSegmentRoute(
   mode: string,
@@ -42,20 +47,34 @@ export async function getSegmentRoute(
   end: [number, number],
   signal?: AbortSignal,
 ): Promise<SegmentGeometry> {
-  if (mode === 'plane') {
-    return greatCircleArc(start, end);
-  }
-  if (mode === 'boat') {
-    return straightLine(start, end);
-  }
+  if (mode === 'plane') return greatCircleArc(start, end);
+  if (mode === 'boat') return straightLine(start, end);
 
   const profile = MODE_TO_PROFILE[mode];
-  if (!profile) {
-    // Fallback to straight line for unknown modes
-    return straightLine(start, end);
-  }
+  if (!profile) return straightLine(start, end);
 
-  return fetchORSRoute(profile, start, end, signal);
+  const result = await fetchORSRouteResult(profile, start, end, signal);
+  return result.ok ? result.data : straightLine(start, end);
+}
+
+/**
+ * Get route geometry with tagged failure reasons so UI code can distinguish
+ * rate-limit / auth / network errors from a successful result. Plane and boat
+ * modes always succeed (computed client-side).
+ */
+export async function getSegmentRouteResult(
+  mode: string,
+  start: [number, number],
+  end: [number, number],
+  signal?: AbortSignal,
+): Promise<ServiceResult<SegmentGeometry>> {
+  if (mode === 'plane') return { ok: true, data: greatCircleArc(start, end) };
+  if (mode === 'boat') return { ok: true, data: straightLine(start, end) };
+
+  const profile = MODE_TO_PROFILE[mode];
+  if (!profile) return { ok: true, data: straightLine(start, end) };
+
+  return fetchORSRouteResult(profile, start, end, signal);
 }
 
 // ── ORS proxy call ───────────────────────────────────────────────────────────
@@ -76,28 +95,41 @@ interface ORSResponse {
   }>;
 }
 
-async function fetchORSRoute(
+async function fetchORSRouteResult(
   profile: string,
   start: [number, number],
   end: [number, number],
   signal?: AbortSignal,
-): Promise<SegmentGeometry> {
+): Promise<ServiceResult<SegmentGeometry>> {
   let data: ORSResponse;
   try {
     data = await apiPost<ORSResponse>('/api/route', { profile, start, end }, signal);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    return straightLine(start, end);
+    if (error instanceof ApiError) {
+      if (error.status === 429) return { ok: false, reason: 'rate-limit', status: 429 };
+      if (error.status === 401 || error.status === 403) {
+        return { ok: false, reason: 'unauthorized', status: error.status };
+      }
+      return { ok: false, reason: 'upstream-error', status: error.status };
+    }
+    return { ok: false, reason: 'network' };
   }
 
   const feature = data.features?.[0];
   if (!feature?.geometry?.coordinates || !feature.properties?.summary) {
-    return straightLine(start, end);
+    // Upstream returned a malformed/empty response — treat as upstream error so
+    // callers using the tagged variant can surface it; the legacy variant
+    // converts this to a straight-line fallback.
+    return { ok: false, reason: 'upstream-error' };
   }
 
   return {
-    coordinates: feature.geometry.coordinates,
-    distance: feature.properties.summary.distance,
+    ok: true,
+    data: {
+      coordinates: feature.geometry.coordinates,
+      distance: feature.properties.summary.distance,
+    },
   };
 }
 
@@ -165,4 +197,3 @@ function straightLine(
     distance: haversineDistance(start, end),
   };
 }
-

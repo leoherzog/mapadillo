@@ -17,9 +17,9 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types.js';
 import { getMapWithRole } from './maps.js';
 import { getStripe } from '../lib/stripe.js';
-import { getShippingQuote, createOrder as createProdigiOrder } from '../lib/prodigi.js';
+import { getShippingQuote, createOrder as createProdigiOrder, isSandbox } from '../lib/prodigi.js';
 import { getProductSize, buildFullSku } from '../../../shared/products.js';
-import type { ShippingAddress } from '../../../shared/types.js';
+import { parseShippingAddress, type ShippingAddress } from '../../../shared/types.js';
 
 const orders = new Hono<AppEnv>();
 
@@ -97,6 +97,15 @@ orders.post('/checkout', async (c) => {
   if (!body.map_id || !body.product_sku || !body.size || !body.shipping_address) {
     return c.json({ error: 'Missing required fields' }, 400);
   }
+
+  // Validate shipping address shape — parseShippingAddress requires the minimum
+  // set of fields. Round-trip through JSON so a hostile client can't smuggle in
+  // extra unserializable values or prototype pollution attempts.
+  const validatedAddress = parseShippingAddress(JSON.stringify(body.shipping_address));
+  if (!validatedAddress) {
+    return c.json({ error: 'Invalid shipping_address — name, line1, city, and country are required' }, 400);
+  }
+  body.shipping_address = validatedAddress;
 
   // Validate map access
   const mapResult = await getMapWithRole(c.env.DB, body.map_id, userId);
@@ -182,7 +191,7 @@ orders.post('/print-quote', async (c) => {
     const quote = await getShippingQuote(c.env.PRODIGI_API_KEY, {
       sku: fullSku,
       destinationCountry: body.country,
-    }, c.env.PRODIGI_SANDBOX === 'true');
+    }, isSandbox(c.env.PRODIGI_SANDBOX));
     return c.json({
       shipping_cost_cents: quote.shippingCostCents,
       estimated_days: quote.estimatedDays,
@@ -327,11 +336,11 @@ orders.patch('/admin/orders/:id', async (c) => {
     if (!order.image_url) {
       return c.json({ error: 'Order has no image URL' }, 400);
     }
-    if (!order.shipping_address) {
-      return c.json({ error: 'Order has no shipping address' }, 400);
+    const address = parseShippingAddress(order.shipping_address);
+    if (!address) {
+      return c.json({ error: 'Order has no (or malformed) shipping address' }, 400);
     }
 
-    const address: ShippingAddress = JSON.parse(order.shipping_address);
     const baseUrl = c.env.BETTER_AUTH_URL;
     const imageUrl = order.image_url.startsWith('/')
       ? `${baseUrl}${order.image_url}`
@@ -343,7 +352,7 @@ orders.patch('/admin/orders/:id', async (c) => {
         sku: order.product_sku,
         imageUrl,
         shippingAddress: address,
-      }, c.env.PRODIGI_SANDBOX === 'true');
+      }, isSandbox(c.env.PRODIGI_SANDBOX));
 
       await c.env.DB.prepare(
         'UPDATE orders SET prodigi_order_id = ?, status = ?, updated_at = ? WHERE id = ?',

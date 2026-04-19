@@ -39,6 +39,18 @@ function getBaseUrl(sandbox: boolean): string {
   return sandbox ? SANDBOX_URL : LIVE_URL;
 }
 
+/**
+ * Parse the PRODIGI_SANDBOX env var as a boolean. Accepts the common truthy
+ * spellings ("true", "1", "yes", "on"); anything else — including undefined —
+ * resolves to false (live mode). Consolidating this avoids subtle drift where
+ * one call site interprets the flag differently from another.
+ */
+export function isSandbox(value: string | boolean | undefined | null): boolean {
+  if (typeof value === 'boolean') return value;
+  if (!value) return false;
+  return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 export async function getShippingQuote(
   apiKey: string,
   req: ProdigiQuoteRequest,

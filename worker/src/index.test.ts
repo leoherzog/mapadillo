@@ -1,6 +1,17 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyTestSchema, request, createTestSession, jsonRequest } from './test-helpers.js';
+import { getClientIp } from './index.js';
+import type { Context } from 'hono';
+import type { AppEnv } from './types.js';
+
+/** Build a minimal Context stub that only exposes req.header (enough for getClientIp). */
+function ctxWithHeaders(headers: Record<string, string>): Context<AppEnv> {
+  const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  return {
+    req: { header: (name: string) => lower[name.toLowerCase()] },
+  } as unknown as Context<AppEnv>;
+}
 
 beforeAll(applyTestSchema);
 
@@ -299,10 +310,12 @@ describe('Stop CRUD', () => {
       name: 'Berlin', lat: 52.52, lng: 13.405, icon: 'landmark',
     }, cookie);
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { name: string; position: number; travel_mode: string | null };
+    const body = (await res.json()) as { name: string; position: number; type: string; travel_mode?: string | null };
     expect(body.name).toBe('Berlin');
     expect(body.position).toBe(0);
-    expect(body.travel_mode).toBeNull(); // first stop has no travel_mode
+    // Points don't carry a travel_mode field (discriminated union: PointStop)
+    expect(body.type).toBe('point');
+    expect(body.travel_mode).toBeUndefined();
   });
 
   it('POST /:id/stops auto-increments position', async () => {
@@ -1003,5 +1016,39 @@ describe('Unknown API routes - 404', () => {
   it('POST /api/does-not-exist returns 404', async () => {
     const res = await request('/api/does-not-exist', { method: 'POST' });
     expect(res.status).toBe(404);
+  });
+});
+
+// ── getClientIp header parsing ────────────────────────────────────────────────
+
+describe('getClientIp', () => {
+  it('prefers cf-connecting-ip when set', () => {
+    const c = ctxWithHeaders({ 'cf-connecting-ip': '1.2.3.4', 'x-forwarded-for': '5.6.7.8' });
+    expect(getClientIp(c)).toBe('1.2.3.4');
+  });
+
+  it('uses x-forwarded-for when cf-connecting-ip is missing', () => {
+    const c = ctxWithHeaders({ 'x-forwarded-for': '1.2.3.4' });
+    expect(getClientIp(c)).toBe('1.2.3.4');
+  });
+
+  it('returns only the first entry of a comma-separated x-forwarded-for list', () => {
+    const c = ctxWithHeaders({ 'x-forwarded-for': '1.2.3.4, 10.0.0.1, 192.168.1.1' });
+    expect(getClientIp(c)).toBe('1.2.3.4');
+  });
+
+  it('trims whitespace around the first x-forwarded-for entry', () => {
+    const c = ctxWithHeaders({ 'x-forwarded-for': '  1.2.3.4  , 10.0.0.1' });
+    expect(getClientIp(c)).toBe('1.2.3.4');
+  });
+
+  it('falls back to "unknown" with no headers', () => {
+    const c = ctxWithHeaders({});
+    expect(getClientIp(c)).toBe('unknown');
+  });
+
+  it('falls back to "unknown" when x-forwarded-for is empty', () => {
+    const c = ctxWithHeaders({ 'x-forwarded-for': '' });
+    expect(getClientIp(c)).toBe('unknown');
   });
 });

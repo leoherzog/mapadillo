@@ -27,6 +27,7 @@ export function extractExistingLocations(items: Stop[]): ExistingLocation[] {
 
     // Destination endpoint (routes only)
     if (
+      item.type === 'route' &&
       item.dest_name &&
       item.dest_latitude != null && item.dest_longitude != null &&
       !isDraftCoord(item.dest_latitude, item.dest_longitude)

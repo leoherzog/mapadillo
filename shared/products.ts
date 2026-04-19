@@ -53,6 +53,22 @@ export function buildFullSku(productSku: string, size: string): string {
   return `${productSku}-${size.toUpperCase()}`;
 }
 
+/**
+ * Map a product "size" string to the PaperSize used by the export pipeline.
+ * Poster sizes ('18x24', '24x36', '40x60') map directly to the same PaperSize
+ * literal values in `src/map/map-export.ts`; this helper centralizes the
+ * conversion (and the validation) so callers don't have to hand-cast.
+ */
+const _PRINTABLE_PAPER_SIZES = ['18x24', '24x36', '40x60'] as const;
+export type PrintablePaperSize = typeof _PRINTABLE_PAPER_SIZES[number];
+
+export function skuToPaperSize(size: string): PrintablePaperSize {
+  if ((_PRINTABLE_PAPER_SIZES as readonly string[]).includes(size)) {
+    return size as PrintablePaperSize;
+  }
+  throw new Error(`Unknown printable size: ${size}`);
+}
+
 import type { OrderStatus } from './types.js';
 
 /** Maps order status strings to wa-badge variant names. */

@@ -3,8 +3,7 @@
  */
 import { Hono } from 'hono';
 import type { AppEnv } from '../types.js';
-
-const VALID_UNITS = new Set(['km', 'mi']);
+import { VALID_UNITS } from '../../../shared/units.js';
 
 const prefs = new Hono<AppEnv>();
 

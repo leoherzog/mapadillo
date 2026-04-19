@@ -8,10 +8,10 @@
 
 import { apiGet, apiPut } from './services/api-client.js';
 import { isAuthenticated, onAuthChange } from './auth/auth-state.js';
+import type { Units } from '../shared/units.js';
+export type { Units } from '../shared/units.js';
 
 const STORAGE_KEY = 'mapadillo-units';
-
-export type Units = 'km' | 'mi';
 
 /** Detect sensible default from browser locale via Intl API. */
 function detectDefault(): Units {

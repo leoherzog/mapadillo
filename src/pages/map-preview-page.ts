@@ -15,16 +15,8 @@ import { updateMap } from '../services/maps.js';
 import { MapPageBase } from './map-page-base.js';
 import { getUnits, type Units } from '../units.js';
 import type { MapView } from '../components/map-view.js';
+import { parseExportSettings, type ExportSettings } from '../../shared/types.js';
 import '../components/map-view.js';
-
-interface ExportSettings {
-  paperSize?: PaperSize;
-  orientation?: Orientation;
-  center?: [number, number];
-  zoom?: number;
-  bearing?: number;
-  pitch?: number;
-}
 
 const PAPER_SIZE_LABELS: Partial<Record<PaperSize, string>> = {
   letter: 'Letter (8.5 \u00d7 11\u2033)',
@@ -207,28 +199,33 @@ export class MapPreviewPage extends MapPageBase {
   }
 
   protected override async _syncMap() {
+    // drawItems() runs auto-fit (fitBounds), which fires a deferred moveend.
+    // We must jumpTo() to the saved viewport AFTER drawItems resolves, then
+    // wait for the map to go idle before allowing saves — otherwise the
+    // auto-fit's late moveend fires after _restoring is cleared and clobbers
+    // the saved viewport with the fitBounds viewport.
     await super._syncMap();
-    this._restoreSettings();
+    await this._restoreSettings();
   }
 
-  private _restoreSettings() {
+  private async _restoreSettings() {
     if (this._settingsLoaded || !this._map) return;
     this._settingsLoaded = true;
 
-    let settings: ExportSettings = {};
-    try {
-      const raw = this._map.export_settings;
-      if (raw && raw !== '{}') settings = JSON.parse(raw);
-    } catch { /* use defaults */ }
+    const settings: ExportSettings = parseExportSettings(this._map.export_settings) ?? {};
 
-    if (settings.paperSize) this._paperSize = settings.paperSize;
+    if (settings.paperSize) this._paperSize = settings.paperSize as PaperSize;
     if (settings.orientation) this._orientation = settings.orientation;
 
     // Restore saved viewport (overrides the auto-fit from drawItems).
-    // Set _restoring flag to suppress the moveend-triggered save.
+    // Keep _restoring true until the map settles so moveend events from
+    // both the auto-fit and our jumpTo are suppressed.
     this._restoring = true;
-    this._restoreViewport(settings);
-    this._restoring = false;
+    try {
+      await this._applyRestoredViewport(settings);
+    } finally {
+      this._restoring = false;
+    }
   }
 
   private _scheduleSave() {

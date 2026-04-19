@@ -612,12 +612,15 @@ export class TripBuilderPage extends MapPageBase {
   private async _flushItemUpdate(mapId: string, itemId: string, fields: Record<string, unknown>) {
     this._pendingSaves++;
     this._setSaveStatus('saving');
+    let errored = false;
     try {
       await updateStop(mapId, itemId, fields);
-      if (--this._pendingSaves === 0) this._setSaveStatus('saved');
     } catch {
-      --this._pendingSaves;
+      errored = true;
       this._setSaveStatus('error');
+    } finally {
+      if (--this._pendingSaves === 0 && !errored) this._setSaveStatus('saved');
+      if (this._pendingSaves < 0) this._pendingSaves = 0;
     }
   }
 
@@ -669,6 +672,7 @@ export class TripBuilderPage extends MapPageBase {
     // Resolve the coordinates of the changed endpoint
     let lat: number, lng: number;
     if (field === 'dest_icon') {
+      if (source.type !== 'route') return;
       if (source.dest_latitude == null || source.dest_longitude == null) return;
       lat = source.dest_latitude;
       lng = source.dest_longitude;
@@ -694,6 +698,7 @@ export class TripBuilderPage extends MapPageBase {
 
       // Match dest endpoint (route end)
       if (
+        item.type === 'route' &&
         item.dest_latitude != null && item.dest_longitude != null &&
         eq(item.dest_latitude, lat) && eq(item.dest_longitude, lng) &&
         item.dest_icon !== newIcon
@@ -804,6 +809,7 @@ export class TripBuilderPage extends MapPageBase {
       if (this._map && result.geometries.size > 0) {
         let updated = false;
         const next = this._items.map(s => {
+          if (s.type !== 'route') return s;
           if (s.route_geometry) return s;
           const geometry = result.geometries.get(s.id);
           if (!geometry) return s;

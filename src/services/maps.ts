@@ -8,7 +8,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from './api-client.js';
 // Types — base types from shared module, composite types local
 // ---------------------------------------------------------------------------
 
-export type { MapData, Stop, ShareData, MapRole } from '../../shared/types.js';
+export type { MapData, Stop, PointStop, RouteStop, ShareData, MapRole } from '../../shared/types.js';
 import type { MapData, Stop, ShareData, MapRole } from '../../shared/types.js';
 
 export interface MapWithStops extends MapData {
@@ -76,12 +76,17 @@ export function addStop(
 export function updateStop(
   mapId: string,
   stopId: string,
-  data: Partial<Pick<Stop, 'name' | 'label' | 'icon' | 'travel_mode'>> & {
+  data: {
+    name?: string;
+    label?: string | null;
+    icon?: string | null;
     lat?: number;
     lng?: number;
-    dest_name?: string;
-    dest_lat?: number;
-    dest_lng?: number;
+    travel_mode?: string | null;
+    dest_name?: string | null;
+    dest_lat?: number | null;
+    dest_lng?: number | null;
+    dest_icon?: string | null;
     route_geometry?: string | null;
   },
 ): Promise<Stop> {

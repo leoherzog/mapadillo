@@ -1,12 +1,26 @@
 import { LitElement, html, css } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { navClick } from '../nav.js';
-import { isAuthenticated } from '../auth/auth-state.js';
+import { isAuthenticated, onAuthChange } from '../auth/auth-state.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 
 @customElement('landing-page')
 export class LandingPage extends LitElement {
+  private _unsubAuth?: () => void;
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._unsubAuth = onAuthChange(() => {
+      this.requestUpdate();
+    });
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubAuth?.();
+  }
+
   static styles = [waUtilities, headingStyles, css`
     :host {
       display: flex;

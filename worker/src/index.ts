@@ -26,9 +26,22 @@ import webhookRoutes from './routes/webhooks.js';
 import type { AppEnv } from './types.js';
 import type { Context } from 'hono';
 
-/** Extract client IP from request headers. */
-function getClientIp(c: Context<AppEnv>): string {
-  return c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? 'unknown';
+/** Extract client IP from request headers.
+ *
+ * x-forwarded-for is a comma-separated list "client, proxy1, proxy2, ...".
+ * Only the first entry is the original client; anything else is an intermediate
+ * proxy and must not be used as the rate-limit key (attackers could inject
+ * entries to bypass per-IP limits). Prefer cf-connecting-ip when Cloudflare
+ * sets it — it's the ground truth. */
+export function getClientIp(c: Context<AppEnv>): string {
+  const cf = c.req.header('cf-connecting-ip');
+  if (cf) return cf;
+  const xff = c.req.header('x-forwarded-for');
+  if (xff) {
+    const first = xff.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return 'unknown';
 }
 
 const app = new Hono<AppEnv>();
@@ -63,14 +76,16 @@ app.all('/api/auth/*', async (c) => {
 
 // ── CSRF protection (Origin header check) ────────────────────────────────
 // Validate Origin header on state-changing requests to prevent cross-site
-// request forgery. Skips webhooks (external services). Auth routes are
-// handled before CSRF runs, so no skip is needed for them.
+// request forgery. Skips webhooks (external services — they prove identity
+// via signature / secret). Auth routes are handled before CSRF runs, so no
+// skip is needed for them. Admin routes are NOT skipped — they still get
+// called from our own origin and should carry a valid Origin header.
 app.use('/api/*', async (c, next) => {
   const method = c.req.method;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
     return next();
   }
-  if (c.req.path.startsWith('/api/webhooks/') || c.req.path.startsWith('/api/admin/')) {
+  if (c.req.path.startsWith('/api/webhooks/')) {
     return next();
   }
 

@@ -1,5 +1,12 @@
 /**
  * Generic fetch wrapper for JSON API calls.
+ *
+ * Behavior:
+ * - Throws {@link ApiError} for any non-2xx/204 response, preserving status +
+ *   server-provided message when possible.
+ * - Retries a single time on 429 Too Many Requests, honoring the `Retry-After`
+ *   header (seconds) with a conservative upper bound so a hostile server can't
+ *   wedge the UI.
  */
 
 export class ApiError extends Error {
@@ -14,21 +21,69 @@ export class ApiError extends Error {
   }
 }
 
+/** Hard upper bound on 429 Retry-After delay we'll honor (ms). */
+const MAX_RETRY_DELAY_MS = 5_000;
+/** Default back-off when the server doesn't send a Retry-After header. */
+const DEFAULT_RETRY_DELAY_MS = 500;
+
+/** Parse the Retry-After header (seconds or HTTP-date) into milliseconds. */
+function parseRetryAfter(header: string | null): number {
+  if (!header) return DEFAULT_RETRY_DELAY_MS;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+  }
+  const whenMs = Date.parse(header);
+  if (Number.isFinite(whenMs)) {
+    const delta = whenMs - Date.now();
+    return Math.max(0, Math.min(delta, MAX_RETRY_DELAY_MS));
+  }
+  return DEFAULT_RETRY_DELAY_MS;
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function readErrorBody(res: Response): Promise<unknown> {
+  const text = await res.text().catch(() => null);
+  if (!text) return text;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return parsed.message !== undefined ? parsed.message : parsed;
+  } catch {
+    return text;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init, ...(signal ? { signal } : {}) });
+  const doFetch = () => fetch(path, { credentials: 'same-origin', ...init, ...(signal ? { signal } : {}) });
+
+  let res = await doFetch();
+
+  // Transparent single retry on 429 so callers don't have to implement it.
+  if (res.status === 429) {
+    const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
+    await delay(retryAfter, signal);
+    res = await doFetch();
+  }
 
   if (!res.ok) {
-    const text = await res.text().catch(() => null);
-    let body: unknown = text;
-    if (text) {
-      try {
-        const parsed = JSON.parse(text) as Record<string, unknown>;
-        body = parsed.message !== undefined ? parsed.message : parsed;
-      } catch {
-        // keep raw text as body
-      }
-    }
-    throw new ApiError(res.status, body);
+    throw new ApiError(res.status, await readErrorBody(res));
   }
 
   // 204 No Content — nothing to parse.

@@ -108,19 +108,44 @@ export class MapPageBase extends LitElement {
     return {};
   }
 
-  /** Parse and apply saved viewport from export_settings. */
-  protected _restoreViewport(settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number }): void {
-    if (settings.center && settings.zoom != null) {
-      const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-      if (mapView?.map) {
-        mapView.map.jumpTo({
-          center: settings.center,
-          zoom: settings.zoom,
-          bearing: settings.bearing ?? 0,
-          pitch: settings.pitch ?? 0,
-        });
-      }
-    }
+  /**
+   * Apply a saved viewport after drawItems() has finished its auto-fit.
+   * drawItems() calls fitBounds() which fires moveend asynchronously; if we
+   * jumpTo() first and then fitBounds() runs, our restored viewport is lost.
+   * And if we jumpTo() synchronously after drawItems resolves, the late
+   * moveend from the auto-fit still fires while _restoring is false,
+   * triggering a spurious save.
+   *
+   * Correct sequence:
+   *   1. await drawItems() (caller).
+   *   2. jumpTo(saved viewport) — overrides fitBounds, may fire moveend.
+   *   3. await 'idle' event — drains any pending moveend.
+   *   4. Return; caller clears _restoring.
+   */
+  protected async _applyRestoredViewport(
+    settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number },
+  ): Promise<void> {
+    if (!settings.center || settings.zoom == null) return;
+    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
+    const map = mapView?.map;
+    if (!map) return;
+
+    map.jumpTo({
+      center: settings.center,
+      zoom: settings.zoom,
+      bearing: settings.bearing ?? 0,
+      pitch: settings.pitch ?? 0,
+    });
+
+    // Wait for the map to settle (drains the late fitBounds moveend too).
+    // 'idle' only fires if the map is not already idle; include a timeout
+    // so we never hang if it happens to already be idle.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(); } };
+      map.once('idle', done);
+      setTimeout(done, 500);
+    });
   }
 
   protected async _syncMap() {

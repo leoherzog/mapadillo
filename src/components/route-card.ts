@@ -10,7 +10,7 @@
  */
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { Stop } from '../services/maps.js';
+import type { RouteStop, Stop } from '../services/maps.js';
 import type { GeocodingResult } from '../services/geocoding.js';
 import './icon-picker.js';
 import './location-search.js';
@@ -23,7 +23,7 @@ import { extractExistingLocations } from '../utils/existing-locations.js';
 
 @customElement('route-card')
 export class RouteCard extends LitElement {
-  @property({ type: Object }) item!: Stop;
+  @property({ type: Object }) item!: RouteStop;
   @property({ type: Array }) allItems: Stop[] = [];
   @property({ type: Boolean }) readonly = false;
   @property({ type: Boolean }) highlighted = false;

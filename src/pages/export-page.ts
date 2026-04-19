@@ -28,16 +28,8 @@ import { MapPageBase } from './map-page-base.js';
 import type { MapView } from '../components/map-view.js';
 import { getUnits, type Units } from '../units.js';
 import { formatDistance, sanitizeFilename } from '../utils/geo.js';
+import { parseExportSettings, type ExportSettings } from '../../shared/types.js';
 import '../components/map-view.js';
-
-interface ExportSettings {
-  paperSize?: PaperSize;
-  orientation?: Orientation;
-  center?: [number, number];
-  zoom?: number;
-  bearing?: number;
-  pitch?: number;
-}
 
 const FORMAT_DESCRIPTIONS: Record<ExportFormat, string> = {
   pdf: 'Print-ready PDF with trip details',
@@ -114,9 +106,12 @@ export class ExportPage extends MapPageBase {
   }
 
   protected override async _syncMap() {
+    // drawItems() runs an auto-fit (fitBounds); that fires a late moveend.
+    // _restoreSettings() jumpTo()s to the saved viewport and awaits the map's
+    // 'idle' event, so by the time it returns the viewport is settled — no
+    // late fitBounds moveend can clobber it before we capture the render.
     await super._syncMap();
-    this._restoreSettings();
-    await this._waitForIdle();
+    await this._restoreSettings();
     await this._renderPreview();
   }
 
@@ -130,35 +125,17 @@ export class ExportPage extends MapPageBase {
 
   // ── Settings restore ──────────────────────────────────────────────────
 
-  private _restoreSettings() {
+  private async _restoreSettings() {
     if (!this._map) return;
 
-    let settings: ExportSettings = {};
-    try {
-      const raw = this._map.export_settings;
-      if (raw && raw !== '{}') settings = JSON.parse(raw);
-    } catch { /* use defaults */ }
+    const settings: ExportSettings = parseExportSettings(this._map.export_settings) ?? {};
 
-    if (settings.paperSize) this._paperSize = settings.paperSize;
+    if (settings.paperSize) this._paperSize = settings.paperSize as PaperSize;
     if (settings.orientation) this._orientation = settings.orientation;
 
-    // Restore saved viewport (overrides the auto-fit from drawItems)
-    this._restoreViewport(settings);
-  }
-
-  private _waitForIdle(): Promise<void> {
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (!mapView?.map) return Promise.resolve();
-
-    return new Promise((resolve) => {
-      const map = mapView.map!;
-      let settled = false;
-      const done = () => { if (!settled) { settled = true; resolve(); } };
-
-      map.once('idle', done);
-      // Timeout fallback — if the map is already idle, 'idle' won't fire again
-      setTimeout(done, 3000);
-    });
+    // Restore saved viewport and wait for the map to settle so the render
+    // captures the saved view, not the auto-fit view.
+    await this._applyRestoredViewport(settings);
   }
 
   // ── Render preview ────────────────────────────────────────────────────

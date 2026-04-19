@@ -8,7 +8,8 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
-import type { MapData, Stop, ShareRow } from '../../../shared/types.js';
+import type { MapData, Stop, StopRow, ShareRow } from '../../../shared/types.js';
+import { rowToStop } from '../../../shared/types.js';
 import { getMapWithRole } from './maps.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -25,6 +26,12 @@ async function getOwnedMap(
 
 const VALID_ROLES = new Set(['viewer', 'editor']);
 
+// Claim tokens are invite links shared via out-of-band channels (email, chat).
+// A 30-day window balances usability (family members sometimes take days to
+// click) against the blast radius of a leaked URL lingering in browser history
+// or forwarded messages.
+const CLAIM_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 // ── Sub-app ──────────────────────────────────────────────────────────────────
 
 const sharing = new Hono<AppEnv>();
@@ -36,13 +43,17 @@ sharing.get('/:id/shares', async (c) => {
   if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
 
   const rows = await c.env.DB.prepare(
-    `SELECT ms.id, ms.user_id, ms.role, ms.claim_token, ms.created_at,
+    `SELECT ms.id, ms.user_id, ms.role, ms.claim_token, ms.claim_token_expires_at, ms.created_at,
             u.name AS user_name, u.email AS user_email
      FROM map_shares ms
      LEFT JOIN "user" u ON ms.user_id = u.id
      WHERE ms.map_id = ?
      ORDER BY ms.created_at`,
-  ).bind(map.id).all<ShareRow & { user_name: string | null; user_email: string | null }>();
+  ).bind(map.id).all<ShareRow & {
+    claim_token_expires_at: string | null;
+    user_name: string | null;
+    user_email: string | null;
+  }>();
 
   const shares = rows.results.map((r) => ({
     id: r.id,
@@ -52,6 +63,7 @@ sharing.get('/:id/shares', async (c) => {
     role: r.role,
     // Omit claim_token for already-claimed shares (security: token is single-use)
     claim_token: r.user_id !== null ? undefined : r.claim_token,
+    claim_token_expires_at: r.user_id !== null ? undefined : r.claim_token_expires_at,
     claimed: r.user_id !== null,
     created_at: r.created_at,
   }));
@@ -84,12 +96,19 @@ sharing.post('/:id/shares', async (c) => {
 
   const id = crypto.randomUUID();
   const claimToken = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + CLAIM_TOKEN_TTL_MS).toISOString();
 
   await c.env.DB.prepare(
-    'INSERT INTO map_shares (id, map_id, role, claim_token) VALUES (?, ?, ?, ?)',
-  ).bind(id, map.id, body.role, claimToken).run();
+    'INSERT INTO map_shares (id, map_id, role, claim_token, claim_token_expires_at) VALUES (?, ?, ?, ?, ?)',
+  ).bind(id, map.id, body.role, claimToken, expiresAt).run();
 
-  return c.json({ id, claim_token: claimToken, role: body.role, url: `/claim/${claimToken}` }, 201);
+  return c.json({
+    id,
+    claim_token: claimToken,
+    claim_token_expires_at: expiresAt,
+    role: body.role,
+    url: `/claim/${claimToken}`,
+  }, 201);
 });
 
 // PUT /:id/shares/:shareId — update share role (owner only)
@@ -185,20 +204,20 @@ sharing.post('/:id/duplicate', async (c) => {
   // Copy all stops with new IDs
   const stops = await c.env.DB.prepare(
     'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
-  ).bind(mapId).all<Stop>();
+  ).bind(mapId).all<StopRow>();
 
   const newStops: Stop[] = [];
   if (stops.results.length > 0) {
-    const stmts = stops.results.map((stop) => {
+    const stmts = stops.results.map((row) => {
       const newId = crypto.randomUUID();
-      newStops.push({ ...stop, id: newId, map_id: newMapId, created_at: now });
+      newStops.push(rowToStop({ ...row, id: newId, map_id: newMapId, created_at: now }));
       return c.env.DB.prepare(
         'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(
-        newId, newMapId, stop.position, stop.type, stop.name,
-        stop.label, stop.latitude, stop.longitude, stop.icon, stop.travel_mode,
-        stop.dest_name, stop.dest_latitude, stop.dest_longitude,
-        stop.dest_icon, stop.route_geometry, now,
+        newId, newMapId, row.position, row.type, row.name,
+        row.label, row.latitude, row.longitude, row.icon, row.travel_mode,
+        row.dest_name, row.dest_latitude, row.dest_longitude,
+        row.dest_icon, row.route_geometry, now,
       );
     });
     await c.env.DB.batch(stmts);
@@ -228,15 +247,38 @@ export async function claimShareHandler(c: Context<AppEnv>) {
 
   const share = await c.env.DB.prepare(
     'SELECT * FROM map_shares WHERE claim_token = ?',
-  ).bind(token).first<{ id: string; map_id: string; user_id: string | null; role: string; claim_token: string | null }>();
+  ).bind(token).first<{
+    id: string;
+    map_id: string;
+    user_id: string | null;
+    role: string;
+    claim_token: string | null;
+    claim_token_expires_at: string | null;
+  }>();
 
   if (!share) {
     return c.json({ error: 'Invalid or expired invite link' }, 404);
   }
 
-  // Already claimed by this user — treat as success
+  // Already claimed by this user — treat as success (idempotent reclaim).
+  // Evaluated BEFORE the expiry check so an already-successful claim is not
+  // later reported as expired when the timestamp finally rolls past.
   if (share.user_id === userId) {
     return c.json({ map_id: share.map_id });
+  }
+
+  // Expiry check for unclaimed invites. NULL = legacy row with no expiry,
+  // treated as non-expiring for backwards compatibility with shares created
+  // before migration 0011.
+  if (share.claim_token_expires_at) {
+    const expiresAt = Date.parse(share.claim_token_expires_at);
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      // Null the token so the one-shot invite can't be re-attempted.
+      await c.env.DB.prepare(
+        'UPDATE map_shares SET claim_token = NULL WHERE id = ? AND user_id IS NULL',
+      ).bind(share.id).run();
+      return c.json({ error: 'Invalid or expired invite link' }, 404);
+    }
   }
 
   // Owner clicking their own invite — just redirect, don't create a redundant share

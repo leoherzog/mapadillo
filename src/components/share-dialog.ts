@@ -24,9 +24,9 @@ export class ShareDialog extends LitElement {
   @state() private _linkRole: 'viewer' | 'editor' = 'viewer';
   @state() private _generatedUrl = '';
   @state() private _generating = false;
-  @state() private _pendingRemoveId: string | null = null;
+  @state() private _revokingShareId: string | null = null;
+  @state() private _dialogMode: 'share' | 'confirm-revoke' | null = null;
   @state() private _error = '';
-  @state() private _open = false;
 
   static styles = [waUtilities, css`
     wa-dialog::part(dialog) {
@@ -113,7 +113,7 @@ export class ShareDialog extends LitElement {
     this._loading = true;
     this._generatedUrl = '';
     this._error = '';
-    this._open = true;
+    this._dialogMode = 'share';
     try {
       this._shares = await getMapShares(this.mapId);
     } catch {
@@ -124,98 +124,110 @@ export class ShareDialog extends LitElement {
   }
 
   render() {
+    const isConfirm = this._dialogMode === 'confirm-revoke';
+    const isOpen = this._dialogMode !== null;
     return html`
-      <wa-dialog ?open=${this._open} @wa-after-hide=${this._onClose}>
-        <span slot="label"><wa-icon name="share-nodes" class="label-icon"></wa-icon> Share Trip</span>
+      <wa-dialog ?open=${isOpen} @wa-after-hide=${this._onAfterHide}>
+        <span slot="label">
+          ${isConfirm
+            ? html`Remove Collaborator?`
+            : html`<wa-icon name="share-nodes" class="label-icon"></wa-icon> Share Trip`}
+        </span>
 
-        <div class="wa-stack wa-gap-l">
-          ${this._error ? html`
-            <wa-callout variant="danger">
-              <wa-icon slot="icon" name="circle-info" library="fa-jelly"></wa-icon>
-              ${this._error}
-            </wa-callout>
-          ` : nothing}
+        ${isConfirm
+          ? html`
+              <p>They will need a new invite link to regain access.</p>
+            `
+          : html`
+              <div class="wa-stack wa-gap-l">
+                ${this._error ? html`
+                  <wa-callout variant="danger">
+                    <wa-icon slot="icon" name="circle-info" library="fa-jelly"></wa-icon>
+                    ${this._error}
+                  </wa-callout>
+                ` : nothing}
 
-          <!-- Visibility toggle -->
-          <div class="wa-stack wa-gap-xs">
-            <p class="section-label">Visibility</p>
-            <div class="wa-split wa-align-items-center wa-gap-m">
-              <div>
-                <div>${this.visibility === 'public' ? 'Public' : 'Private'}</div>
-                <div class="visibility-desc">
-                  ${this.visibility === 'public'
-                    ? 'Anyone with the link can view this trip.'
-                    : 'Only invited collaborators can access this trip.'}
+                <!-- Visibility toggle -->
+                <div class="wa-stack wa-gap-xs">
+                  <p class="section-label">Visibility</p>
+                  <div class="wa-split wa-align-items-center wa-gap-m">
+                    <div>
+                      <div>${this.visibility === 'public' ? 'Public' : 'Private'}</div>
+                      <div class="visibility-desc">
+                        ${this.visibility === 'public'
+                          ? 'Anyone with the link can view this trip.'
+                          : 'Only invited collaborators can access this trip.'}
+                      </div>
+                    </div>
+                    <wa-switch
+                      .checked=${this.visibility === 'public'}
+                      @change=${this._onVisibilityToggle}
+                    ></wa-switch>
+                  </div>
+                </div>
+
+                <wa-divider></wa-divider>
+
+                <!-- Generate invite link -->
+                <div class="wa-stack wa-gap-s">
+                  <p class="section-label">Invite Link</p>
+                  <wa-radio-group
+                    label="Invite role"
+                    .value=${this._linkRole}
+                    @change=${this._onLinkRoleChange}
+                  >
+                    <wa-radio appearance="button" value="viewer">Viewer</wa-radio>
+                    <wa-radio appearance="button" value="editor">Editor</wa-radio>
+                  </wa-radio-group>
+
+                  <wa-button
+                    variant="brand"
+                    size="small"
+                    ?loading=${this._generating}
+                    @click=${this._onGenerateLink}
+                  >
+                    <wa-icon slot="start" name="link" library="fa-jelly"></wa-icon>
+                    Generate Link
+                  </wa-button>
+
+                  ${this._generatedUrl ? html`
+                    <div class="link-box wa-cluster wa-align-items-center wa-gap-xs">
+                      <span>${this._generatedUrl}</span>
+                      <wa-copy-button
+                        value=${this._generatedUrl}
+                        copy-label="Copy link"
+                        success-label="Copied!"
+                        feedback-duration="2000"
+                      >
+                        <wa-icon slot="copy-icon" name="clone" library="fa-jelly"></wa-icon>
+                      </wa-copy-button>
+                    </div>
+                  ` : nothing}
+                </div>
+
+                <wa-divider></wa-divider>
+
+                <!-- Collaborators list -->
+                <div class="wa-stack wa-gap-s">
+                  <p class="section-label">Collaborators</p>
+
+                  ${this._loading
+                    ? html`<div class="wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
+                    : this._shares.length === 0
+                      ? html`<div class="empty-collab">No collaborators yet.</div>`
+                      : this._shares.map(share => this._renderShare(share))}
                 </div>
               </div>
-              <wa-switch
-                .checked=${this.visibility === 'public'}
-                @change=${this._onVisibilityToggle}
-              ></wa-switch>
-            </div>
-          </div>
+            `}
 
-          <wa-divider></wa-divider>
-
-          <!-- Generate invite link -->
-          <div class="wa-stack wa-gap-s">
-            <p class="section-label">Invite Link</p>
-            <wa-radio-group
-              label="Invite role"
-              .value=${this._linkRole}
-              @change=${this._onLinkRoleChange}
-            >
-              <wa-radio appearance="button" value="viewer">Viewer</wa-radio>
-              <wa-radio appearance="button" value="editor">Editor</wa-radio>
-            </wa-radio-group>
-
-            <wa-button
-              variant="brand"
-              size="small"
-              ?loading=${this._generating}
-              @click=${this._onGenerateLink}
-            >
-              <wa-icon slot="start" name="link" library="fa-jelly"></wa-icon>
-              Generate Link
-            </wa-button>
-
-            ${this._generatedUrl ? html`
-              <div class="link-box wa-cluster wa-align-items-center wa-gap-xs">
-                <span>${this._generatedUrl}</span>
-                <wa-copy-button
-                  value=${this._generatedUrl}
-                  copy-label="Copy link"
-                  success-label="Copied!"
-                  feedback-duration="2000"
-                >
-                  <wa-icon slot="copy-icon" name="clone" library="fa-jelly"></wa-icon>
-                </wa-copy-button>
-              </div>
-            ` : nothing}
-          </div>
-
-          <wa-divider></wa-divider>
-
-          <!-- Collaborators list -->
-          <div class="wa-stack wa-gap-s">
-            <p class="section-label">Collaborators</p>
-
-            ${this._loading
-              ? html`<div class="wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
-              : this._shares.length === 0
-                ? html`<div class="empty-collab">No collaborators yet.</div>`
-                : this._shares.map(share => this._renderShare(share))}
-          </div>
-        </div>
-
-        <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onClose}>Close</wa-button>
-      </wa-dialog>
-
-      <wa-dialog ?open=${this._pendingRemoveId !== null} @wa-after-hide=${() => { this._pendingRemoveId = null; }}>
-        <span slot="label">Remove Collaborator?</span>
-        <p>They will need a new invite link to regain access.</p>
-        <wa-button slot="footer" variant="danger" @click=${this._confirmRemove}>Remove</wa-button>
-        <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${() => { this._pendingRemoveId = null; }}>Cancel</wa-button>
+        ${isConfirm
+          ? html`
+              <wa-button slot="footer" variant="danger" @click=${this._confirmRemove}>Remove</wa-button>
+              <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._cancelRevoke}>Cancel</wa-button>
+            `
+          : html`
+              <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onClose}>Close</wa-button>
+            `}
       </wa-dialog>
     `;
   }
@@ -323,12 +335,19 @@ export class ShareDialog extends LitElement {
   }
 
   private _onRemoveShare(shareId: string) {
-    this._pendingRemoveId = shareId;
+    this._revokingShareId = shareId;
+    this._dialogMode = 'confirm-revoke';
+  }
+
+  private _cancelRevoke() {
+    this._revokingShareId = null;
+    this._dialogMode = 'share';
   }
 
   private async _confirmRemove() {
-    const shareId = this._pendingRemoveId;
-    this._pendingRemoveId = null;
+    const shareId = this._revokingShareId;
+    this._revokingShareId = null;
+    this._dialogMode = 'share';
     if (!shareId) return;
 
     try {
@@ -340,7 +359,19 @@ export class ShareDialog extends LitElement {
   }
 
   private _onClose() {
-    this._open = false;
+    this._dialogMode = null;
+    this._revokingShareId = null;
+  }
+
+  private _onAfterHide() {
+    // If the user dismissed the confirmation (Esc / backdrop), return to share mode.
+    // If they dismissed the main share dialog, fully close.
+    if (this._dialogMode === 'confirm-revoke') {
+      this._revokingShareId = null;
+      this._dialogMode = 'share';
+    } else {
+      this._dialogMode = null;
+    }
   }
 }
 

@@ -8,7 +8,6 @@
  */
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { PropertyValues } from 'lit';
 import type { Stop } from '../services/maps.js';
 import './point-card.js';
 import './route-card.js';
@@ -31,8 +30,10 @@ export class ItemList extends LitElement {
   private _dragClone: HTMLElement | null = null;
   private _dragStartY = 0;
   private _dragOriginalY = 0;
-  private _dragRafId = 0;
-  private _boundHandles = new WeakSet<HTMLElement>();
+
+  // Window-level handlers bound once so we can add/remove consistently.
+  private _onMoveBound = (e: PointerEvent) => this._onWindowMove(e);
+  private _onUpBound = (e: PointerEvent) => this._onWindowUp(e);
 
   static styles = [waUtilities, css`
     :host {
@@ -81,7 +82,7 @@ export class ItemList extends LitElement {
     }
 
     return html`
-      <div class="wa-stack wa-gap-3xs">
+      <div class="wa-stack wa-gap-3xs" @pointerdown=${this._onHostPointerDown}>
         ${this.items.map((item, i) => html`
           ${this._dropTargetIndex === i && this._draggedIndex !== i && this._draggedIndex !== i - 1
             ? html`<div class="drop-indicator"></div>`
@@ -137,49 +138,47 @@ export class ItemList extends LitElement {
     this._highlightedItemId = '';
   }
 
-  protected firstUpdated(): void {
-    this._setupPointerDrag();
-  }
-
-  protected updated(changed: PropertyValues): void {
-    if (changed.has('items') || changed.has('readonly')) {
-      // Defer to next frame so child card shadow DOMs are rendered
-      cancelAnimationFrame(this._dragRafId);
-      this._dragRafId = requestAnimationFrame(() => {
-        this._dragRafId = requestAnimationFrame(() => this._setupPointerDrag());
-      });
-    }
-  }
-
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    cancelAnimationFrame(this._dragRafId);
     this._cleanupDrag();
   }
 
-  private _setupPointerDrag() {
+  /**
+   * Event-delegated pointerdown handler at the host's rendered root.
+   * Walks the composed path to find a `.drag-handle` (inside a card's shadow DOM)
+   * and its owning `.card-wrapper`, then starts a drag.
+   */
+  private _onHostPointerDown(e: PointerEvent) {
     if (this.readonly) return;
+    if (e.button !== 0) return;
 
-    const wrappers = this.shadowRoot!.querySelectorAll('.card-wrapper');
-    wrappers.forEach((wrapper) => {
-      const card = wrapper.querySelector('point-card, route-card');
-      if (!card?.shadowRoot) return;
+    // composedPath() crosses shadow boundaries — so we can see the
+    // `.drag-handle` inside point-card/route-card shadow DOMs.
+    const path = e.composedPath();
+    let handle: HTMLElement | null = null;
+    for (const node of path) {
+      if (node instanceof HTMLElement && node.classList?.contains('drag-handle')) {
+        handle = node;
+        break;
+      }
+    }
+    if (!handle) return;
 
-      const handle = card.shadowRoot.querySelector('.drag-handle') as HTMLElement | null;
-      if (!handle) return;
+    // Find the wrapper in *our* shadow root that owns this handle.
+    const wrappers = [...this.shadowRoot!.querySelectorAll('.card-wrapper')] as HTMLElement[];
+    let wrapper: HTMLElement | null = null;
+    let index = -1;
+    for (const p of path) {
+      if (p instanceof HTMLElement && p.classList?.contains('card-wrapper') && wrappers.includes(p)) {
+        wrapper = p;
+        index = wrappers.indexOf(p);
+        break;
+      }
+    }
+    if (!wrapper || index < 0) return;
 
-      if (this._boundHandles.has(handle)) return;
-      this._boundHandles.add(handle);
-
-      handle.addEventListener('pointerdown', (e: PointerEvent) => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        // Resolve the current index at event time, not closure time
-        const currentIndex = [...this.shadowRoot!.querySelectorAll('.card-wrapper')].indexOf(wrapper);
-        if (currentIndex < 0) return;
-        this._startDrag(e, currentIndex, wrapper as HTMLElement);
-      });
-    });
+    e.preventDefault();
+    this._startDrag(e, index, wrapper);
   }
 
   private _startDrag(e: PointerEvent, index: number, wrapper: HTMLElement) {
@@ -199,24 +198,21 @@ export class ItemList extends LitElement {
     this.shadowRoot!.appendChild(clone);
     this._dragClone = clone;
 
-    // Capture pointer for move/up events
-    wrapper.setPointerCapture(e.pointerId);
+    // Listen on window so we keep receiving moves/ups even if `items` re-renders
+    // and the original wrapper is replaced mid-drag.
+    window.addEventListener('pointermove', this._onMoveBound);
+    window.addEventListener('pointerup', this._onUpBound);
+    window.addEventListener('pointercancel', this._onUpBound);
+  }
 
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== this._pointerId) return;
-      this._onDragMove(ev);
-    };
-    const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== this._pointerId) return;
-      wrapper.removeEventListener('pointermove', onMove);
-      wrapper.removeEventListener('pointerup', onUp);
-      wrapper.removeEventListener('pointercancel', onUp);
-      this._endDrag();
-    };
+  private _onWindowMove(e: PointerEvent) {
+    if (e.pointerId !== this._pointerId) return;
+    this._onDragMove(e);
+  }
 
-    wrapper.addEventListener('pointermove', onMove);
-    wrapper.addEventListener('pointerup', onUp);
-    wrapper.addEventListener('pointercancel', onUp);
+  private _onWindowUp(e: PointerEvent) {
+    if (e.pointerId !== this._pointerId) return;
+    this._endDrag();
   }
 
   private _onDragMove(e: PointerEvent) {
@@ -241,6 +237,10 @@ export class ItemList extends LitElement {
   }
 
   private _endDrag() {
+    window.removeEventListener('pointermove', this._onMoveBound);
+    window.removeEventListener('pointerup', this._onUpBound);
+    window.removeEventListener('pointercancel', this._onUpBound);
+
     // Remove clone
     this._dragClone?.remove();
     this._dragClone = null;
@@ -248,7 +248,7 @@ export class ItemList extends LitElement {
     if (this._draggedIndex >= 0 && this._dropTargetIndex >= 0) {
       let targetIndex = this._dropTargetIndex;
       if (targetIndex > this._draggedIndex) targetIndex--;
-      if (targetIndex !== this._draggedIndex) {
+      if (targetIndex !== this._draggedIndex && targetIndex < this.items.length) {
         const order = this.items.map((s) => s.id);
         const [moved] = order.splice(this._draggedIndex, 1);
         order.splice(targetIndex, 0, moved);
@@ -269,6 +269,9 @@ export class ItemList extends LitElement {
   }
 
   private _cleanupDrag() {
+    window.removeEventListener('pointermove', this._onMoveBound);
+    window.removeEventListener('pointerup', this._onUpBound);
+    window.removeEventListener('pointercancel', this._onUpBound);
     this._dragClone?.remove();
     this._dragClone = null;
     this._draggedIndex = -1;

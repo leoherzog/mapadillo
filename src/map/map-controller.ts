@@ -5,7 +5,7 @@
  * Each route segment is its own MapLibre source + layer with mode-specific line style.
  */
 import maplibregl from 'maplibre-gl';
-import type { Stop } from '../services/maps.js';
+import type { RouteStop, Stop } from '../services/maps.js';
 import { getSegmentRoute, type SegmentGeometry } from '../services/routing.js';
 import { isDraftCoord } from '../utils/geo.js';
 
@@ -221,7 +221,7 @@ export class MapController {
     // Identify renderable routes and fetch geometries in parallel
     const routeGeometries = new Map<string, { mode: string; geometry: SegmentGeometry }>();
     const routeItems = items.filter(
-      (i) =>
+      (i): i is RouteStop =>
         i.type === 'route' &&
         !isDraftCoord(i.latitude, i.longitude) &&
         i.dest_latitude != null &&
@@ -274,21 +274,46 @@ export class MapController {
 
     // Collect marker positions as GeoJSON features for a native symbol layer.
     // Using map-native layers avoids the zoom-dependent drift that DOM markers cause.
-    const placedCoords = new Set<string>();
+    //
+    // Dedup strategy: features at the same coord are merged into a single
+    // feature that combines their names (with a bullet separator). This
+    // prevents stacked labels while preserving every label's text — in
+    // particular, a point that happens to share coords with a route endpoint
+    // won't cause the route-dest label to disappear. Because points render on
+    // top (separate layer) and have higher placement priority (sortKey=0),
+    // if any member of the cluster is a point we keep the point's icon and
+    // sortKey so the visible marker matches the point.
     const coordKey = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
+    const featuresByCoord = new Map<string, GeoJSON.Feature<GeoJSON.Point>>();
     const markerFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
     const usedIcons = new Set<string>();
     const addFeature = (icon: string, name: string, lngLat: [number, number], sortKey: number, itemId: string) => {
       const key = coordKey(lngLat[0], lngLat[1]);
-      if (placedCoords.has(key)) return;
-      placedCoords.add(key);
+      const existing = featuresByCoord.get(key);
       const imageId = `marker-${icon}`;
       usedIcons.add(icon);
-      markerFeatures.push({
+      if (existing) {
+        // Merge label text (avoid duplicates)
+        const existingName = String(existing.properties!.name);
+        if (existingName !== name && !existingName.includes(name)) {
+          existing.properties!.name = `${existingName} \u00B7 ${name}`;
+        }
+        // If this feature has higher priority (lower sortKey, i.e. a point),
+        // take over icon + sortKey + itemId so it renders on the top layer.
+        if (sortKey < (existing.properties!.sortKey as number)) {
+          existing.properties!.icon = imageId;
+          existing.properties!.sortKey = sortKey;
+          existing.properties!.itemId = itemId;
+        }
+        return;
+      }
+      const feature: GeoJSON.Feature<GeoJSON.Point> = {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: lngLat },
         properties: { name, icon: imageId, sortKey, itemId },
-      });
+      };
+      featuresByCoord.set(key, feature);
+      markerFeatures.push(feature);
     };
 
     for (const item of items) {
@@ -308,10 +333,10 @@ export class MapController {
       }
     }
 
-    // Sort features so that lower sortKeys (points) are at the end.
-    // Combined with 'symbol-z-order': 'source', this renders them on top
-    // while preserving their placement priority (lower sortKey = higher priority).
-    markerFeatures.sort((a, b) => b.properties!.sortKey - a.properties!.sortKey);
+    // Sort features so that lower sortKeys (points) render last (on top).
+    // Point markers and route-endpoint markers go to separate layers
+    // (see _addMarkerLayers), so this sort only affects order within each layer.
+    markerFeatures.sort((a, b) => (b.properties!.sortKey as number) - (a.properties!.sortKey as number));
 
     // Compute bounds once — used for initial offset calculation and camera fitting
     const bounds = this._computeBounds(items, routeGeometries);
@@ -507,7 +532,11 @@ export class MapController {
       if (isDraftCoord(item.latitude, item.longitude)) continue;
       bounds.extend([item.longitude, item.latitude]);
       coordCount++;
-      if (item.dest_latitude != null && item.dest_longitude != null && !isDraftCoord(item.dest_latitude, item.dest_longitude)) {
+      if (
+        item.type === 'route' &&
+        item.dest_latitude != null && item.dest_longitude != null &&
+        !isDraftCoord(item.dest_latitude, item.dest_longitude)
+      ) {
         bounds.extend([item.dest_longitude, item.dest_latitude]);
         coordCount++;
       }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ── Mock setup (vi.hoisted runs before vi.mock hoisting) ─────────────────────
 
@@ -232,6 +232,138 @@ describe('auth-state', () => {
       await mod.signOut();
 
       expect(listener).toHaveBeenCalled();
+    });
+  });
+
+  describe('visibilitychange handler', () => {
+    // The frontend test env is `node`, so there is no real `document`.
+    // Install a minimal stub that supports addEventListener / removeEventListener
+    // and mutable visibilityState before importing the module under test.
+    type FakeDoc = {
+      visibilityState: 'visible' | 'hidden';
+      _listeners: Map<string, Set<(ev: { type: string }) => void>>;
+      addEventListener: (type: string, fn: (ev: { type: string }) => void) => void;
+      removeEventListener: (type: string, fn: (ev: { type: string }) => void) => void;
+      dispatchEvent: (ev: { type: string }) => void;
+    };
+    let fakeDocument: FakeDoc;
+
+    function createFakeDocument(): FakeDoc {
+      const listeners = new Map<string, Set<(ev: { type: string }) => void>>();
+      return {
+        visibilityState: 'visible',
+        _listeners: listeners,
+        addEventListener(type, fn) {
+          if (!listeners.has(type)) listeners.set(type, new Set());
+          listeners.get(type)!.add(fn);
+        },
+        removeEventListener(type, fn) {
+          listeners.get(type)?.delete(fn);
+        },
+        dispatchEvent(ev) {
+          for (const fn of listeners.get(ev.type) ?? []) fn(ev);
+        },
+      };
+    }
+
+    function setVisibility(state: 'visible' | 'hidden') {
+      fakeDocument.visibilityState = state;
+      fakeDocument.dispatchEvent({ type: 'visibilitychange' });
+    }
+
+    beforeEach(async () => {
+      fakeDocument = createFakeDocument();
+      (globalThis as unknown as { document?: FakeDoc }).document = fakeDocument;
+      // Re-import after installing the stub so the module reads our fake
+      // document when it registers listeners.
+      vi.resetModules();
+      mockGetSession.mockReset();
+      mockSignOut.mockReset();
+      mod = await import('./auth-state.js');
+    });
+
+    afterEach(() => {
+      delete (globalThis as unknown as { document?: FakeDoc }).document;
+    });
+
+    it('refreshes auth when tab becomes visible after being hidden >60s', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+      expect(mockGetSession).toHaveBeenCalledTimes(1);
+
+      const nowSpy = vi.spyOn(Date, 'now');
+
+      // Tab hides at t=0
+      nowSpy.mockReturnValue(0);
+      setVisibility('hidden');
+
+      // Tab reappears 90s later — should refresh
+      nowSpy.mockReturnValue(90_000);
+      setVisibility('visible');
+
+      // refreshAuth is async; yield so its getSession call registers.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockGetSession).toHaveBeenCalledTimes(2);
+
+      nowSpy.mockRestore();
+    });
+
+    it('does not refresh when tab was hidden for <60s', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+      expect(mockGetSession).toHaveBeenCalledTimes(1);
+
+      const nowSpy = vi.spyOn(Date, 'now');
+
+      nowSpy.mockReturnValue(0);
+      setVisibility('hidden');
+
+      nowSpy.mockReturnValue(10_000);
+      setVisibility('visible');
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockGetSession).toHaveBeenCalledTimes(1);
+
+      nowSpy.mockRestore();
+    });
+
+    it('does not refresh on visible event without a preceding hide', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+      expect(mockGetSession).toHaveBeenCalledTimes(1);
+
+      setVisibility('visible');
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockGetSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops reacting to visibility changes after signOut', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+      mockSignOut.mockResolvedValue(undefined);
+      await mod.signOut();
+
+      const callsBefore = mockGetSession.mock.calls.length;
+
+      const nowSpy = vi.spyOn(Date, 'now');
+      nowSpy.mockReturnValue(0);
+      setVisibility('hidden');
+      nowSpy.mockReturnValue(120_000);
+      setVisibility('visible');
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockGetSession).toHaveBeenCalledTimes(callsBefore);
+
+      nowSpy.mockRestore();
     });
   });
 

@@ -4,6 +4,7 @@
 
 const ICON_NAMES = [
   'none',
+  'location-dot',
   'tree', 'leaf', 'flower', 'compass', 'fire', 'snowflake', 'sun', 'umbrella',
   'utensils', 'mug-hot', 'cake-candles', 'martini-glass', 'fish',
   'camera', 'landmark', 'globe', 'ticket', 'crown',
@@ -18,4 +19,4 @@ export type ValidIcon = (typeof ICON_NAMES)[number];
 
 export const VALID_ICONS: ReadonlySet<string> = new Set<string>(ICON_NAMES);
 
-export const DEFAULT_ICON = 'location-dot';
+export const DEFAULT_ICON: ValidIcon = 'location-dot';

@@ -71,19 +71,18 @@ The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static asse
 - **Map:** `src/map/map-controller.ts` manages MapLibre instance, draws stops + route segments; `src/map/map-export.ts` handles PDF/image export via `@watergis/maplibre-gl-export` + jsPDF
 - **Config:** `src/config/travel-modes.ts`, `src/config/map.ts` — travel mode definitions and map constants
 - **Styles:** `src/styles/card-shared.ts` (shared CSS for point-card + route-card), `src/styles/page-layout.ts` (shared page layout: `wa-split-panel` on desktop, `wa-drawer` on mobile), `src/styles/wa-utilities.ts` (Web Awesome utility classes)
-- **Utils:** `src/utils/geo.ts` — `isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `getDefaultUnits()`, `sanitizeFilename()`
+- **Utils:** `src/utils/geo.ts` — `isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `sanitizeFilename()`. Distance-units detection lives in `src/units.ts` (`getUnits()`, `setUnits()`, `toggleUnits()` — backed by `detectDefault()` from `navigator.language` + localStorage + server sync for authenticated users)
 - **Pages:** `landing-page.ts`, `sign-in-page.ts`, `dashboard-page.ts`, `trip-builder-page.ts`, `claim-page.ts`, `map-preview-page.ts`, `map-page-base.ts` (shared base class), `export-page.ts`
 
 ### Worker: `worker/src/`
 
 - **Entry:** `worker/src/index.ts` — Hono app, mounts all routes
 - **Auth:** Better Auth instance in `worker/src/auth.ts`, mounted at `/api/auth/*`
-- **Middleware:** `auth.ts` (core auth factory, attaches `c.get('user')`), `require-auth.ts`, `optional-auth.ts`, `rate-limit.ts`
-- **Routes:** `maps.ts` (CRUD + role checks via `getMapWithRole`), `sharing.ts` (shares + claim), `geocode.ts` (Photon proxy + KV cache), `route.ts` (ORS proxy + KV cache)
-- **Lib:** `worker/src/lib/` — `hash.ts` (crypto hashing helpers). *Note: Prodigi and Stripe helpers are planned but not yet implemented.*
-- **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic)
-- **DB types:** `worker/src/db/types.ts` re-exports from `shared/types.ts`
-- **Migrations:** `worker/src/db/migrations/` — 7 migrations (0001–0007)
+- **Middleware:** `worker/src/middleware/auth.ts` (single `authMiddleware(required)` factory exporting both `requireAuth` and `optionalAuth`, attaches `c.get('user')`), `worker/src/middleware/rate-limit.ts`
+- **Routes:** `maps.ts` (CRUD + role checks via `getMapWithRole`), `sharing.ts` (shares + claim), `user-preferences.ts` (per-account units), `orders.ts` (R2 upload, Stripe Checkout, Prodigi quote, user + admin order CRUD), `webhooks.ts` (Stripe + Prodigi), `geocode.ts` (Photon proxy + KV cache), `route.ts` (ORS proxy + KV cache)
+- **Lib:** `worker/src/lib/` — `hash.ts` (crypto hashing helpers), `stripe.ts` (Stripe SDK init), `prodigi.ts` (Prodigi API client for quotes + order placement), `discord.ts` (Discord webhook notifications for order events)
+- **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic). Shared D1 row types (`MapRow`, `StopRow`, `MapRole`) live in `shared/types.ts`
+- **Migrations:** `worker/src/db/migrations/` — 14 migrations (0001–0014)
 
 ### Cloudflare bindings (`worker/wrangler.toml`)
 
@@ -108,7 +107,18 @@ Each endpoint (point or route start/dest) has an icon from the curated Jelly set
 
 `travel_mode` is stored on the destination stop (NULL on the first stop). Five modes: `drive`, `walk`, `bike`, `plane`, `boat`. Plane = great-circle arc (client-computed, no ORS call). Boat = straight line.
 
-`export_settings` (JSON TEXT on `maps` table) persists export preferences and map viewport per map: `{ format, paperSize, orientation, center, zoom, bearing, pitch }`. Saved with 1s debounce on the preview/export page; restored on next visit (viewport via `jumpTo()` after `drawItems` auto-fit). Only saved for authenticated owners/editors. Follows the same pattern as `style_preferences`.
+`export_settings` (JSON TEXT on `maps` table) persists export preferences and map viewport per map: `{ format, paperSize, orientation, center, zoom, bearing, pitch }`. Saved with 1s debounce on the preview/export page; restored on next visit (viewport via `jumpTo()` after `drawItems` auto-fit). Only saved for authenticated owners/editors. Per-user preferences (distance units) live separately under `/api/user/preferences`.
+
+### FK enforcement policy
+
+D1 (Cloudflare's SQLite) does not reliably honour `PRAGMA foreign_keys = ON` on a per-connection basis, so the `ON DELETE CASCADE` / `ON DELETE RESTRICT` clauses in the schema are **advisory only** — they document intent, but are not enforced by the engine. Deletions must therefore be cascaded / restricted explicitly in the application layer.
+
+Current enforcement points:
+
+- `DELETE /api/maps/:id` (`worker/src/routes/maps.ts`) — RESTRICTs on `orders.map_id` (returns 409 if any order references the map) and CASCADEs to `stops` + `map_shares` in a single `DB.batch` with the map row itself.
+- User deletion is not exposed by the app. Better Auth's account-deletion flow, if enabled, would need matching cascade logic to clear `maps`, `map_shares.user_id`, `passkey`, etc.
+
+When adding new tables that reference `maps(id)` or `"user"(id)`, either extend the `DELETE /api/maps/:id` batch (CASCADE) or add a pre-check that returns a 4xx (RESTRICT). The schema clauses stay in place so that any future D1 engine that enforces them would behave consistently.
 
 ### CSRF protection
 

@@ -280,6 +280,58 @@ describe('Sharing - claim edge cases', () => {
     expect(body.error).toContain('Invalid');
   });
 
+  it('expired claim token returns 404 and nullifies the token', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: claimeeCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    // Seed an expired unclaimed invite directly (past timestamp).
+    const shareId = crypto.randomUUID();
+    const token = crypto.randomUUID();
+    const pastIso = new Date(Date.now() - 60_000).toISOString();
+    await env.DB.prepare(
+      'INSERT INTO map_shares (id, map_id, role, claim_token, claim_token_expires_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(shareId, mapId, 'viewer', token, pastIso).run();
+
+    const res = await jsonRequest(`/api/shares/claim/${token}`, 'POST', {}, claimeeCookie);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('Invalid');
+
+    // Token should be nullified so the invite can't be retried.
+    const row = await env.DB.prepare(
+      'SELECT claim_token FROM map_shares WHERE id = ?',
+    ).bind(shareId).first<{ claim_token: string | null }>();
+    expect(row?.claim_token).toBeNull();
+  });
+
+  it('fresh claim token succeeds and stores expiry', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: claimeeCookie, userId: claimeeId } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+
+    const { claim_token } = await createShare(mapId, ownerCookie, 'viewer');
+
+    // Sanity: POST /:id/shares sets a non-NULL expiry
+    const row = await env.DB.prepare(
+      'SELECT claim_token_expires_at FROM map_shares WHERE claim_token = ?',
+    ).bind(claim_token).first<{ claim_token_expires_at: string | null }>();
+    expect(row?.claim_token_expires_at).toBeTruthy();
+    expect(Date.parse(row!.claim_token_expires_at!)).toBeGreaterThan(Date.now());
+
+    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, claimeeCookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { map_id: string };
+    expect(body.map_id).toBe(mapId);
+
+    // And the share is claimed
+    const claimed = await env.DB.prepare(
+      'SELECT user_id, claim_token FROM map_shares WHERE map_id = ? AND user_id = ?',
+    ).bind(mapId, claimeeId).first<{ user_id: string; claim_token: string | null }>();
+    expect(claimed?.user_id).toBe(claimeeId);
+    expect(claimed?.claim_token).toBeNull();
+  });
+
   it('claimed-by-another returns 403', async () => {
     const { cookie: ownerCookie } = await createTestSession();
     const { userId: user2Id } = await createTestSession();

@@ -614,7 +614,7 @@ describe('Admin PATCH orders', () => {
     });
     expect(res.status).toBe(400);
     const data = await res.json() as { error: string };
-    expect(data.error).toBe('Order has no shipping address');
+    expect(data.error).toBe('Order has no (or malformed) shipping address');
   });
 
   it('allows submit_to_prodigi for paid status', async () => {
@@ -680,8 +680,13 @@ describe('Stripe webhook', () => {
 // ── Prodigi webhook tests ────────────────────────────────────────────────────
 
 describe('Prodigi webhook', () => {
-  it('rejects invalid secret', async () => {
-    const res = await request('/api/webhooks/prodigi/wrong-secret', {
+  const prodigiHeaders = {
+    'content-type': 'application/json',
+    'x-prodigi-webhook-secret': PRODIGI_WEBHOOK_SECRET,
+  };
+
+  it('rejects missing secret header', async () => {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
@@ -689,19 +694,46 @@ describe('Prodigi webhook', () => {
     expect(res.status).toBe(401);
   });
 
-  it('returns 400 for invalid JSON', async () => {
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+  it('rejects invalid secret header', async () => {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
+      headers: {
+        'content-type': 'application/json',
+        'x-prodigi-webhook-secret': 'wrong-secret',
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects wrong-length secret without leaking timing', async () => {
+    const res = await request('/api/webhooks/prodigi', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-prodigi-webhook-secret': 'x',
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 400 for invalid JSON', async () => {
+    const res = await request('/api/webhooks/prodigi', {
+      method: 'POST',
+      headers: {
+        'content-type': 'text/plain',
+        'x-prodigi-webhook-secret': PRODIGI_WEBHOOK_SECRET,
+      },
       body: 'not json',
     });
     expect(res.status).toBe(400);
   });
 
   it('acknowledges event with missing order data', async () => {
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -719,9 +751,9 @@ describe('Prodigi webhook', () => {
     const prodigiId = `ord_unknown_${crypto.randomUUID().slice(0, 8)}`;
     await insertOrder({ mapId, userId, status: 'submitted', prodigiOrderId: prodigiId });
 
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -744,9 +776,9 @@ describe('Prodigi webhook', () => {
     const prodigiId = `ord_ip_${orderId.slice(0, 8)}`;
     await insertOrder({ orderId, mapId, userId, status: 'submitted', prodigiOrderId: prodigiId });
 
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -772,9 +804,9 @@ describe('Prodigi webhook', () => {
     const prodigiId = `ord_sh_${orderId.slice(0, 8)}`;
     await insertOrder({ orderId, mapId, userId, status: 'in_production', prodigiOrderId: prodigiId });
 
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -804,9 +836,9 @@ describe('Prodigi webhook', () => {
     const prodigiId = `ord_co_${orderId.slice(0, 8)}`;
     await insertOrder({ orderId, mapId, userId, status: 'shipped', prodigiOrderId: prodigiId });
 
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -832,9 +864,9 @@ describe('Prodigi webhook', () => {
     const prodigiId = `ord_ca_${orderId.slice(0, 8)}`;
     await insertOrder({ orderId, mapId, userId, status: 'submitted', prodigiOrderId: prodigiId });
 
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -860,9 +892,9 @@ describe('Prodigi webhook', () => {
     const prodigiId = `ord_nt_${orderId.slice(0, 8)}`;
     await insertOrder({ orderId, mapId, userId, status: 'in_production', prodigiOrderId: prodigiId });
 
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',
@@ -883,9 +915,9 @@ describe('Prodigi webhook', () => {
   });
 
   it('handles non-existent prodigi order gracefully', async () => {
-    const res = await request(`/api/webhooks/prodigi/${PRODIGI_WEBHOOK_SECRET}`, {
+    const res = await request('/api/webhooks/prodigi', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: prodigiHeaders,
       body: JSON.stringify({
         specversion: '1.0',
         type: 'com.prodigi.order.status.stage.changed',

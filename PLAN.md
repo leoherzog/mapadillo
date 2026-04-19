@@ -134,18 +134,18 @@ mapadillo/
 │   │   ├── index.ts                # Worker entry — Hono router + Better Auth handler
 │   │   ├── auth.ts                 # Better Auth server instance (D1 adapter, OAuth config)
 │   │   ├── middleware/
-│   │   │   └── require-auth.ts     # Hono middleware: validate session, attach user to context
+│   │   │   ├── auth.ts             # Hono middleware factory: exports requireAuth + optionalAuth, validates session, attaches user to context
+│   │   │   └── rate-limit.ts       # Hono middleware: per-binding rate limiting
 │   │   ├── routes/
 │   │   │   ├── maps.ts             # CRUD: map metadata + items (D1), role-based access (getMapWithRole)
 │   │   │   ├── sharing.ts          # Shares CRUD, visibility toggle, claim endpoint, duplicate
+│   │   │   ├── user-preferences.ts # Per-account preferences (units)
 │   │   │   ├── orders.ts           # Image upload (R2), Stripe Checkout, Prodigi quote, user/admin order CRUD
 │   │   │   ├── webhooks.ts         # Stripe + Prodigi webhook handlers
 │   │   │   ├── geocode.ts          # Proxy Photon geocoding (with KV cache)
 │   │   │   └── route.ts            # Proxy OpenRouteService routing (with KV cache)
 │   │   ├── db/
-│   │   │   ├── types.ts            # Shared D1 row types: MapRow, StopRow, ShareRow
-│   │   │   ├── schema.sql          # D1 schema: users, sessions, accounts, maps, stops, map_shares
-│   │   │   └── migrations/         # D1 migration files (0001–0006)
+│   │   │   └── migrations/         # D1 migration files (0001–0014). Shared row types live in shared/types.ts
 │   │   └── lib/
 │   │       ├── prodigi.ts          # Prodigi API client (quotes + order placement)
 │   │       ├── stripe.ts           # Stripe SDK init (Workers-compatible fetch HTTP client)
@@ -172,7 +172,7 @@ mapadillo/
 - **Session management:** Cookie-based sessions in D1; use cookie cache (short-lived signed cookie) to avoid stale D1 reads after writes
 - **Server setup:** Better Auth instance created in `worker/src/auth.ts`, mounted on `/api/auth/*` in Hono
 - **Client setup:** `createAuthClient()` from `better-auth/client` in `src/auth/auth-client.ts`; namespaced methods: `signIn.social({ provider })`, `signIn.passkey()`, `signUp.email()` (for passkey registration), `signOut()`, `useSession()`
-- **Route protection:** Hono middleware (`require-auth.ts`) validates session and attaches user to request context; frontend auth guard in router redirects unauthenticated users to sign-in page
+- **Route protection:** Hono middleware (`worker/src/middleware/auth.ts` — single factory exporting `requireAuth` + `optionalAuth`) validates session and attaches user to request context; frontend auth guard in router redirects unauthenticated users to sign-in page
 - **OAuth app setup required:**
   - Google: Google Cloud Console → OAuth consent screen + credentials
   - Facebook: Meta Developer Portal → Facebook Login app
@@ -346,11 +346,12 @@ CREATE TABLE maps (
   name TEXT NOT NULL,             -- Trip name
   family_name TEXT,
   visibility TEXT NOT NULL DEFAULT 'private',  -- 'public' | 'private'
-  style_preferences TEXT DEFAULT '{}',         -- JSON blob
-  units TEXT NOT NULL DEFAULT 'km',            -- 'km' | 'miles'
+  export_settings TEXT DEFAULT '{}',           -- JSON blob: {format, paperSize, orientation, center, zoom, bearing, pitch}
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Note: style_preferences and per-map `units` columns were dropped in migration 0009;
+-- distance units are now a per-account preference via /api/user/preferences.
 
 CREATE TABLE stops (
   id TEXT PRIMARY KEY,           -- UUID
@@ -429,7 +430,7 @@ CREATE TABLE orders (
 | `POST` | `/api/maps` | Create new map (owner = current user) |
 | `GET` | `/api/maps` | List current user's maps + maps shared with them |
 | `GET` | `/api/maps/:id` | Load map metadata + stops — **optional auth**: public maps served to anyone, private maps require valid session + access check |
-| `PUT` | `/api/maps/:id` | Update map metadata (name, family_name, units, style_preferences) — debounced auto-save (owner/editor only) |
+| `PUT` | `/api/maps/:id` | Update map metadata (name, family_name, export_settings) — debounced auto-save (owner/editor only) |
 | `DELETE` | `/api/maps/:id` | Delete map + all stops (owner only, CASCADE) |
 | `POST` | `/api/maps/:id/duplicate` | Fork a map + all stops → new map owned by current user |
 
