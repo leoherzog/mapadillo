@@ -20,7 +20,7 @@
     "stripe": "^22.0.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.14.5",
+    "@cloudflare/vitest-pool-workers": "^0.15.2",
     "@cloudflare/workers-types": "^4.20260413.1",
     "@vitest/coverage-istanbul": "~4.1.4",
     "typescript": "^6.0.2",

@@ -6,7 +6,6 @@
  * Reuses the same vector tile sources and sprites from Bright.
  */
 import type { StyleSpecification, LayerSpecification } from 'maplibre-gl';
-import type { DataDrivenPropertyValueSpecification } from '@maplibre/maplibre-gl-style-spec';
 
 // ── Color palette ─────────────────────────────────────────────────────────
 
@@ -33,7 +32,7 @@ function idStartsWith(id: string, ...prefixes: string[]): boolean {
 }
 
 /** Multiply a numeric value or the first stop value of an interpolation expression. */
-type NumericStyleValue = DataDrivenPropertyValueSpecification<number> | undefined;
+type NumericStyleValue = number | unknown[] | undefined;
 
 function widenWidth(value: NumericStyleValue, factor: number): NumericStyleValue {
   if (typeof value === 'number') return value * factor;
