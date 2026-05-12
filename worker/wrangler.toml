@@ -31,7 +31,7 @@ migrations_dir = "src/db/migrations"
 # ── KV Namespace (geocoding + routing cache) ─────────────────────────────────
 [[kv_namespaces]]
 binding = "API_CACHE"
-id = "placeholder-replace-after-wrangler-kv-namespace-create"
+id = "32de1f45dc824b84894cca8b2e5a46de"
 
 # ── R2 Bucket (print images) ─────────────────────────────────────────────────
 [[r2_buckets]]

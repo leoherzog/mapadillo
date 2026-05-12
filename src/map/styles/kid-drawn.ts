@@ -31,18 +31,15 @@ function idStartsWith(id: string, ...prefixes: string[]): boolean {
   return prefixes.some((p) => id.startsWith(p));
 }
 
-/** Multiply a numeric value or the first stop value of an interpolation expression. */
-type NumericStyleValue = number | unknown[] | undefined;
-
-function widenWidth(value: NumericStyleValue, factor: number): NumericStyleValue {
-  if (typeof value === 'number') return value * factor;
-  // For interpolation/step expressions, return scaled — keep expression structure
+/** Multiply a numeric value or the numeric stops of an interpolation/step expression. */
+function widenWidth<T>(value: T, factor: number): T {
+  if (typeof value === 'number') return (value * factor) as T;
   if (Array.isArray(value)) {
-    return value.map((v: unknown, i: number) => {
+    return value.map((v, i) => {
       // Scale numeric stop outputs (every other value after the first few expression args)
       if (typeof v === 'number' && i > 1) return v * factor;
       return v;
-    }) as NumericStyleValue;
+    }) as T;
   }
   return value;
 }
