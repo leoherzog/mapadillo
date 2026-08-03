@@ -4,7 +4,7 @@
  * Items are either **points** (single marker) or **routes** (A→B line + two markers).
  * Each route segment is its own MapLibre source + layer with mode-specific line style.
  */
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import type { RouteStop, Stop } from '../services/maps.js';
 import { getSegmentRoute, type SegmentGeometry } from '../services/routing.js';
 import { isDraftCoord } from '../utils/geo.js';

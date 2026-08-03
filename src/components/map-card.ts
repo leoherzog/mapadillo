@@ -7,7 +7,7 @@
  */
 import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import type { MapWithStops } from '../services/maps.js';
 import { navigateTo } from '../nav.js';

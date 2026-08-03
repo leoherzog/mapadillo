@@ -16,12 +16,12 @@
   "dependencies": {
     "@awesome.me/kit-781a3c6be3": "^1.0.4",
     "@better-auth/passkey": "^1.6.2",
-    "@watergis/maplibre-gl-export": "^4.1.1",
+    "@watergis/maplibre-gl-export": "^5.0.0",
     "@web.awesome.me/webawesome-pro": "^3.8.0",
     "better-auth": "^1.6.2",
     "jspdf": "^4.2.1",
     "lit": "^3.3.2",
-    "maplibre-gl": "^5.23.0"
+    "maplibre-gl": "^6.1.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",

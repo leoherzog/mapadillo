@@ -6,7 +6,7 @@
  */
 import { LitElement, html, css, unsafeCSS } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import { resolveMapStyle } from '../config/map.js';
 

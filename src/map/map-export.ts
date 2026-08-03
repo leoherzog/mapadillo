@@ -4,7 +4,7 @@
  * Uses `@watergis/maplibre-gl-export`'s `MapGeneratorBase` for high-resolution
  * canvas capture, then converts to the desired format.
  */
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import type { StyleSpecification } from 'maplibre-gl';
 import { jsPDF } from 'jspdf';
 import { MapGeneratorBase, DPI, Size, Unit } from '@watergis/maplibre-gl-export';
@@ -22,7 +22,9 @@ const RENDER_TIMEOUT_MS = 30_000;
 const MAX_CANVAS_DIM = (() => {
   try {
     const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl');
+    // MapLibre v6 renders on WebGL2 only, so query the limit from the same
+    // context type it will actually use.
+    const gl = canvas.getContext('webgl2');
     if (gl) {
       const max = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
       // Release the WebGL context — they are a limited resource
@@ -69,7 +71,7 @@ class MapExporter extends MapGeneratorBase {
     paperSize: PaperSize = 'auto',
     orientation: Orientation = 'landscape',
   ) {
-    super(map, Size.A3, dpi, 'png' as never, Unit.mm, 'map');
+    super(map, { size: Size.A3, dpi, format: 'png', unit: Unit.mm, fileName: 'map' });
 
     const srcContainer = map.getContainer();
     const cw = srcContainer.clientWidth;
@@ -128,7 +130,7 @@ class MapExporter extends MapGeneratorBase {
       bearing: sourceMap.getBearing(),
       pitch: sourceMap.getPitch(),
       pixelRatio: this._renderPixelRatio,
-      // MapLibre v5 defaults maxCanvasSize to [4096, 4096] and silently
+      // MapLibre defaults maxCanvasSize to [4096, 4096] and silently
       // clamps pixelRatio to fit.  Override to match our intended export
       // dimensions so the canvas is not downscaled behind our back.
       maxCanvasSize: [this.width, this.height] as [number, number],
@@ -137,6 +139,15 @@ class MapExporter extends MapGeneratorBase {
       attributionControl: false,
     });
   }
+
+  /**
+   * Required by `MapGeneratorBase`, but only reached from the base class's own
+   * `generate()` / `toCanvas()` paths. This exporter renders via `renderCanvas()`
+   * and composites its own decoration, so both controls are intentionally no-ops.
+   */
+  protected addScaleControl(): void { /* export has no scale bar */ }
+
+  protected addAttributionControl(): void { /* attribution is drawn by the caller */ }
 
   /**
    * Render the current map view at high resolution into a canvas with
@@ -197,7 +208,7 @@ class MapExporter extends MapGeneratorBase {
 
         // Supply marker images on demand so MapLibre can compute correct
         // text label positioning (even though the icons are invisible).
-        tempMap.on('styleimagemissing', ({ id }: { id: string }) => {
+        tempMap.setMissingStyleImageResolver((id: string) => {
           if (id.startsWith('marker-')) {
             const img = sourceMap.getImage(id);
             if (img) tempMap!.addImage(id, img.data);
