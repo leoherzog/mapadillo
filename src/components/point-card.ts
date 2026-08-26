@@ -33,7 +33,8 @@ export class PointCard extends LitElement {
       display: block;
     }
 
-    wa-card::part(base) {
+    /* wa-card's outer element is the host, so style the element directly. */
+    wa-card {
       border-left: var(--wa-border-width-l) solid var(--wa-color-brand-50);
     }
 

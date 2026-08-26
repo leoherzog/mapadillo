@@ -39,7 +39,8 @@ export class MapCard extends LitElement {
         --spacing: var(--wa-space-s);
       }
 
-      wa-card::part(base):hover {
+      /* wa-card's outer element is the host, so style the element directly. */
+      wa-card:hover {
         box-shadow: var(--wa-shadow-m);
       }
 
