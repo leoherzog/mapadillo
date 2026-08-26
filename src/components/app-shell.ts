@@ -129,7 +129,7 @@ export class AppShell extends LitElement {
      */
 
     /* Cap the outermost grid at viewport height (internal: min-height: 100dvh) */
-    :host([no-footer]) wa-page::part(base) {
+    :host([no-footer]) wa-page::part(page) {
       height: 100dvh;
     }
 

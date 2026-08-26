@@ -12,11 +12,11 @@ export const cardSharedStyles = css`
     touch-action: none;
   }
 
-  .delete-btn::part(base) {
+  .delete-btn::part(button) {
     color: var(--wa-color-text-quiet);
   }
 
-  .delete-btn::part(base):hover {
+  .delete-btn::part(button):hover {
     color: var(--wa-color-danger-50);
   }
 
