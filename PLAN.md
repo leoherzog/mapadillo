@@ -19,8 +19,8 @@ A family-oriented web app where a parent/organizer enters road trip locations, a
 | **Icons** | Font Awesome Pro+ Jelly icons (via Kit code) | Rounded, bubbly icon style perfect for children's UI (requires Pro+ subscription) |
 | **Map Renderer** | MapLibre GL JS v5.x | Open-source, WebGL vector maps, great styling control, print export support |
 | **Map Tiles** | OpenFreeMap (free, no API key, unlimited) | Free OpenStreetMap vector tiles, commercial use allowed |
-| **Map Style** | OpenFreeMap "Bright" style (customize later in Maputnik) | Ship with Bright as-is for MVP; kid-friendly customization is a future pass |
-| **PDF/Image Export** | `@watergis/maplibre-gl-export` + jsPDF | Export control plugin for MapLibre + jsPDF for decorative print layout |
+| **Map Style** | OpenFreeMap "Bright" style, transformed at runtime into a kid-drawn look | Reuses Bright's tiles and sprites; `src/map/styles/kid-drawn.ts` rewrites colors, widths, dashes and fonts |
+| **PDF/Image Export** | Offscreen MapLibre render + jsPDF | High-resolution map render + jsPDF for decorative print layout |
 | **Print Service** | Prodigi API (print-on-demand) | Best developer API, free sandbox, CloudEvents webhooks, poster sizes 4x6" to 40x60", no minimums |
 | **Payments** | Stripe Checkout | We charge customer via Stripe, then place fulfillment order with Prodigi at wholesale cost |
 | **Auth** | Better Auth (`better-auth`) | TypeScript-first auth library with native D1 support (v1.5+), OAuth providers, session management |
@@ -59,7 +59,7 @@ A family-oriented web app where a parent/organizer enters road trip locations, a
    - Share controls: set public/private, generate invite links for collaborators (Viewer or Editor)
    - Share link: /map/{id} (public maps viewable by anyone, with "Duplicate this trip" to fork)
 6. Export Page (requires auth)
-   - Download as PDF (print-quality 200 DPI)
+   - Download as PDF (print-quality 300 DPI, capped to the device's canvas limit)
    - Download as PNG/JPEG image
    - "Order a Print!" → select poster size, enter shipping address → Stripe Checkout
 7. Order Confirmation
@@ -77,87 +77,120 @@ mapadillo/
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json
-├── .npmrc                          # FA/WA Pro registry + token
+├── vitest.config.ts                # Frontend tests (node env)
+├── .npmrc                          # Web Awesome Pro registry + token
+├── map-jelly-regular-full.svg      # Favicon source icon
+├── map-jelly-duo-regular-full.svg  # Duotone variant of the map icon
+├── public/
+│   └── favicon.svg
 ├── src/
-│   ├── index.ts                    # Entry point, router setup
+│   ├── index.ts                    # Entry: styles, WA component imports, FA kit, dark mode, units, auth, <app-shell>
 │   ├── router.ts                   # DIY router (URLPattern + Navigation API reactive controller)
+│   ├── nav.ts                      # navigateTo() + signInUrl()
+│   ├── units.ts                    # Distance units preference (locale default, localStorage, server sync)
+│   ├── dark-mode.ts                # Dark mode preference (explicit choice or prefers-color-scheme)
+│   ├── vite-env.d.ts
 │   ├── styles/
-│   │   ├── theme.css               # WA Playful theme overrides, bright kid palette
+│   │   ├── theme.css               # WA Playful theme overrides, brand orange
 │   │   ├── global.css              # App-wide styles
 │   │   ├── card-shared.ts          # Shared CSS for point-card + route-card components
-│   │   └── page-layout.ts          # Shared page layout CSS (wa-split-panel sidebar+map on desktop, wa-drawer on mobile)
+│   │   ├── page-layout.ts          # Trip builder layout (wa-split-panel on desktop, wa-drawer on mobile) + familyNameStyles
+│   │   ├── content-page.ts         # Centered layout for non-map pages
+│   │   ├── heading-shared.ts       # Brand h1 styles
+│   │   ├── hidden-map.ts           # Off-screen map containers for export/order rendering
+│   │   └── wa-utilities.ts         # Web Awesome utility classes for shadow roots
 │   ├── auth/
 │   │   ├── auth-client.ts          # Better Auth client instance + helpers
+│   │   ├── auth-controller.ts      # Lit controller that re-renders its host on auth changes
 │   │   ├── auth-guard.ts           # Route guard: redirect to sign-in if unauthenticated
 │   │   └── auth-state.ts           # Reactive auth state (current user, session)
+│   ├── config/
+│   │   ├── map.ts                  # MAP_STYLE_URL + resolveMapStyle() (cached kid-drawn style)
+│   │   └── travel-modes.ts         # Re-exports shared TRAVEL_MODES + color lookup tables
 │   ├── map/
-│   │   ├── kid-friendly-style.json # Custom MapLibre style (from Maputnik)
-│   │   ├── sprites/                # Custom map icon sprites (fun markers)
-│   │   ├── map-controller.ts       # MapController class: drawItems(), route lines, markers
-│   │   └── map-export.ts           # PDF/image export logic
+│   │   ├── map-controller.ts       # MapController class: drawItems(), route lines, marker symbol layers
+│   │   ├── map-export.ts           # Offscreen render + PNG/JPEG/PDF export, renderToBlob() for print orders
+│   │   ├── mockup-renderer.ts      # Canvas 2D poster mockup for the export page
+│   │   └── styles/
+│   │       └── kid-drawn.ts        # Transforms OpenFreeMap Bright into the kid-drawn style
 │   ├── pages/
 │   │   ├── landing-page.ts
 │   │   ├── sign-in-page.ts         # OAuth buttons (Google, Facebook) + passkey registration with native form validation
 │   │   ├── dashboard-page.ts       # "My Maps" + "Shared with me" + order history
+│   │   ├── claim-page.ts           # Auto-claims an invite link
+│   │   ├── map-page-base.ts        # Base class: map loading, MapController lifecycle, viewport restore
 │   │   ├── trip-builder-page.ts
-│   │   ├── map-preview-page.ts     # Full map preview + "Order a Print" button (owner/editor, printable sizes only)
+│   │   ├── map-preview-page.ts     # Full map preview with paper frame; saves export_settings
+│   │   ├── export-page.ts          # Downloads, poster mockup, "Order a Print" (owner/editor, printable sizes only)
 │   │   ├── order-page.ts           # Product/size picker, shipping address, Prodigi quote, map render + R2 upload, Stripe redirect
 │   │   ├── order-confirmation-page.ts # Order status + tracking URL
 │   │   └── admin-page.ts           # Admin panel: order management, Prodigi submission (Bearer token auth)
 │   ├── utils/
-│   │   ├── geo.ts                  # Shared utilities: isDraftCoord(), formatDistance()
-│   │   └── countries.ts            # 30 supported shipping countries (US/CA/GB/AU prioritized)
+│   │   ├── geo.ts                  # isDraftCoord(), formatDistance(), haversineDistance(), sanitizeFilename()
+│   │   ├── countries.ts            # Shipping countries (top destinations first)
+│   │   ├── existing-locations.ts   # Autocomplete suggestions from a map's stops
+│   │   ├── form.ts                 # fieldValue() / fieldChecked() for Web Awesome form events
+│   │   ├── preference.ts           # createPreference(): validated localStorage value with subscribers
+│   │   └── store-controller.ts     # Lit controller that re-renders on store changes
 │   ├── components/
 │   │   ├── location-search.ts      # Geocoding autocomplete (location-biased via active map center)
 │   │   ├── item-list.ts            # Pointer-based drag-and-drop item list (points + routes)
 │   │   ├── point-card.ts           # Standalone point card (icon picker, name/label)
 │   │   ├── route-card.ts           # A→B route card (start/end search, travel mode, distance)
+│   │   ├── endpoint-editor.ts      # Shared endpoint template (icon picker, name, location search) for both cards
 │   │   ├── map-view.ts             # MapLibre GL wrapper component
 │   │   ├── map-card.ts             # Map thumbnail card for dashboard
 │   │   ├── share-dialog.ts         # Share settings: public/private, invite links (wa-copy-button), role picker, wa-dialog confirmation for collaborator removal
-│   │   ├── icon-picker.ts          # Dialog-based Jelly icon picker (40 icons, 8 categories)
-│   │   ├── save-indicator.ts       # Save status display (saving/saved/error)
+│   │   ├── icon-picker.ts          # Dialog-based Jelly icon picker grouped by category
 │   │   ├── travel-mode-picker.ts   # 5-mode wa-radio-group (horizontal button appearance) with per-mode colors
-│   │   ├── export-options.ts       # PDF/image/print selection
-│   │   ├── print-order-form.ts     # Size, address, Stripe checkout
-│   │   ├── user-menu.ts            # Avatar, sign-out, account dropdown
-│   │   └── app-shell.ts            # Layout wrapper (header with user-menu, nav, footer)
+│   │   ├── ui.ts                   # Template helpers: errorCallout(), roleBadge(), orderStatusBadge()
+│   │   ├── user-menu.ts            # Avatar, sign-out, dark mode toggle, account dropdown
+│   │   └── app-shell.ts            # Layout wrapper (header with user-menu, footer) + route table
 │   └── services/
-│       ├── api-client.ts           # Base fetch wrapper (attaches auth session cookie)
+│       ├── api-client.ts           # Base fetch wrapper (same-origin cookies, ApiError)
 │       ├── maps.ts                 # CRUD for maps + items + sharing, typed wrappers
 │       ├── geocoding.ts            # Calls Worker proxy → Photon
-│       ├── routing.ts              # Calls Worker proxy → OpenRouteService
+│       ├── routing.ts              # Calls Worker proxy → OpenRouteService; plane/boat computed client-side
 │       └── orders.ts               # Upload print image, create checkout, get quote, list/get orders
 ├── worker/                         # Cloudflare Worker backend
-│   ├── wrangler.toml               # Worker config, D1 + KV + R2 bindings
+│   ├── wrangler.toml               # Worker config, D1 + KV + R2 + rate limit bindings
+│   ├── vitest.config.ts            # Workers pool, test secrets, TEST_MIGRATIONS binding, istanbul coverage
 │   ├── src/
-│   │   ├── index.ts                # Worker entry — Hono router + Better Auth handler
-│   │   ├── auth.ts                 # Better Auth server instance (D1 adapter, OAuth config)
+│   │   ├── index.ts                # Worker entry — Hono router, Better Auth handler, CSRF, rate limits
+│   │   ├── auth.ts                 # Better Auth server instance (database: env.DB, OAuth, passkey)
+│   │   ├── types.ts                # Env bindings + AppEnv
+│   │   ├── env.d.ts                # Cloudflare.Env augmentation for cloudflare:test
+│   │   ├── test-helpers.ts         # Schema setup, request/session helpers, D1 fixtures
 │   │   ├── middleware/
 │   │   │   ├── auth.ts             # Hono middleware factory: exports requireAuth + optionalAuth, validates session, attaches user to context
-│   │   │   └── rate-limit.ts       # Hono middleware: per-binding rate limiting
+│   │   │   └── rate-limit.ts       # rateLimit(binding, keyFn) middleware factory
 │   │   ├── routes/
-│   │   │   ├── maps.ts             # CRUD: map metadata + items (D1), role-based access (getMapWithRole)
+│   │   │   ├── maps.ts             # CRUD: map metadata + items (D1), role-based access (getMapWithRole, requireMapRole)
 │   │   │   ├── sharing.ts          # Shares CRUD, visibility toggle, claim endpoint, duplicate
 │   │   │   ├── user-preferences.ts # Per-account preferences (units)
-│   │   │   ├── orders.ts           # Image upload (R2), Stripe Checkout, Prodigi quote, user/admin order CRUD
+│   │   │   ├── orders.ts           # Image upload + serving (R2), Stripe Checkout, Prodigi quote, user/admin order routes
 │   │   │   ├── webhooks.ts         # Stripe + Prodigi webhook handlers
 │   │   │   ├── geocode.ts          # Proxy Photon geocoding (with KV cache)
 │   │   │   └── route.ts            # Proxy OpenRouteService routing (with KV cache)
 │   │   ├── db/
-│   │   │   └── migrations/         # D1 migration files (0001–0014). Shared row types live in shared/types.ts
+│   │   │   └── migrations/
+│   │   │       └── 0001_initial.sql # Full D1 schema. Shared row types live in shared/types.ts
 │   │   └── lib/
+│   │       ├── cached-proxy.ts     # proxyWithCache(): KV-cached upstream JSON fetch
+│   │       ├── json-body.ts        # readJsonBody(): parse a JSON body or answer 400
+│   │       ├── hash.ts             # sha256Hex(), constant-time secretsEqual()
+│   │       ├── orders.ts           # submitOrderToProdigi()
 │   │       ├── prodigi.ts          # Prodigi API client (quotes + order placement)
 │   │       ├── stripe.ts           # Stripe SDK init (Workers-compatible fetch HTTP client)
 │   │       └── discord.ts          # Discord webhook notifications (order events)
 │   └── package.json
-├── shared/
-│   ├── types.ts                    # Shared types (Map, Stop, Order, ShippingAddress)
-│   ├── icons.ts                    # Curated icon set for markers
-│   └── products.ts                 # Product catalog (poster/canvas SKUs, sizes, prices, status badges)
-└── public/
-    ├── fonts/
-    └── images/                     # Landing page art, decorative elements
+└── shared/
+    ├── types.ts                    # Shared types (MapData, Stop, StopRow, ShareData, Order, ShippingAddress, request bodies)
+    ├── paper.ts                    # PaperSize + Orientation unions
+    ├── travel-modes.ts             # TRAVEL_MODES + isTravelMode()
+    ├── units.ts                    # Units + VALID_UNITS
+    ├── icons.ts                    # Curated icon set for markers + DEFAULT_ICON
+    └── products.ts                 # Product catalog (poster/canvas SKUs, sizes, prices), status badges, ORDER_STATUSES
 ```
 
 ---
@@ -185,31 +218,27 @@ mapadillo/
   - **Private maps:** Only the owner and explicitly shared users can access
 - **Sharing by invite link:** Owner generates a shareable invite link with a role (Viewer or Editor). `POST /api/maps/:id/shares` creates a `map_shares` row with a unique `claim_token` and the chosen `role`. The frontend displays a copyable invite URL (e.g., `https://app/claim/{token}`). Owner shares the link however they want (text, chat, email, etc.)
 - **Auto-claim:** When an authenticated user visits `/claim/{token}`, the Worker automatically sets `user_id` on the share row and redirects to the map. No intermediate "accept" step — clicking the link while signed in is the claim. If not signed in, redirect to sign-in with a return URL back to the claim link
-- **Access checks:** Every map API route checks: (1) is user the owner? (2) does user have a share record with `user_id` populated? (3) is the map public and this a read request? Unauthorized → 403
-- **D1 tables:** `map_shares` table with `map_id`, `user_id`, `role`, `claim_token`, `created_at`
+- **Access checks:** Every map API route checks: (1) is user the owner? (2) does user have a share record with `user_id` populated? (3) is the map public and this a read request? No access → 404; a role too low for the action → 403 (owner-only sharing routes answer 404 for both)
+- **D1 tables:** `map_shares` table with `map_id`, `user_id`, `role`, `claim_token`, `claim_token_expires_at` (invites expire after 30 days), `created_at`
 
 ### Client-Side Routing (DIY)
 - **No library dependency.** Custom Lit reactive controller (~150-200 LOC) using `URLPattern` + Navigation API
 - **URLPattern** is Baseline cross-browser as of Sept 2025 — no polyfill needed for evergreen browsers
 - **Navigation API** is Baseline cross-browser as of early 2026 — replaces manual History API usage
-- **Route config:** Array of `{ path, render, enter? }` objects. `path` compiles to a `URLPattern`. `render` returns a `TemplateResult`. Optional async `enter()` hook for auth guards and lazy loading
+- **Route config:** Array of `{ path, render, enter?, fullHeight? }` objects declared in `app-shell.ts`. `path` compiles to a `URLPattern`. `render` returns a `TemplateResult`. Optional async `enter()` hook for auth guards. `fullHeight` makes the page fill the viewport and hides the footer
 - **Navigation:** Single `navigation.addEventListener('navigate', ...)` handler captures all navigation types (link clicks, form submissions, back/forward, programmatic). No manual `<a>` click interception or `popstate` listener needed
 - **Scroll restoration:** Built-in via Navigation API (`scroll: "after-transition"` or manual `navigateEvent.scroll()`) — no custom implementation needed
 - **Focus management:** Built-in via Navigation API — accessibility for free
 - **View Transitions:** Navigation API integrates with the View Transitions API for animated page transitions
-- **Auth guard pattern:** `navigate` event handler checks session state before committing navigation; calls `e.preventDefault()` and `navigation.navigate('/sign-in')` if unauthenticated
-- **Lazy loading:** `e.intercept({ handler })` runs async `import('./pages/some-page.ts')` before the navigation completes — the browser waits for the handler promise to resolve
+- **Auth guard pattern:** the `navigate` handler intercepts the navigation and awaits the route's `enter()` hook; `requireAuth` returns `signInUrl()` when unauthenticated and the router navigates there
+- **Page loading:** all page modules are imported statically by `app-shell.ts`
 - **SPA hosting:** The Worker serves the Vite-built static assets for non-API routes and falls back to `index.html` for SPA routing (no separate Pages deployment needed)
 
 ### Map Style
-- **MVP:** Use OpenFreeMap "Bright" style as-is — it's clean and colorful enough to ship
-- **Future:** Fork in [Maputnik](https://maplibre.org/maputnik/) to create a kid-friendly variant:
-  - Saturated candy colors (bright blue water, vivid green parks, warm yellow roads)
-  - Larger, bolder labels with thick halos
-  - Rounded, thick road casings for hand-drawn feel
-  - Simplified layers (hide clutter at low zoom)
-- Custom sprite sheet with playful marker icons drawn from the curated Jelly icon set (see Map Elements below)
-- Export as `kid-friendly-style.json`, serve from app
+- `resolveMapStyle()` in `src/config/map.ts` fetches the OpenFreeMap "Bright" style once, passes it through `transformToKidDrawn()` in `src/map/styles/kid-drawn.ts`, and caches the result
+- The transform rewrites colors, line widths, dash arrays and fonts for a crayon-like, hand-drawn look, reusing Bright's vector tile sources and sprites
+- Label colors (`LABEL_BROWN`, `LABEL_HALO`) are exported from `kid-drawn.ts` so marker labels match base-map labels
+- Marker icons are rendered from the curated Jelly icon set onto canvases (see Map Elements below)
 
 ### Map Elements
 
@@ -219,7 +248,7 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 - Each stop has a name, optional custom label, lat/lng, and an **icon** chosen from the curated Jelly picker
 - The special icon value `'none'` hides the marker and label on the map entirely
 - When an icon changes on any endpoint, it propagates to all other items sharing the exact same coordinates
-- Icon picker shows a categorized grid of ~42 confirmed Jelly icons (verified against `@awesome.me/kit-781a3c6be3` metadata):
+- Icon picker shows a categorized grid of ~42 confirmed Jelly icons (verified against the Font Awesome kit's icon metadata):
 
 | Category | Icons |
 |----------|-------|
@@ -238,17 +267,17 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 - Notable icons absent from Jelly: `tent`, `mountain`, `campfire` (use `fire`), `ice-cream`, `burger`/`pizza-slice` (use `utensils`), `umbrella-beach` (use `umbrella`), `bicycle` (use `person-biking` in route UI)
 
 #### Segments (Travel Mode)
-- Each segment lives **between two consecutive stops** and carries a `travel_mode`
-- Stored as `travel_mode` on the destination stop (the stop you arrive at) — `NULL` on the first stop, which has no incoming segment
-- Five modes, each with distinct ORS profile and MapLibre line style:
+- Each segment is a **route item** (`type = 'route'`) with its own start and destination, and carries a `travel_mode`
+- Points have `travel_mode = NULL`. New routes default to `drive`; a route's `travel_mode` is NULL only if a client clears it
+- Five modes, each with distinct ORS profile and MapLibre line style (all lines use round caps; colors come from `shared/travel-modes.ts`):
 
 | Mode | ORS Profile | Line Style | Color |
 |------|------------|------------|-------|
 | Drive | `driving-car` | Solid thick | Orange |
-| Walk | `foot-walking` | Dotted, round caps | Green |
-| Bike | `cycling-regular` | Dashed | Teal |
-| Plane | — (no ORS) | Dotted + great-circle arc | Blue/purple |
-| Boat | — (no ORS) | Long dashes, straight line | Navy |
+| Walk | `foot-walking` | Dotted | Green |
+| Bike | `cycling-regular` | Dashed | Cyan |
+| Plane | — (no ORS) | Dotted + great-circle arc | Blue |
+| Boat | — (no ORS) | Long dashes, straight line | Indigo |
 
 - **Plane:** Client computes a great-circle arc (interpolated GeoJSON `LineString` points) — no routing call
 - **Boat:** Simple straight-line GeoJSON `LineString` between the two stops. ORS has no free sailing profile. Line may visually cross a peninsula at road-trip zoom levels, which is acceptable. If a strait routing matters, users add an intermediate stop as a waypoint
@@ -263,26 +292,23 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 - Free tier: **2,000 requests/day**, 40/min — per-segment calls keep per-trip request count low
 - Auth: API key in `Authorization` header (free signup at openrouteservice.org)
 - Each segment rendered as its own MapLibre layer with mode-specific line style (see table above)
-- Custom markers at each stop with numbered badges + chosen Jelly icon
+- Endpoint markers show the chosen Jelly icon and name, drawn as MapLibre symbol layers (`route-markers` below `point-markers`)
 
 ### PDF Export
-- `@watergis/maplibre-gl-export` renders map at **200 DPI** (better print quality while within canvas limits; 300 DPI is unnecessary for wall posters and exceeds WebGL canvas limits on many devices)
-- **Canvas size limits:** Cap max canvas dimension at 5400px as a safety net — if the device can't allocate the canvas, show an error with a "try on desktop" message
-- jsPDF wraps the map image in a decorative print layout:
-  - Trip title in playful font
-  - Family name
-  - Stop list with icons
-  - Decorative border/stickers
-  - Road trip stats (total miles, number of stops)
+- `renderMapCanvas` in `src/map/map-export.ts` renders the map in an offscreen MapLibre map at **300 DPI**, scaled down to fit the device's canvas limit
+- **Canvas size limits:** Max canvas dimension is 80% of the GPU's `MAX_TEXTURE_SIZE` (4096px when WebGL2 is unavailable). If rendering fails or times out, the export shows an error suggesting a desktop browser
+- With "Include trip details", the map is composited onto a poster layout drawn with Canvas 2D, then embedded by jsPDF (or encoded as PNG/JPEG):
+  - Trip title and family name
+  - Itinerary of waypoint names
+  - Rounded inset border
+  - Road trip stats (total distance, number of stops)
+  - "Made with Mapadillo" footer and map attribution
 
 ### Print-and-Mail (Prodigi)
-- Poster sizes and **customer-facing prices**:
-  - 18x24" — **$19.99**
-  - 24x36" — **$29.99**
-- Shipping: **separate line item** — Worker calls **Prodigi quote API** before creating Stripe Checkout session to get exact shipping cost for the customer's address + poster size. Shipping cost is passed to Stripe as a separate line item
-- Paper: Enhanced Matte or Budget Poster
-- **Image delivery to Prodigi:** Client renders 200 DPI map image via `maplibre-gl-export`, uploads to Cloudflare R2 via Worker, then passes the public R2 URL to Prodigi
-- **R2 public access:** Custom domain (e.g., `prints.kidsroadtripmap.com`) pointing to the `roadtrip-prints` R2 bucket. Image URLs are unguessable UUIDs
+- Products, sizes and **customer-facing prices** live in `shared/products.ts` (Budget Poster and Eco Rolled Canvas at 18x24", 24x36" and 40x60"; see Milestone 9)
+- Shipping: **separate line item** — the order page calls the **Prodigi quote API** through the Worker to get the shipping cost for the customer's address + product size, and passes it to checkout. Stripe receives it as a separate line item
+- **Image delivery to Prodigi:** Client renders the map at 300 DPI with `renderToBlob()` (capped to the device's canvas limit), uploads it to Cloudflare R2 via the Worker, and the order stores `/api/images/<mapId>/<uuid>.png`. When submitting, the Worker resolves that path against `BETTER_AUTH_URL` and passes the absolute URL to Prodigi
+- **Image serving:** `GET /api/images/*` streams the object from R2 with a one-year immutable cache header. Image keys are unguessable UUIDs
 - Flow: Client uploads image to R2 → Worker calls Prodigi quote API for shipping cost → Stripe Checkout (poster price + shipping) → webhook confirms payment → backend places Prodigi order (with R2 image URL) → Prodigi ships direct to customer
 - Prodigi sandbox for development (free, orders not fulfilled)
 - CloudEvents webhooks for shipment tracking
@@ -297,7 +323,7 @@ Maps contain two types of user-added elements: **points** (stops) and **segments
 - `lang` query parameter for localized results (e.g., `lang=en`)
 
 ### Units
-- Km/miles toggle stored per-map in D1 (`maps.units`)
+- Km/miles toggle is a per-account preference (`user.units`, via `GET/PUT /api/user/preferences`), mirrored in localStorage
 - Default based on browser locale (miles for US/UK, km elsewhere)
 - ORS returns meters by default (or configurable via `units` param) — convert client-side
 
@@ -326,95 +352,36 @@ A single Cloudflare Worker (using **Hono** router) handles all server-side conce
 
 ### Rate Limiting
 - **Implementation:** Cloudflare Workers `rate_limit` binding (built-in, no external dependency)
-- **Public endpoints** (`GET /api/maps/:id` without auth): **60 requests/minute per IP** — prevents scraping
+- **Public endpoints** (`GET /api/maps/:id`): **60 requests/minute per IP** — prevents scraping
+- **Invites** (`POST /api/shares/claim/:token`, `POST /api/maps/:id/shares`): **60 requests/minute per user**, sharing the `RATE_LIMITER_PUBLIC` binding under separate key prefixes
 - **Proxy routes** (`/api/geocode`, `/api/route`): **30 requests/minute per user** — prevents abuse of upstream APIs (Photon, ORS). Already authenticated, so rate limit by user ID
 - **Auth routes** (`/api/auth/*`): **10 requests/minute per IP** — brute-force protection on OAuth flows
-- **Binding config:** Add `[[rate_limits]]` in `wrangler.toml`, use `env.RATE_LIMITER` in Hono middleware
+- **Binding config:** `[[ratelimits]]` entries in `wrangler.toml` (`RATE_LIMITER_PUBLIC`, `RATE_LIMITER_PROXY`, `RATE_LIMITER_AUTH`), applied with the `rateLimit(binding, keyFn)` middleware factory, which answers 429
 
 ### D1 Database (Users, Maps, Sharing)
 - **Database:** `roadtrip-db`
-- **Tables (managed by Better Auth + custom schema):**
-
-```sql
--- Better Auth managed tables (auto-created):
---   user, session, account, verification
-
--- Application tables:
-CREATE TABLE maps (
-  id TEXT PRIMARY KEY,           -- UUID
-  owner_id TEXT NOT NULL REFERENCES user(id),
-  name TEXT NOT NULL,             -- Trip name
-  family_name TEXT,
-  visibility TEXT NOT NULL DEFAULT 'private',  -- 'public' | 'private'
-  export_settings TEXT DEFAULT '{}',           -- JSON blob: {format, paperSize, orientation, center, zoom, bearing, pitch}
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
--- Note: style_preferences and per-map `units` columns were dropped in migration 0009;
--- distance units are now a per-account preference via /api/user/preferences.
-
-CREATE TABLE stops (
-  id TEXT PRIMARY KEY,           -- UUID
-  map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
-  position INTEGER NOT NULL,     -- Display order (0-indexed)
-  type TEXT NOT NULL DEFAULT 'point', -- 'point' (standalone marker) | 'route' (A→B segment)
-  name TEXT NOT NULL,             -- Place name from geocoding
-  label TEXT,                     -- Custom label ("Grandma's House!")
-  latitude REAL NOT NULL,
-  longitude REAL NOT NULL,
-  icon TEXT,                      -- Icon identifier (Jelly icon name, e.g. 'star', 'circle')
-  travel_mode TEXT,               -- Routes only: 'drive'|'walk'|'bike'|'plane'|'boat'. NULL on points.
-  dest_name TEXT,                 -- Routes only: destination place name
-  dest_latitude REAL,             -- Routes only: destination latitude
-  dest_longitude REAL,            -- Routes only: destination longitude
-  dest_icon TEXT,                 -- Routes only: destination icon (Jelly icon name or 'none')
-  show_start_label INTEGER NOT NULL DEFAULT 1,  -- Routes only: show start label on map
-  show_dest_label INTEGER NOT NULL DEFAULT 1,   -- Routes only: show dest label on map
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_stops_map_id ON stops(map_id);
-
-CREATE TABLE map_shares (
-  id TEXT PRIMARY KEY,
-  map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
-  user_id TEXT REFERENCES user(id),           -- NULL until invite link is claimed
-  role TEXT NOT NULL DEFAULT 'viewer',         -- 'viewer' | 'editor'
-  claim_token TEXT UNIQUE NOT NULL,            -- Unique token for invite link (UUID)
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(map_id, user_id)
-);
-
-CREATE TABLE orders (
-  id TEXT PRIMARY KEY,
-  map_id TEXT NOT NULL REFERENCES maps(id),
-  user_id TEXT NOT NULL REFERENCES user(id),
-  stripe_session_id TEXT,
-  prodigi_order_id TEXT,
-  poster_size TEXT NOT NULL,                   -- '18x24' | '24x36'
-  status TEXT NOT NULL DEFAULT 'pending',      -- 'pending' | 'paid' | 'pending_render' | 'submitted' | 'shipped'
-  image_url TEXT,                              -- R2 public URL (NULL if client render failed — see pending_render flow)
-  shipping_address TEXT,                       -- JSON blob
-  tracking_url TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
+- **Schema:** `worker/src/db/migrations/0001_initial.sql` is the only migration and the canonical schema. Enum-style TEXT columns carry CHECK constraints
+- **Better Auth tables:** `user` (plus the app's `units` column, `'km' | 'mi'`), `session`, `account`, `verification`, `passkey`
+- **`maps`:** `id`, `owner_id`, `name`, `family_name`, `visibility` (`'public' | 'private'`), `export_settings` (JSON TEXT, default `'{}'`: `{format, paperSize, orientation, center, zoom, bearing, pitch}`), `created_at`, `updated_at`
+- **`stops`:** `id`, `map_id`, `position`, `type` (`'point' | 'route'`), `name`, `label`, `latitude`, `longitude`, `icon`, `travel_mode` (NULL on points), `dest_name`, `dest_latitude`, `dest_longitude`, `dest_icon`, `route_geometry` (cached GeoJSON), `created_at`. Indexed on `(map_id, position)`
+- **`map_shares`:** `id`, `map_id`, `user_id` (NULL until claimed), `role` (`'viewer' | 'editor'`), `claim_token` (nullable, UNIQUE, nulled once claimed), `claim_token_expires_at`, `created_at`, `UNIQUE(map_id, user_id)`
+- **`orders`:** `id`, `map_id` and `user_id` (RESTRICT), `product_type`, `product_sku`, `poster_size`, `status` (`pending_payment`, `paid`, `pending_render`, `submitted`, `in_production`, `shipped`, `completed`, `cancelled`, `failed`), `stripe_session_id` (UNIQUE), `prodigi_order_id`, `image_url`, `shipping_address` (JSON), `subtotal`, `shipping_cost`, `currency`, `tracking_url`, `discord_notified`, `created_at`, `updated_at`
+- FK clauses are advisory in D1; the application enforces cascades and restricts (see AGENTS.md "FK enforcement policy")
 
 ### KV Cache (Geocoding + Routing)
 - **Namespace:** `API_CACHE`
 - **Keys:**
-  - `geocode:{hash(query)}` — Photon geocoding response
+  - `geocode:{hash(query, lang, limit, layer, rounded bias)}` — Photon geocoding response
   - `route:{profile}:{hash(start_lon,start_lat,end_lon,end_lat)}` — ORS single-segment response (profile = `driving-car` | `foot-walking` | `cycling-regular`)
-- **Value:** cached API response JSON
-- **TTL:** 7 days for geocoding results, 24 hours for routes
+- **Value:** cached API response JSON (responses over 1 MiB are not cached)
+- **TTL:** 7 days for both geocoding and routes, set in `worker/src/lib/cached-proxy.ts`
 - Per-segment cache keys mean any two trips sharing a leg between the same pair of points reuse the cached ORS response regardless of which overall trip they belong to
 
 ### R2 Storage (Print Images)
-- **Bucket:** `roadtrip-prints`
-- **Key:** `{map_guid}/{timestamp}.png`
-- **Value:** High-resolution PNG rendered by client via maplibre-gl-export
-- **Public access:** Custom domain (e.g., `prints.kidsroadtripmap.com`) pointing to the bucket. URLs use unguessable UUID paths — effectively secret
+- **Bucket:** `roadtrip-prints` (binding `ROADTRIP_PRINTS`)
+- **Key:** `{mapId}/{uuid}.png`
+- **Value:** High-resolution PNG rendered by the client with `renderToBlob()` (multipart upload, max 100MB)
+- **Access:** served by the Worker at `GET /api/images/{mapId}/{uuid}.png`. Keys use unguessable UUIDs — effectively secret
 - Cleanup: images older than 30 days can be purged via lifecycle rule
 
 ### API Routes (Hono)
@@ -450,7 +417,13 @@ CREATE TABLE orders (
 | `PUT` | `/api/maps/:id/shares/:share_id` | Update collaborator role |
 | `DELETE` | `/api/maps/:id/shares/:share_id` | Remove collaborator |
 | `PUT` | `/api/maps/:id/visibility` | Toggle public/private |
-| `POST` | `/api/shares/claim/:token` | Auto-claim an invite link — sets `user_id` on share row, redirects to map (authenticated, any user) |
+| `POST` | `/api/shares/claim/:token` | Auto-claim an invite link — sets `user_id` on share row and returns `{ map_id }`; the claim page then navigates to the map (authenticated, any user, 60/min per user) |
+
+**User preferences (authenticated):**
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/user/preferences` | Current user's preferences (`{ units }`) |
+| `PUT` | `/api/user/preferences` | Update `units` (`'km' \| 'mi'`) |
 
 **Proxy (authenticated):**
 | Method | Route | Description |
@@ -461,25 +434,38 @@ CREATE TABLE orders (
 **Print (authenticated):**
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/api/images/:map_id` | Upload print-ready image to R2, returns public URL |
-| `POST` | `/api/print-quote` | Get Prodigi shipping quote (poster size + shipping address → exact shipping cost) |
-| `POST` | `/api/checkout` | Create Stripe Checkout session for print order (poster price + quoted shipping) |
+| `POST` | `/api/images/:mapId` | Upload print-ready image to R2 (owner/editor), returns `{ key, url }` |
+| `GET` | `/api/images/*` | Serve an R2 image (public, unguessable key) |
+| `POST` | `/api/print-quote` | Get Prodigi shipping quote (SKU + size + country → shipping cost) |
+| `POST` | `/api/checkout` | Create Stripe Checkout session (product price + shipping) and insert the order row as `pending_payment` |
+| `GET` | `/api/orders` | List current user's orders |
+| `GET` | `/api/orders/:id` | Single order for current user, with map name |
 
-**Admin (secret-header protected, not user-facing):**
+**Admin (Bearer token, not user-facing):**
 | Method | Route | Description |
 |--------|-------|-------------|
-| `PATCH` | `/api/admin/orders/:id` | Set `image_url` on a `pending_render` order and place the Prodigi fulfillment order. Protected by `Authorization: Bearer {ADMIN_SECRET}` header. |
+| `GET` | `/api/admin/orders` | List orders, optional `?status=` filter |
+| `GET` | `/api/admin/orders/:id` | Single order with map name and user email |
+| `PATCH` | `/api/admin/orders/:id` | Set `image_url` and/or `action: 'submit_to_prodigi'` for a `paid` or `pending_render` order |
 
-**Webhooks (unauthenticated, signature-verified):**
+All admin routes require `Authorization: Bearer {ADMIN_SECRET}`, compared in constant time.
+
+**Webhooks (unauthenticated, verified):**
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/api/webhooks/stripe` | Handle Stripe payment confirmation (idempotency: skip if `stripe_session_id` already exists in D1) |
-| `POST` | `/api/webhooks/prodigi` | Handle Prodigi shipment updates |
+| `POST` | `/api/webhooks/stripe` | Handle `checkout.session.completed` (signature-verified; idempotent by atomically moving the order out of `pending_payment`) |
+| `POST` | `/api/webhooks/prodigi` | Handle Prodigi status and shipment updates (shared secret in `X-Prodigi-Webhook-Secret`) |
+
+**Health:**
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/health` | Returns `{ status: 'ok' }` |
 
 ### Bindings (wrangler.toml)
 - **D1 Database:** `DB` → `roadtrip-db`
 - **KV Namespace:** `API_CACHE`
-- **R2 Bucket:** `roadtrip-prints`
+- **R2 Bucket:** `ROADTRIP_PRINTS` → `roadtrip-prints`
+- **Static assets:** `ASSETS` → `../dist`
 - **Rate Limiters:** `RATE_LIMITER_PUBLIC` (60/min), `RATE_LIMITER_PROXY` (30/min), `RATE_LIMITER_AUTH` (10/min)
 
 ### Secrets (via `wrangler secret put`)
@@ -490,37 +476,40 @@ CREATE TABLE orders (
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `PRODIGI_API_KEY`
+- `PRODIGI_SANDBOX` — `"true"` selects the Prodigi sandbox API
+- `PRODIGI_WEBHOOK_SECRET` — shared secret expected in the `X-Prodigi-Webhook-Secret` header; the webhook rejects every request when unset
 - `ORS_API_KEY` — OpenRouteService Directions API key (free tier)
-- `ADMIN_SECRET` — Bearer token protecting `PATCH /api/admin/orders/:id` (manual fulfillment endpoint)
+- `ADMIN_SECRET` — Bearer token protecting `/api/admin/orders*`
+- `DISCORD_WEBHOOK_URL` — optional; order notifications are skipped when unset
 
 ### Payment + Fulfillment Flow
 
 The client attempts a high-res WebGL canvas render before checkout. Whether it succeeds or fails, the user sees the same checkout experience. The two paths diverge only in the webhook handler.
 
 ```
-Authenticated user clicks "Order Print"
-  → Client attempts 200 DPI map render via maplibre-gl-export
-  → [SUCCESS PATH] Client uploads image to R2 → gets public URL, passes it to /api/checkout
-  → [FAILURE PATH] Canvas allocation fails → client proceeds to checkout without image_url
-  → Frontend calls POST /api/print-quote (poster size, shipping address) → Worker calls Prodigi quote API → returns exact shipping cost
-  → Frontend displays poster price + shipping cost for user confirmation
-  → Frontend calls POST /api/checkout (map ID, poster size, shipping address, quoted shipping cost; image_url optional)
-  → Worker creates Stripe Checkout session (poster price + shipping as separate line items, user ID in metadata), returns session URL
-  → User completes payment on Stripe (UX identical regardless of render path)
+Authenticated owner/editor opens /order/:id from the export page
+  → Frontend calls POST /api/print-quote (SKU, size, country) → Worker calls Prodigi quote API → returns shipping cost
+  → Frontend displays product price + shipping cost for user confirmation
+  → User clicks "Order Print" → client renders the map at 300 DPI with renderToBlob()
+  → Client uploads the PNG → POST /api/images/:mapId → R2 key
+  → Frontend calls POST /api/checkout (map ID, SKU, size, shipping address, quoted shipping cost, image key)
+  → Worker creates Stripe Checkout session (product price + shipping as separate line items, order ID in metadata)
+  → Worker inserts the order row (status: 'pending_payment'), returns session URL
+  → User completes payment on Stripe
   → Stripe fires webhook → POST /api/webhooks/stripe
-  → Worker verifies signature (idempotency check: skip if stripe_session_id already exists in D1)
-  → Worker creates order record in D1
-  → [SUCCESS PATH] image_url present → place Prodigi order immediately → status: 'submitted'
-  → [FAILURE PATH] image_url absent → status: 'pending_render' → send admin notification email
-  → [SUCCESS PATH] Prodigi prints and ships direct to customer
-  → Prodigi fires webhook → POST /api/webhooks/prodigi (tracking info)
+  → Worker verifies signature, then atomically moves the order out of 'pending_payment' (a second delivery matches nothing and is acknowledged)
+  → [AUTO PATH] image_url and a parseable shipping address → status 'paid' → background submit to Prodigi → status: 'submitted'
+  → [REVIEW PATH] no image, unparseable address, or Prodigi submission failed → status: 'pending_render'
+  → Discord notification either way (when DISCORD_WEBHOOK_URL is set)
+  → Prodigi prints and ships direct to customer
+  → Prodigi fires webhook → POST /api/webhooks/prodigi (status + tracking info)
   → Worker updates order record in D1 with status + tracking URL
 
 --- PENDING_RENDER MANUAL FULFILLMENT ---
-  → Admin sees pending_render order (email notification or dashboard query)
-  → Admin opens map URL in browser, runs export, image uploads to R2 → public URL
-  → Admin calls PATCH /api/admin/orders/:id { image_url } (secret-header protected)
-  → Worker updates order with image_url, places Prodigi order → status: 'submitted'
+  → Admin sees the pending_render order (Discord notification or /admin)
+  → If the image is missing: admin opens the map, exports, uploads to R2
+  → Admin calls PATCH /api/admin/orders/:id { image_url?, action: 'submit_to_prodigi' } (Bearer token)
+  → Worker places Prodigi order → status: 'submitted' (502 on Prodigi failure)
 ```
 
 **Confirmation page copy:** Use intentionally vague language — "We're preparing your map for print! You'll receive a shipping notification within 1–2 business days." This covers both paths without exposing the manual step.
@@ -538,7 +527,7 @@ Milestones 1–5 are strictly sequential — each builds on the prior. After M5,
 **Build:**
 1. `npm create vite@latest . -- --template lit-ts`
 2. Configure `.npmrc` for Web Awesome Pro + Font Awesome Pro registries
-3. Install dependencies: Web Awesome Pro, MapLibre GL JS, jsPDF, maplibre-gl-export (v4+), better-auth
+3. Install dependencies: Web Awesome Pro, MapLibre GL JS, jsPDF, better-auth
 4. Set up Web Awesome theme + color palette in `index.html` / CSS (`theme.css`, `global.css`)
 5. Set up Font Awesome Pro+ Kit integration (`setKitCode` via Web Awesome loader)
 6. Build DIY router as Lit reactive controller (`router.ts`) — URLPattern matching, Navigation API (`navigation.addEventListener('navigate', ...)`), auth guard hooks, lazy loading via dynamic imports, built-in scroll restoration and focus management
@@ -558,21 +547,22 @@ Milestones 1–5 are strictly sequential — each builds on the prior. After M5,
 ```
 mapadillo/
 ├── .gitignore                       # node_modules/, dist/, .dev.vars, tsconfig.tsbuildinfo, worker/node_modules/
-├── .npmrc                           # @awesome.me + @fortawesome → npm.fontawesome.com, FONTAWESOME_AUTH_TOKEN
+├── .npmrc                           # @web.awesome.me → Web Awesome Pro registry, WEBAWESOME_NPM_TOKEN
 ├── index.html                       # wa-theme-playful wa-palette-rudimentary, FOUC prevention, <app-shell> entry
 ├── package.json                     # Root project dependencies + scripts
 ├── tsconfig.json                    # ES2022, experimentalDecorators, bundler resolution, strict
 ├── vite.config.ts                   # ES2022 build target, optimizeDeps includes maplibre-gl
-├── thumbtack-jelly-duo-regular-full.svg  # Source pushpin icon (FA Pro 7.2.0 Jelly duo)
+├── map-jelly-regular-full.svg       # Favicon source icon (FA Pro Jelly map)
+├── map-jelly-duo-regular-full.svg   # Duotone variant of the map icon
 ├── public/
-│   └── favicon.svg                  # Same pushpin icon used as browser favicon
+│   └── favicon.svg                  # map-jelly-regular-full.svg with brand orange fill
 ├── src/
 │   ├── index.ts                     # Entry: loads styles, sets WA kit code + jelly default
 │   ├── router.ts                    # DIY Lit ReactiveController router (~150 LOC)
-│   ├── nav.ts                       # navigateTo() + navClick() helpers
+│   ├── nav.ts                       # navigateTo() + signInUrl() helpers
 │   ├── styles/
 │   │   ├── global.css               # WA CSS imports + box-sizing reset (body styles deferred to WA native)
-│   │   └── theme.css                # Brand orange (#ff6b00/#e05e00), rounded system fonts, larger text
+│   │   └── theme.css                # Brand orange (#ff6b00/#e05e00), rounded system body font, radius and body size reduced from Playful
 │   ├── auth/
 │   │   ├── auth-state.ts            # Stub reactive auth (getUser/setUser/onAuthChange/isAuthenticated)
 │   │   └── auth-guard.ts            # requireAuth() enter hook → redirects to /sign-in
@@ -597,11 +587,9 @@ mapadillo/
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@awesome.me/kit-781a3c6be3` | ^1.0.4 | FA Pro+ Kit (Jelly icons) |
 | `@awesome.me/webawesome-pro` | ^3.2.1 | Web Awesome Pro UI components |
 | `lit` | ^3.3.2 | Web component framework |
 | `maplibre-gl` | ^5.19.0 | WebGL vector maps |
-| `@watergis/maplibre-gl-export` | ^4.1.1 | Map export to image |
 | `jspdf` | ^4.2.0 | PDF generation |
 | `better-auth` | ^1.5.1 | Authentication library |
 | `typescript` | ^5.9.3 | (dev) Type checking |
@@ -620,7 +608,7 @@ Worker-specific:
 - Primary handler: `navigation.addEventListener('navigate', ...)` intercepts all navigation (link clicks, form submissions, back/forward, programmatic)
 - Fallback: `window.addEventListener('popstate', ...)` for browsers without Navigation API
 - Route matching via `URLPattern` with named parameter extraction (e.g. `/map/:id`)
-- Programmatic navigation: `router.navigate(path)` or imported `navigateTo(path)` / `navClick(path)` helpers
+- Programmatic navigation: `router.navigate(path)` or imported `navigateTo(path)` helper; links use plain `href`
 - Built-in 404 template rendered for unmatched routes
 - View Transitions support via Navigation API integration
 
@@ -644,9 +632,9 @@ Worker-specific:
 - Base: Web Awesome `playful` theme + `rudimentary` palette (set via HTML classes on `<html>`)
 - Brand color overrides: `--wa-color-brand-500: #ff6b00` (bright orange), `--wa-color-brand-600: #e05e00`
 - Border radius overrides: medium `0.625rem`, large `1rem`, XL `1.5rem` (rounder/friendlier)
-- Font stack: `ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT', 'Arial Rounded MT Bold', Calibri, source-sans-pro, system-ui, sans-serif` — rounded system fonts, no external downloads
+- Font stack: `ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT', 'Arial Rounded MT Bold', Calibri, source-sans-pro, system-ui, sans-serif` for body text, which avoids a font download. Headings and code keep Playful's Fredoka and Azeret Mono from fonts.bunny.net
 - Font weight: `--wa-font-weight-normal: 600` (slightly bolder for kid-friendly readability)
-- Font size: `--wa-font-size-m: 1.0625rem` (~17px, larger body text)
+- Font size: `--wa-font-size-m: 1.0625rem` (~17px, reduced slightly from Playful's 1.125rem)
 - Smooth scrolling enabled on `<html>`
 - Global CSS: imports WA base styles + playful theme, applies `box-sizing: border-box` globally, body uses `min-height: 100dvh`
 - FOUC prevention: `:not(:defined) { visibility: hidden; }` in `index.html` hides undefined custom elements
@@ -755,14 +743,14 @@ mapadillo/
 │       ├── app-shell.ts                  # Auth-aware header (user-menu vs Sign In), subscribes to onAuthChange
 │       └── user-menu.ts          [NEW]   # Avatar/initials + wa-dropdown (My Trips, Sign Out)
 └── worker/
-    ├── package.json                      # Added better-auth, @better-auth/passkey, kysely-d1
+    ├── package.json                      # Added better-auth, @better-auth/passkey
     ├── wrangler.toml                     # Added migrations_dir
     ├── vitest.config.ts                  # Added test secrets + CJS dep inlining
     └── src/
         ├── index.ts                      # Better Auth handler, requireAuth on map stubs, rate limiter
         ├── index.test.ts                 # Updated: auth health, 401 tests, milestone: 2
         ├── types.ts              [NEW]   # Env, SessionUser, SessionData, AppEnv types
-        ├── auth.ts               [NEW]   # betterAuth() singleton (D1 via kysely-d1, OAuth, passkey)
+        ├── auth.ts               [NEW]   # betterAuth() singleton (D1 via `database: env.DB`, OAuth, passkey)
         ├── middleware/
         │   └── require-auth.ts   [NEW]   # Validates session, sets c.user + c.session, or 401
         └── db/
@@ -783,12 +771,11 @@ Worker:
 |---------|---------|---------|
 | `better-auth` | ^1.5.1 | Auth server (session management, OAuth, D1 storage) |
 | `@better-auth/passkey` | ^1.5.1 | Passkey/WebAuthn server plugin |
-| `kysely-d1` | ^0.4.0 | D1 dialect for Better Auth's Kysely adapter |
 | `@vitest/coverage-istanbul` | ~3.2.0 | (dev) Test coverage |
 
 **Deliberate deviations from plan:**
 
-1. **kysely-d1 instead of native D1 adapter.** The plan says Better Auth v1.5+ auto-detects D1 bindings (`database: env.DB`), but Better Auth's Kysely adapter via `kysely-d1` is the documented production approach for D1. Using `D1Dialect` from `kysely-d1` with `type: 'sqlite'` is more reliable than relying on auto-detection.
+1. **Native D1 binding.** `auth.ts` passes `database: env.DB`. Better Auth's Kysely adapter detects the binding and uses its bundled D1 dialect, so no separate dialect package is needed.
 
 2. **`BETTER_AUTH_URL` secret added.** Not in the plan's original secrets list. The auth instance derives `baseURL`, `trustedOrigins`, and passkey `rpID`/`origin` from this fixed operator secret instead of `request.url`. Prevents Host header injection, OAuth redirect-URI mismatches between workers.dev and production, and passkey rpID drift.
 
@@ -840,7 +827,7 @@ Worker:
 
 **Auth guard (`src/auth/auth-guard.ts`):**
 - Awaits `initAuth()` if session not yet checked (first guarded navigation waits for server)
-- Returns `/sign-in?returnTo={encodeURIComponent(path+search)}` when unauthenticated
+- Returns `signInUrl()` from `nav.ts` (`/sign-in?returnTo={encodeURIComponent(path+search)}`) when unauthenticated
 
 **App shell changes (`src/components/app-shell.ts`):**
 - Subscribes to `onAuthChange()` in `connectedCallback`, cleans up in `disconnectedCallback`
@@ -968,7 +955,7 @@ mapadillo/
   - 401 without session
   - 400 when `q` param missing
   - 400 when `q` too short (< 2 chars)
-  - Integration test: proxies to Photon, returns GeoJSON `FeatureCollection` (gracefully handles 502/500 in restricted test environments)
+  - Proxy test: upstream `fetch` stubbed, checks the Photon URL, the `FeatureCollection` body, the KV write and a cached repeat request
 - Removed: 2 old geocode stub tests (501 + "mentions Milestone 3")
 - Health check updated: expects `milestone: 3`
 
@@ -1015,7 +1002,7 @@ mapadillo/
 │   ├── index.ts                          # Added wa-badge, wa-details, wa-dialog, wa-radio, wa-radio-group, wa-relative-time imports
 │   ├── router.ts                         # Refactored DIY router (Lit ReactiveController, URLPattern + Navigation API)
 │   ├── router.test.ts            [NEW]   # 11 tests: construction, outlet, popstate, guards, params, errors
-│   ├── nav.ts                            # Refactored: navigateTo() + navClick() helpers with deduplication
+│   ├── nav.ts                            # Refactored: navigateTo() helper with deduplication
 │   ├── nav.test.ts               [NEW]   # 7 tests: Navigation API path, fallback path, deduplication
 │   ├── services/
 │   │   ├── api-client.ts         [NEW]   # Generic JSON fetch wrapper (apiGet/Post/Put/Delete, ApiError class)
@@ -1044,7 +1031,7 @@ mapadillo/
 **No new npm dependencies.** All packages were already present from earlier milestones.
 
 **Worker maps API (`worker/src/routes/maps.ts`):**
-- Hono sub-app with `getOwnedMap()` helper centralizing 404/403 ownership checks + `isResponse()` type guard
+- Hono sub-app with `requireMapRole()` helper centralizing 404/403 role checks
 - Map CRUD: `POST /` (requires `name`), `GET /` (list with batched stop queries via `DB.batch()`), `GET /:id`, `PUT /:id` (partial update with field validation), `DELETE /:id` (CASCADE handles stops)
 - Stop CRUD: `POST /:id/stops` (auto-increment position via `MAX(position)`), `PUT /:id/stops/:stopId`, `DELETE /:id/stops/:stopId` (re-compacts positions + nulls travel_mode on promoted first stop via `DB.batch()`), `PUT /:id/stops/reorder` (validates all IDs present, no duplicates)
 - Server-side validation: `VALID_ICONS` set (40 icons matching client picker), `VALID_TRAVEL_MODES` set (drive/walk/bike/plane/boat)
@@ -1108,7 +1095,7 @@ mapadillo/
 - Stop deletion: optimistic local removal → API call → full map reload for re-compacted positions
 - Stop reorder: optimistic local reorder (including nulling first-stop travel_mode) → API call → full map reload
 - Marker sync: `_syncMarkers()` clears all, adds per-stop markers, fits bounds (2+ stops) or flies to single stop
-- Map-ready coordination: `_pendingSync` flag defers marker sync if data arrives before MapLibre loads
+- Map-ready coordination: if data arrives before MapLibre loads, `_onMapReady()` runs the marker sync
 
 **Dashboard page (`src/pages/dashboard-page.ts`):**
 - Fetches maps via `listMaps()` on connect
@@ -1119,7 +1106,7 @@ mapadillo/
 
 **Router + nav refactoring:**
 - `router.ts`: Lit reactive controller with URLPattern matching, Navigation API handler + `popstate` fallback, optional async `enter()` guard, `outlet` getter for current template
-- `nav.ts`: `navigateTo(path)` uses Navigation API when available, falls back to `history.pushState()` + `popstate` dispatch; `navClick(path)` returns click handler; both skip navigation if already at target URL
+- `nav.ts`: `navigateTo(path)` uses Navigation API when available, falls back to `history.pushState()` + `popstate` dispatch; skips navigation if already at target URL
 - `router.test.ts` (11 tests): construction, outlet, popstate fallback, disconnect cleanup, navigation, guards with redirect, route params, error handling. Uses `FakeURLPattern` stub (happy-dom lacks URLPattern)
 - `nav.test.ts` (7 tests): Navigation API path, fallback path, deduplication
 
@@ -1129,7 +1116,7 @@ mapadillo/
 - `wa-page` has `disable-navigation-toggle` CSS workaround (bug [#1601](https://github.com/shoelace-style/webawesome/issues/1601))
 
 **Test suite (`worker/src/index.test.ts`) — 54 tests:**
-- `beforeAll` applies D1 table migrations inline (CREATE TABLE statements)
+- `beforeAll(applyTestSchema)` applies the real D1 migrations, passed in as `TEST_MIGRATIONS` by `vitest.config.ts`, via `applyD1Migrations`
 - `createTestSession()` helper: creates user + session in D1, signs session token with HMAC-SHA256 matching Better Auth
 - `jsonRequest()`, `createMap()`, `createStop()` test helpers reduce boilerplate
 
@@ -1222,7 +1209,7 @@ mapadillo/
         ├── index.ts                       # Mounted route handler with requireAuth + rate limit, milestone: 5
         ├── index.test.ts                  # 64 tests (was 54): +8 routing proxy tests, -2 old stubs
         └── routes/
-            └── route.ts           [NEW]   # ORS proxy with KV caching (24h TTL)
+            └── route.ts           [NEW]   # ORS proxy with KV caching (7-day TTL)
 ```
 
 **No new npm dependencies.** All packages were already present from earlier milestones.
@@ -1231,7 +1218,7 @@ mapadillo/
 - `POST /api/route` with JSON body `{ profile, start: [lon,lat], end: [lon,lat] }`
 - Valid profiles: `driving-car`, `foot-walking`, `cycling-regular`
 - Validates coordinates: must be `[number, number]` arrays within valid lon/lat ranges
-- KV cache key: `route:{profile}:{SHA256(start_lon,start_lat,end_lon,end_lat)[0:32]}` — 24-hour TTL
+- KV cache key: `route:{profile}:{SHA256(start_lon,start_lat,end_lon,end_lat)[0:32]}` — 7-day TTL
 - Proxies to `POST https://api.openrouteservice.org/v2/directions/{profile}/geojson`
 - Auth via `ORS_API_KEY` env secret in Authorization header
 - Returns ORS GeoJSON `FeatureCollection` directly (no transformation)
@@ -1303,7 +1290,7 @@ New routing proxy tests (8):
 - 400 with missing start coordinates
 - 400 with out-of-range coordinates
 - 400 with non-numeric coordinate types
-- Integration test: proxies to ORS, returns GeoJSON FeatureCollection (gracefully skips on 502/500/429)
+- Proxy test: upstream `fetch` stubbed, checks the ORS `/v2/directions/driving-car/geojson` URL, the FeatureCollection body, the KV write and a cached repeat request
 
 **Deliberate deviations from plan:**
 
@@ -1347,7 +1334,7 @@ New routing proxy tests (8):
 
 #### Implementation Notes (M6)
 
-**Combined with Unified Items Refactor.** This milestone also introduced the unified map items model: maps now contain two types of items — **points** (standalone markers) and **routes** (A→B travel segments). The `stops` table was extended with `type`, `dest_name`, `dest_latitude`, `dest_longitude` columns via migration `0004_unified_items.sql`. The UI was refactored from `stop-card.ts` / `stop-list.ts` to `point-card.ts`, `route-card.ts`, and `item-list.ts`.
+**Combined with Unified Items Refactor.** This milestone also introduced the unified map items model: maps now contain two types of items — **points** (standalone markers) and **routes** (A→B travel segments). The `stops` table was extended with `type`, `dest_name`, `dest_latitude`, `dest_longitude` columns. The UI was refactored from `stop-card.ts` / `stop-list.ts` to `point-card.ts`, `route-card.ts`, and `item-list.ts`.
 
 **Files created/modified (17 files):**
 
@@ -1380,12 +1367,11 @@ mapadillo/
         │   └── sharing.ts         [NEW]   # Shares CRUD, visibility toggle, claim endpoint
         └── db/
             ├── types.ts                   # Added: StopRow.type + dest_* fields, ShareRow interface
-            └── migrations/
-                └── 0004_unified_items.sql [NEW] # ALTER TABLE: type, dest_name, dest_latitude, dest_longitude
+            └── migrations/                # Added stops.type, dest_name, dest_latitude, dest_longitude
 ```
 
 **Sharing system (`worker/src/routes/sharing.ts`):**
-- `getMapWithRole(db, mapId, userId)` centralized access control: owner → editor/viewer (via share) → public → null
+- `getMapWithRole(db, mapId, userId)` in `maps.ts` centralizes access control: owner → editor/viewer (via share) → public → null
 - `POST /:id/shares` generates invite links with UUID claim tokens, rate-limited at 60/min per user
 - `POST /api/shares/claim/:token` auto-claims invite (race-condition safe via `WHERE user_id IS NULL AND claim_token = ?`); nullifies claim token on use; handles duplicate user+map shares by merging (keeps higher-privilege role)
 - `PUT /:id/visibility` toggles public/private
@@ -1430,7 +1416,7 @@ mapadillo/
 
 **Build:**
 1. Build `map-preview-page.ts` — full-screen styled map with all stops + route
-2. Integrate `@watergis/maplibre-gl-export` for 200 DPI rendering (cap max canvas at 5400px, graceful error if device can't allocate)
+2. Render the map offscreen at 300 DPI (capped to the device's canvas limit, graceful error if device can't allocate)
 3. Build `map-export.ts` — PNG/JPEG download
 4. Build decorative PDF layout with jsPDF (title, family name, stop list, border, road trip stats)
 5. Build `export-options.ts` — format selection UI
@@ -1438,12 +1424,12 @@ mapadillo/
 
 **Verify:**
 - Export PDF — opens with trip title, map image, stop list, decorative border
-- Export PNG — correct resolution (200 DPI, within canvas limits)
+- Export PNG — correct resolution (300 DPI, within canvas limits)
 - Both formats include all stops and route
 
 #### Implementation Notes (M7)
 
-**Core export architecture (`src/map/map-export.ts`):** Subclasses `MapGeneratorBase` from `@watergis/maplibre-gl-export` to create `MapExporter`. Overrides `getRenderedMap()` to produce an offscreen MapLibre map at the computed pixel dimensions. `renderCanvas()` creates a hidden DOM container, renders the map at high-res, waits for `'idle'` event, clones the canvas data, draws custom markers on top (since DOM-based MapLibre markers are not captured by `getStyle()`), then cleans up the temp map. Has a 30-second timeout guard to prevent hanging promises.
+**Core export architecture (`src/map/map-export.ts`):** `renderMapCanvas()` computes the pixel dimensions for the paper size at 300 DPI, creates a hidden DOM container, renders the map at high-res, waits for `'idle'` event, clones the canvas data, draws custom markers on top (since DOM-based MapLibre markers are not captured by `getStyle()`), then cleans up the temp map. Has a 30-second timeout guard to prevent hanging promises.
 
 **Marker drawing on export canvas:** Since MapLibre DOM markers don't appear in style-based canvas rendering, `drawMarkersOnCanvas()` projects each stop's lngLat to pixel coords on the temp map and draws branded circles (white fill, orange border, center dot). Checklist-type icons get an open square instead of a dot.
 
@@ -1455,9 +1441,9 @@ mapadillo/
 
 **Trip builder integration:** Added Preview and Export buttons to `trip-builder-page.ts` below the map details section, linking to `/preview/:id` and `/export/:id`.
 
-**Mobile collapsible overlay:** On the preview/export page, the floating overlay (trip name, export options, download button) is wrapped in `<wa-details appearance="plain">`. On mobile (`≤700px`) it starts collapsed — just a thin header bar with the trip name and chevron toggle, leaving the map and paper frame fully visible. On desktop it auto-opens via an imperative `details.open = true` in `updated()`. The `<wa-details>` manages its own open/close state after initialization.
+**Mobile collapsible overlay:** On the preview/export page, the floating overlay (trip name, export options, download button) is wrapped in `<wa-details appearance="plain">`. On mobile (`≤700px`) it starts collapsed — just a thin header bar with the trip name and chevron toggle, leaving the map and paper frame fully visible. On desktop it starts open: `?open` binds to a field that checks the viewport width once at construction. The `<wa-details>` manages its own open/close state after that.
 
-**Export settings persistence (migration 0007):** Added `export_settings TEXT DEFAULT '{}'` column to the `maps` table. Stores `{ format, paperSize, orientation, center, zoom, bearing, pitch }` as JSON. Saved with 1-second debounce on every format/paper/orientation change and on map `moveend`. Only saved for authenticated owners/editors (checks role before scheduling saves). On page load, `_restoreSettings()` runs after `_syncMap()`'s `drawItems` auto-fit — applies saved format/paper/orientation as state, then calls `jumpTo()` to restore the viewport (overriding the auto-fit animation). A `_restoring` flag suppresses the moveend listener during `jumpTo()` to avoid a redundant save of the just-loaded settings. Backend validates `export_settings` and `style_preferences` JSON blob size (10KB limit).
+**Export settings persistence:** Added `export_settings TEXT DEFAULT '{}'` column to the `maps` table. Stores `{ format, paperSize, orientation, center, zoom, bearing, pitch }` as JSON. Saved with 1-second debounce on every format/paper/orientation change and on map `moveend`. Only saved for authenticated owners/editors (checks role before scheduling saves). On page load, `_restoreSettings()` runs after `_syncMap()`'s `drawItems` auto-fit — applies saved format/paper/orientation as state, then calls `jumpTo()` to restore the viewport (overriding the auto-fit animation). A `_restoring` flag suppresses the moveend listener during `jumpTo()` to avoid a redundant save of the just-loaded settings. Backend validates `export_settings` and `style_preferences` JSON blob size (10KB limit).
 
 **Files created (5 new):**
 
@@ -1467,14 +1453,14 @@ mapadillo/
 │   ├── components/
 │   │   └── export-options.ts      [NEW]  # Format picker (PDF/PNG/JPEG radio group) + download button
 │   ├── map/
-│   │   └── map-export.ts          [NEW]  # MapExporter class, PNG/JPEG/PDF download, marker rendering
+│   │   └── map-export.ts          [NEW]  # renderMapCanvas(), PNG/JPEG/PDF download, marker rendering
 │   └── pages/
 │       ├── map-page-base.ts       [NEW]  # Shared base: map loading, MapController lifecycle, sync
 │       ├── map-preview-page.ts    [NEW]  # Full-screen read-only map view with overlay controls
 │       └── export-page.ts         [NEW]  # Split layout: map panel + sidebar with export options
 └── worker/
     └── src/
-        └── env.d.ts               [NEW]  # Module declaration for cloudflare:test ProvidedEnv
+        └── env.d.ts               [NEW]  # Augments Cloudflare.Env for cloudflare:test
 ```
 
 **Files modified (17 existing):**
@@ -1506,7 +1492,7 @@ worker/src/
 
 **Deliberate deviations from plan:**
 
-1. **200 DPI instead of originally planned 150 DPI.** Implementation uses 200 DPI as the default — better print quality while still within canvas limits on most devices. The 5400px cap ensures graceful degradation.
+1. **300 DPI instead of originally planned 150 DPI.** Exports render at 300 DPI, scaled down to 80% of the GPU's max texture size (4096px fallback) so large posters degrade gracefully instead of failing.
 
 2. **CSRF protection added.** Not in M7 plan scope. Origin header validation on all state-changing `/api/*` requests (skips webhooks and auth routes which handle their own CSRF). Added because export page is accessible to authenticated users navigating from external links.
 
@@ -1516,7 +1502,7 @@ worker/src/
 
 5. **Geo utilities consolidated in `utils/geo.ts`.** `haversineDistance()`, `toRad()`, `toDeg()` moved from `routing.ts` to `utils/geo.ts` (alongside existing `isDraftCoord`, `formatDistance`). Added `sanitizeFilename()` for export filenames. Single source of truth for geo math.
 
-6. **`worker/src/env.d.ts` added for test type safety.** Augments `cloudflare:test`'s `ProvidedEnv` to extend the project's `Env` interface, resolving 18 TS errors on `env.DB`, `env.BETTER_AUTH_SECRET`, etc. in test files.
+6. **`worker/src/env.d.ts` added for test type safety.** References `@cloudflare/vitest-pool-workers/types` and augments the global `Cloudflare.Env` to extend the project's `Env` interface plus `TEST_MIGRATIONS`, so `env.DB`, `env.BETTER_AUTH_SECRET`, etc. type-check in test files.
 
 **Deferred to later milestones:**
 - Print ordering (M9)
@@ -1567,8 +1553,8 @@ worker/src/
 
 **4. Dark mode**
 
-- **`src/dark-mode.ts`** (new): Full dark-mode manager — persists preference to `localStorage` (`mapadillo-dark-mode`), falls back to `prefers-color-scheme` media query. Toggles `wa-dark` class on `<html>` and sets `color-scheme`. Dispatches `dark-mode-change` CustomEvent on `document` for reactive component updates. Initialized once from `src/index.ts`.
-- **User menu** (`src/components/user-menu.ts`): Added dark/light mode toggle dropdown item. Listens to `dark-mode-change` events to reactively update icon (sun/moon).
+- **`src/dark-mode.ts`** (new): Full dark-mode manager built on `createPreference()` — persists an explicit choice to `localStorage` (`mapadillo-dark-mode`), otherwise follows the `prefers-color-scheme` media query. Toggles `wa-dark` class on `<html>` and sets `color-scheme`. Components subscribe through `onDarkModeChange()`. Initialized once from `src/index.ts`.
+- **User menu** (`src/components/user-menu.ts`): Added dark/light mode toggle dropdown item. A `StoreController` on `onDarkModeChange` re-renders the icon (sun/moon).
 
 **5. Locale-based units**
 
@@ -1585,21 +1571,21 @@ The trip builder page needs to fill exactly `100dvh` with no page-level scrollba
 4. **`::part(main) { min-height: 0 }`** — prevents expansion beyond grid track (internal: `min-height: 100%`)
 5. **`::part(main-content) { display: flex; flex-direction: column; min-height: 0; overflow: hidden }`** — makes `main-content` a flex column so `trip-builder-page`'s `flex: 1` fills the remaining space
 
-The `_isFullHeight` getter checks `location.pathname.startsWith('/map/')` to apply only to the trip builder and export pages. The router calls `requestUpdate()` on every navigation, so `location.pathname` is current during render.
+Routes flagged `fullHeight: true` in app-shell's route table (`/map/new`, `/map/:id`, `/preview/:id`) set the reflected `no-footer` property in `willUpdate` from `router.target?.fullHeight`, which is set before the route's `enter` guard runs.
 
 **7. Code cleanup & architecture**
 
 - **Shared types** (`shared/types.ts`): Moved `MapRow`, `StopRow`, `MapRole` from `worker/src/db/types.ts` to shared types used by both client and worker. Added `shared/icons.ts` (valid icon set) and `shared/travel-modes.ts` (valid travel modes) to eliminate duplication.
-- **Navigation** (`src/nav.ts`): Added `navClick(path)` higher-order function for declarative `@click` handlers, replacing per-page `_navX` methods. Router's `navigate()` method removed — all navigation goes through `navigateTo()`.
+- **Navigation** (`src/nav.ts`): Links use plain `href`; all programmatic navigation goes through `navigateTo()`.
 - **Map controller** (`src/map/map-controller.ts`): Major refactor — uses GeoJSON sources + symbol/circle/line layers instead of DOM markers. Exports `renderMarkerCanvas()` for use in map export.
 - **Map export** (`src/map/map-export.ts`): Added paper size support (`letter`, `a4`, `a3`, `tabloid`) with orientation (landscape/portrait). Zoom compensation formula (`Math.log2(scaleFactor)`) keeps exported extent matching the live view. Marker rendering now uses `renderMarkerCanvas()` (same composite images as live map) instead of hand-drawn circles.
-- **Worker routes** (`worker/src/routes/maps.ts`): Extracted `requireEditableMap()` and `touchMapStmt()` helpers to reduce boilerplate across CRUD endpoints. Uses shared types/icons/travel-modes from `shared/`.
+- **Worker routes** (`worker/src/routes/maps.ts`): Extracted `requireMapRole()` and `touchMapStmt()` helpers to reduce boilerplate across CRUD endpoints. Uses shared types/icons/travel-modes from `shared/`.
 - **Landing page**: "Start Planning" button sends authenticated users to `/dashboard` instead of `/sign-in`.
 - **Design tokens**: Replaced hardcoded values (`#e05e00`, `0.9rem`, `font-weight: 900`, `color: var(--wa-color-neutral-*)`) with Web Awesome semantic tokens (`--wa-color-brand-60`, `--wa-font-size-s`, `--wa-font-weight-bold`, `--wa-color-text-quiet`) throughout all components for dark-mode compatibility.
 
 **8. Route endpoint icons & map UX improvements (post-M8)**
 
-- **Migration 0006** (`worker/src/db/migrations/0006_route_endpoint_options.sql`): Added `dest_icon TEXT`, `show_start_label INTEGER DEFAULT 1`, `show_dest_label INTEGER DEFAULT 1` to `stops` table.
+- **Schema:** Added `dest_icon TEXT`, `show_start_label INTEGER DEFAULT 1`, `show_dest_label INTEGER DEFAULT 1` to `stops` table.
 - **`dest_icon` field**: Route endpoints now have independent icons (start uses `icon`, destination uses `dest_icon`). Supported in create, update, duplicate, and list stop APIs.
 - **`'none'` icon**: Added to `shared/icons.ts`. When selected, the marker and label are hidden on the map. Icon picker shows a "No Icon" category with a ban icon.
 - **Icon propagation**: When an icon changes on any endpoint, `_propagateIconToColocated()` in trip-builder-page updates all other items sharing the exact same coordinates (within 1e-5 tolerance).
@@ -1643,13 +1629,13 @@ New `orders` table in `0001_initial.sql`:
 #### Order Lifecycle
 
 ```
-1. User clicks "Order a Print" on map-preview-page (owner/editor, printable size only)
+1. User clicks "Order a Print" on export-page (owner/editor, printable size only)
 2. /order/:mapId — select product + size, enter shipping address
 3. Real-time shipping quote fetched from Prodigi (500ms debounce)
-4. "Order Print" → render map PNG (800×600) → upload to R2 → create Stripe Checkout → redirect
-5. User pays on Stripe → webhook fires → order row created in D1
-6. If image uploaded: auto-submit to Prodigi (status: submitted)
-   If no image: status = pending_render (admin submits later via /admin)
+4. "Order Print" → render map PNG at the poster size (300 DPI, capped to the canvas limit) → upload to R2 → create Stripe Checkout + order row (pending_payment) → redirect
+5. User pays on Stripe → webhook fires → order moves out of pending_payment
+6. If image and address are valid: auto-submit to Prodigi (status: submitted)
+   Otherwise, or if submission fails: status = pending_render (admin submits later via /admin)
 7. Prodigi webhooks update status: in_production → shipped (+ tracking URL) → completed
 8. User sees status + tracking on /order-confirmation/:orderId
 ```
@@ -1672,11 +1658,11 @@ New `orders` table in `0001_initial.sql`:
 
 **Stripe** (`POST /api/webhooks/stripe`):
 - Verifies signature, handles `checkout.session.completed`
-- Idempotent via `stripe_session_id` UNIQUE constraint
-- Auto-submits to Prodigi if image exists, falls back to `pending_render`
+- Idempotent via a conditional `UPDATE ... WHERE status = 'pending_payment'`; a repeat delivery changes no row and is acknowledged
+- Auto-submits to Prodigi in `waitUntil` if the order has an image and a parseable address, falls back to `pending_render`
 - Sends Discord notification
 
-**Prodigi** (`POST /api/webhooks/prodigi/:secret`):
+**Prodigi** (`POST /api/webhooks/prodigi`, shared secret in `X-Prodigi-Webhook-Secret`):
 - Status mapping: `InProgress` → `in_production`, `Shipped` → `shipped` (extracts tracking URL), `Complete` → `completed`, `Cancelled` → `cancelled`
 
 #### Client Pages
@@ -1708,7 +1694,7 @@ Typed API wrappers: `uploadPrintImage()`, `createCheckout()`, `getOrder()`, `lis
 
 #### Component Integrations
 
-- **map-preview-page.ts** — "Order a Print" button shown when user is owner/editor and paper size is in `PRINTABLE_SIZES` (18x24, 24x36, 40x60)
+- **export-page.ts** — "Order a Print" button shown when user is owner/editor and paper size is in `PRINTABLE_SIZES` (18x24, 24x36, 40x60)
 - **dashboard-page.ts** — Order history section with status badges and tracking links
 - **app-shell.ts** — Routes registered: `/order/:id`, `/order-confirmation/:orderId`, `/admin`
 
@@ -1731,7 +1717,7 @@ Typed API wrappers: `uploadPrintImage()`, `createCheckout()`, `getOrder()`, `lis
 
 #### Key Design Decisions
 
-- **Idempotency:** Stripe `session_id` UNIQUE in D1 + Prodigi order ID as idempotency key
+- **Idempotency:** conditional status claim on the Stripe webhook + Prodigi order ID as idempotency key
 - **Graceful degradation:** Quote failure → placeholder cost; Prodigi auto-submit failure → `pending_render` for admin
 - **Security:** Admin routes use Bearer token, webhooks excluded from CSRF, R2 images use unguessable UUIDs
 - **Financial integrity:** Orders use RESTRICT on FK delete — cannot delete maps/users with orders

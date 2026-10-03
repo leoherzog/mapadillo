@@ -1,25 +1,12 @@
 import { LitElement, html, css } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import { navClick } from '../nav.js';
-import { isAuthenticated, onAuthChange } from '../auth/auth-state.js';
+import { AuthController } from '../auth/auth-controller.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 
 @customElement('landing-page')
 export class LandingPage extends LitElement {
-  private _unsubAuth?: () => void;
-
-  connectedCallback() {
-    super.connectedCallback();
-    this._unsubAuth = onAuthChange(() => {
-      this.requestUpdate();
-    });
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsubAuth?.();
-  }
+  private _auth = new AuthController(this);
 
   static styles = [waUtilities, headingStyles, css`
     :host {
@@ -93,8 +80,7 @@ export class LandingPage extends LitElement {
         <wa-button
           size="large"
           variant="brand"
-          href=${isAuthenticated() ? '/dashboard' : '/sign-in'}
-          @click=${navClick(isAuthenticated() ? '/dashboard' : '/sign-in')}
+          href=${this._auth.user ? '/dashboard' : '/sign-in'}
         >
           <wa-icon slot="start" name="paper-plane"></wa-icon>
           Start Planning

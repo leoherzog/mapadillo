@@ -1,10 +1,8 @@
--- TODO(M9): Implement short-lived signed cookie cache to avoid stale D1 reads
--- after writes (eventual consistency mitigation). See PLAN.md "Session management".
+-- Initial D1 schema: Better Auth core and passkey tables plus the application tables.
+-- Enum-style TEXT columns carry CHECK constraints so writes that bypass the Hono routes stay valid.
 
--- ══════════════════════════════════════════════════════════════════════════
--- Migration 0001: Initial schema
--- Better Auth tables + Passkey plugin table + application tables
--- ══════════════════════════════════════════════════════════════════════════
+-- TODO: Implement a short-lived signed cookie cache to avoid stale D1 reads
+-- after writes (eventual consistency mitigation). See PLAN.md "Session management".
 
 -- ── Better Auth core tables ───────────────────────────────────────────────
 
@@ -15,7 +13,8 @@ CREATE TABLE IF NOT EXISTS "user" (
   emailVerified INTEGER NOT NULL DEFAULT 0,
   image TEXT,
   createdAt INTEGER NOT NULL,
-  updatedAt INTEGER NOT NULL
+  updatedAt INTEGER NOT NULL,
+  units TEXT NOT NULL DEFAULT 'km' CHECK (units IN ('km', 'mi'))
 );
 
 CREATE TABLE IF NOT EXISTS "session" (
@@ -77,12 +76,13 @@ CREATE TABLE IF NOT EXISTS maps (
   owner_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   family_name TEXT,
-  visibility TEXT NOT NULL DEFAULT 'private',
-  style_preferences TEXT DEFAULT '{}',
-  units TEXT NOT NULL DEFAULT 'km',
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('public', 'private')),
+  export_settings TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_maps_owner_id ON maps(owner_id);
 
 CREATE TABLE IF NOT EXISTS stops (
   id TEXT PRIMARY KEY NOT NULL,
@@ -93,24 +93,34 @@ CREATE TABLE IF NOT EXISTS stops (
   latitude REAL NOT NULL,
   longitude REAL NOT NULL,
   icon TEXT,
-  travel_mode TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  travel_mode TEXT CHECK (travel_mode IS NULL OR travel_mode IN ('drive', 'walk', 'bike', 'plane', 'boat')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  type TEXT NOT NULL DEFAULT 'point' CHECK (type IN ('point', 'route')),
+  dest_name TEXT,
+  dest_latitude REAL,
+  dest_longitude REAL,
+  dest_icon TEXT,
+  route_geometry TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_stops_map_id ON stops(map_id);
-CREATE INDEX IF NOT EXISTS idx_maps_owner_id ON maps(owner_id);
+-- Serves "all stops for a map, in order" without a sort step.
+CREATE INDEX IF NOT EXISTS idx_stops_map_id_position ON stops(map_id, position);
 
+-- SQLite treats NULLs as distinct in UNIQUE, so a map can hold many unclaimed
+-- invites (user_id NULL). claim_token is nulled once an invite is claimed.
 CREATE TABLE IF NOT EXISTS map_shares (
   id TEXT PRIMARY KEY NOT NULL,
   map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES "user"(id),
-  role TEXT NOT NULL DEFAULT 'viewer',
-  claim_token TEXT UNIQUE NOT NULL,
+  role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'editor')),
+  claim_token TEXT UNIQUE,
+  claim_token_expires_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  -- Note: SQLite treats NULL as distinct for UNIQUE constraints, so multiple
-  -- unclaimed shares (user_id = NULL) for the same map_id are allowed.
   UNIQUE(map_id, user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_map_shares_user_id ON map_shares(user_id);
+CREATE INDEX IF NOT EXISTS idx_map_shares_map_id ON map_shares(map_id);
 
 -- Orders are financial records and must not be deleted when a map or user is removed.
 CREATE TABLE IF NOT EXISTS orders (
@@ -120,7 +130,10 @@ CREATE TABLE IF NOT EXISTS orders (
   product_type TEXT NOT NULL,
   product_sku TEXT NOT NULL,
   poster_size TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending_payment',
+  status TEXT NOT NULL DEFAULT 'pending_payment' CHECK (status IN (
+    'pending_payment', 'paid', 'pending_render', 'submitted',
+    'in_production', 'shipped', 'completed', 'cancelled', 'failed'
+  )),
   stripe_session_id TEXT UNIQUE,
   prodigi_order_id TEXT,
   image_url TEXT,

@@ -1,19 +1,17 @@
 /**
- * Shared base class for pages that display a read-only map with stops.
- *
- * Extracts the common map-loading, MapController lifecycle, and sync logic
- * used by map-preview-page (and any future read-only map pages).
+ * Base class for pages built around one map: loads the map and role, owns the
+ * MapController, and syncs items. Subclassed by the trip builder, preview,
+ * export and order pages.
  */
 import { LitElement, type PropertyValues } from 'lit';
-import { property, state } from 'lit/decorators.js';
+import { property, query, state } from 'lit/decorators.js';
 import type { Stop, MapWithRole } from '../services/maps.js';
 import { getMap } from '../services/maps.js';
 import { ApiError } from '../services/api-client.js';
 import { isAuthenticated } from '../auth/auth-state.js';
-import { MapController } from '../map/map-controller.js';
-import { navigateTo } from '../nav.js';
+import { MapController, settle } from '../map/map-controller.js';
+import { navigateTo, signInUrl } from '../nav.js';
 import type { MapView } from '../components/map-view.js';
-import { MAP_CONTROLLER_OPTIONS, type MapControllerOptions } from '../config/map-themes.js';
 
 export class MapPageBase extends LitElement {
   @property() mapId = '';
@@ -33,8 +31,13 @@ export class MapPageBase extends LitElement {
     return sum;
   }
 
-  protected _pendingSync = false;
   protected _mapController?: MapController;
+
+  /** Uncached: subclasses may render a different <map-view> per render branch. */
+  @query('map-view') protected _mapView!: MapView | null;
+
+  /** Implement in subclasses to handle clicks on map markers and route lines. */
+  protected _onMapItemClick?(itemId: string): void;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -70,8 +73,7 @@ export class MapPageBase extends LitElement {
     } catch (err) {
       if (gen !== this._loadGeneration) return;
       if (err instanceof ApiError && err.status === 401 && !isAuthenticated()) {
-        const returnTo = encodeURIComponent(window.location.pathname);
-        navigateTo(`/sign-in?returnTo=${returnTo}`);
+        navigateTo(signInUrl());
         return;
       }
       this._error = err instanceof Error ? err.message : 'Failed to load map';
@@ -80,8 +82,6 @@ export class MapPageBase extends LitElement {
       this._loading = false;
       if (this._mapReady) {
         this.updateComplete.then(() => { if (this.isConnected) this._syncMap(); });
-      } else {
-        this._pendingSync = true;
       }
     }
   }
@@ -89,23 +89,13 @@ export class MapPageBase extends LitElement {
   protected _onMapReady() {
     this._mapReady = true;
 
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (!mapView?.map) return;
+    const map = this._mapView?.map;
+    if (!map) return;
 
     // Destroy previous controller before creating a new one
     this._mapController?.destroy();
-    this._mapController = new MapController(mapView.map, {
-      ...MAP_CONTROLLER_OPTIONS,
-      ...this._getExtraControllerOptions(),
-    });
-
-    this._pendingSync = false;
+    this._mapController = new MapController(map, this._onMapItemClick?.bind(this));
     this._syncMap();
-  }
-
-  /** Override in subclasses to provide additional MapController options (e.g., onItemClick). */
-  protected _getExtraControllerOptions(): Partial<MapControllerOptions> {
-    return {};
   }
 
   /**
@@ -126,8 +116,7 @@ export class MapPageBase extends LitElement {
     settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number },
   ): Promise<void> {
     if (!settings.center || settings.zoom == null) return;
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    const map = mapView?.map;
+    const map = this._mapView?.map;
     if (!map) return;
 
     map.jumpTo({
@@ -137,15 +126,8 @@ export class MapPageBase extends LitElement {
       pitch: settings.pitch ?? 0,
     });
 
-    // Wait for the map to settle (drains the late fitBounds moveend too).
-    // 'idle' only fires if the map is not already idle; include a timeout
-    // so we never hang if it happens to already be idle.
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const done = () => { if (!settled) { settled = true; resolve(); } };
-      map.once('idle', done);
-      setTimeout(done, 500);
-    });
+    // Drains the late fitBounds moveend too.
+    await settle(map, 500);
   }
 
   protected async _syncMap() {

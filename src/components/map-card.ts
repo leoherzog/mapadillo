@@ -6,11 +6,12 @@
  * and relative update time. Click navigates to the map detail view.
  */
 import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import * as maplibregl from 'maplibre-gl';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import type { MapWithStops } from '../services/maps.js';
 import { navigateTo } from '../nav.js';
+import { roleBadge } from './ui.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
@@ -24,6 +25,8 @@ export class MapCard extends LitElement {
 
   private _mapInstance?: maplibregl.Map;
   private _resizeObserver?: ResizeObserver;
+
+  @state() private _styleError = false;
 
   static styles = [
     waUtilities,
@@ -53,6 +56,15 @@ export class MapCard extends LitElement {
         inset: 0;
       }
 
+      .map-error {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-text-quiet);
+      }
+
       h3 {
         margin: 0;
         font-size: var(--wa-font-size-m);
@@ -73,11 +85,24 @@ export class MapCard extends LitElement {
     `,
   ];
 
-  protected async firstUpdated(): Promise<void> {
+  protected firstUpdated(): void {
+    void this._initMap();
+  }
+
+  private async _initMap(): Promise<void> {
     const container = this.shadowRoot!.querySelector('.map-container') as HTMLElement;
     if (!container) return;
 
-    const style = await resolveMapStyle();
+    let style;
+    try {
+      style = await resolveMapStyle();
+    } catch (err) {
+      console.error('Map style failed to load:', err);
+      this._styleError = true;
+      return;
+    }
+    // The element may have been removed while the style was loading.
+    if (!this.isConnected) return;
 
     this._mapInstance = new maplibregl.Map({
       container,
@@ -184,10 +209,11 @@ export class MapCard extends LitElement {
       >
         <div slot="media" class="wa-frame:landscape">
           <div class="map-container"></div>
+          ${this._styleError ? html`<div class="map-error">Map preview unavailable</div>` : nothing}
         </div>
         <div class="wa-cluster wa-align-items-center wa-gap-xs">
           <h3>${this.map.name}</h3>
-          ${this.roleBadge ? html`<wa-badge variant=${this.roleBadge === 'editor' ? 'brand' : 'neutral'}>${this.roleBadge}</wa-badge>` : nothing}
+          ${this.roleBadge ? roleBadge(this.roleBadge) : nothing}
         </div>
         ${this.map.family_name
           ? html`<div class="family">${this.map.family_name}</div>`

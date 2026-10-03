@@ -13,6 +13,7 @@ import { refreshAuth } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
+import { fieldValue } from '../utils/form.js';
 
 @customElement('sign-in-page')
 export class SignInPage extends LitElement {
@@ -150,7 +151,7 @@ export class SignInPage extends LitElement {
           autocomplete="name"
           required
           .value=${this._name}
-          @input=${(e: Event) => { this._name = (e.target as HTMLElement & { value: string }).value; }}
+          @input=${(e: Event) => { this._name = fieldValue(e); }}
         ></wa-input>
         <wa-input
           label="Email"
@@ -159,7 +160,7 @@ export class SignInPage extends LitElement {
           autocomplete="email"
           required
           .value=${this._email}
-          @input=${(e: Event) => { this._email = (e.target as HTMLElement & { value: string }).value; }}
+          @input=${(e: Event) => { this._email = fieldValue(e); }}
         ></wa-input>
         <wa-button
           variant="brand"

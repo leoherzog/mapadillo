@@ -30,6 +30,7 @@ import '@web.awesome.me/webawesome-pro/dist/components/combobox/combobox.js';
 import '@web.awesome.me/webawesome-pro/dist/components/divider/divider.js';
 import '@web.awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js';
 import '@web.awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js';
+import '@web.awesome.me/webawesome-pro/dist/components/format-number/format-number.js';
 import '@web.awesome.me/webawesome-pro/dist/components/icon/icon.js';
 import '@web.awesome.me/webawesome-pro/dist/components/input/input.js';
 import '@web.awesome.me/webawesome-pro/dist/components/option/option.js';
@@ -49,7 +50,7 @@ import '@web.awesome.me/webawesome-pro/dist/components/toast/toast.js';
 import '@web.awesome.me/webawesome-pro/dist/components/toast-item/toast-item.js';
 import '@web.awesome.me/webawesome-pro/dist/components/split-panel/split-panel.js';
 
-// Kit code comes from the package @awesome.me/kit-781a3c6be3
+// Font Awesome kit id; Web Awesome fetches kit icons from the Font Awesome CDN with it.
 setKitCode('781a3c6be3');
 
 // Default icon family: Jelly — the playful, rounded icon style

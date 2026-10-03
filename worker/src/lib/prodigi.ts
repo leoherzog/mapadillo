@@ -3,6 +3,8 @@
  * https://www.prodigi.com/print-api/docs/
  */
 
+import type { ShippingAddress } from '../../../shared/types.js';
+
 interface ProdigiQuoteRequest {
   sku: string;
   destinationCountry: string;
@@ -17,15 +19,7 @@ interface ProdigiCreateOrderRequest {
   orderId: string;
   sku: string;
   imageUrl: string;
-  shippingAddress: {
-    name: string;
-    line1: string;
-    line2?: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    country: string;
-  };
+  shippingAddress: ShippingAddress;
 }
 
 interface ProdigiCreateOrderResponse {

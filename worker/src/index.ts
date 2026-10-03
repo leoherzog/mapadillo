@@ -7,8 +7,6 @@
  * - Everything else → Static assets (Vite-built SPA) via the ASSETS binding,
  *   with SPA fallback to index.html for client-side routes.
  *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
- *
- * Milestone 9: print ordering (Stripe + Prodigi).
  */
 
 import { Hono } from 'hono';
@@ -61,7 +59,7 @@ app.use('*', logger());
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', milestone: 9 });
+  return c.json({ status: 'ok' });
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
@@ -112,53 +110,50 @@ app.use('/api/user/*', requireAuth);
 app.route('/api/user', userPreferences);
 
 // ── Claim share route (requires auth, outside /api/maps) ─────────────────
-app.post('/api/shares/claim/:token', requireAuth, claimShareHandler);
+app.post(
+  '/api/shares/claim/:token',
+  requireAuth,
+  rateLimit('RATE_LIMITER_PUBLIC', (c) => `claim:${c.get('user')!.id}`),
+  claimShareHandler,
+);
 
-// ── Map routes (Milestone 4+6) ──────────────────────────────────────────
+// ── Map routes ──────────────────────────────────────────────────────────
 // GET /api/maps/:id uses optional auth (allows public map viewing).
-// All other /api/maps routes require auth.
+// Every other path under /api/maps, including the bare /api/maps, requires auth.
+const publicMapRateLimit = rateLimit('RATE_LIMITER_PUBLIC', (c) => `public-map:${getClientIp(c)}`);
 app.use('/api/maps/*', async (c, next) => {
-  // Allow unauthenticated access for GET /api/maps/:id (public maps)
-  const path = c.req.path;
-  const method = c.req.method;
   // Match GET /api/maps/<uuid> but not /api/maps/<uuid>/stops etc.
-  if (method === 'GET' && /^\/api\/maps\/[^/]+$/.test(path)) {
-    // Rate limit unauthenticated public map access: 60 req/min per IP
-    const { success } = await c.env.RATE_LIMITER_PUBLIC.limit({ key: `public-map:${getClientIp(c)}` });
-    if (!success) {
-      return c.json({ error: 'Too many requests' }, 429);
-    }
-    return optionalAuth(c, next);
+  if (c.req.method === 'GET' && /^\/api\/maps\/[^/]+$/.test(c.req.path)) {
+    return publicMapRateLimit(c, async () => { await optionalAuth(c, next); });
   }
   return requireAuth(c, next);
 });
-// Hono's app.use('/api/maps', ...) matches only the exact path, not sub-paths.
-// Sub-paths like /api/maps/:id are handled by the /api/maps/* middleware above.
-app.use('/api/maps', requireAuth);
 app.route('/api/maps', maps);
 app.route('/api/maps', sharing);
 
-// ── Order + image routes (Milestone 9) ───────────────────────────────────
-// GET /api/images/* is public (unguessable UUID keys, served from R2).
-// POST /api/images/:mapId, checkout, print-quote, and orders require auth.
+// ── Order + image routes ────────────────────────────────────────────────
+// Image URLs are /api/images/<mapId>/<uuid>.png, so two-segment GETs stay public
+// (unguessable keys, served from R2). The single-segment guard below covers the
+// POST upload and also rejects single-segment GETs.
+// Checkout, print-quote, and orders require auth.
 // Admin order routes use Bearer token auth internally.
-app.use('/api/images/:mapId', requireAuth);   // POST upload
+app.use('/api/images/:mapId', requireAuth);
 app.use('/api/checkout', requireAuth);
 app.use('/api/print-quote', requireAuth);
 app.use('/api/orders', requireAuth);
 app.use('/api/orders/*', requireAuth);
 app.route('/api', orderRoutes);
 
-// ── Webhook routes (Milestone 9) ─────────────────────────────────────────
+// ── Webhook routes ──────────────────────────────────────────────────────
 // No auth middleware — webhooks verify signatures/secrets internally.
 app.route('/api/webhooks', webhookRoutes);
 
-// ── Geocoding proxy (Milestone 3) ─────────────────────────────────────────
+// ── Geocoding proxy ─────────────────────────────────────────────────────
 // Auth required + 30 req/min per user via RATE_LIMITER_PROXY.
 const proxyRateLimit = rateLimit('RATE_LIMITER_PROXY', (c) => c.get('user')!.id);
 app.get('/api/geocode', requireAuth, proxyRateLimit, geocodeHandler);
 
-// ── Routing proxy (Milestone 5) ───────────────────────────────────────────
+// ── Routing proxy ───────────────────────────────────────────────────────
 // Auth required + 30 req/min per user via RATE_LIMITER_PROXY.
 app.post('/api/route', requireAuth, proxyRateLimit, routeHandler);
 

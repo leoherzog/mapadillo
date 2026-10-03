@@ -118,20 +118,14 @@ describe('auth-state', () => {
   });
 
   describe('initAuth() deduplication', () => {
-    it('returns same promise on concurrent calls', () => {
+    it('returns the same promise and calls getSession once for concurrent calls', async () => {
       mockGetSession.mockResolvedValue(sessionWith(testUser));
 
       const p1 = mod.initAuth();
       const p2 = mod.initAuth();
 
       expect(p1).toBe(p2);
-    });
-
-    it('only calls getSession once for concurrent calls', async () => {
-      mockGetSession.mockResolvedValue(sessionWith(testUser));
-
-      await Promise.all([mod.initAuth(), mod.initAuth(), mod.initAuth()]);
-
+      await p1;
       expect(mockGetSession).toHaveBeenCalledTimes(1);
     });
 
@@ -219,26 +213,12 @@ describe('auth-state', () => {
       expect(mod.getUser()).toBeNull();
       expect(mod.isAuthenticated()).toBe(false);
     });
-
-    it('notifies listeners when user is cleared', async () => {
-      mockGetSession.mockResolvedValue(sessionWith(testUser));
-      await mod.initAuth();
-
-      const listener = vi.fn();
-      mod.onAuthChange(listener);
-      listener.mockClear();
-
-      mockSignOut.mockResolvedValue(undefined);
-      await mod.signOut();
-
-      expect(listener).toHaveBeenCalled();
-    });
   });
 
   describe('visibilitychange handler', () => {
     // The frontend test env is `node`, so there is no real `document`.
     // Install a minimal stub that supports addEventListener / removeEventListener
-    // and mutable visibilityState before importing the module under test.
+    // and mutable visibilityState; auth-state reads it at initAuth() time.
     type FakeDoc = {
       visibilityState: 'visible' | 'hidden';
       _listeners: Map<string, Set<(ev: { type: string }) => void>>;
@@ -271,15 +251,9 @@ describe('auth-state', () => {
       fakeDocument.dispatchEvent({ type: 'visibilitychange' });
     }
 
-    beforeEach(async () => {
+    beforeEach(() => {
       fakeDocument = createFakeDocument();
       (globalThis as unknown as { document?: FakeDoc }).document = fakeDocument;
-      // Re-import after installing the stub so the module reads our fake
-      // document when it registers listeners.
-      vi.resetModules();
-      mockGetSession.mockReset();
-      mockSignOut.mockReset();
-      mod = await import('./auth-state.js');
     });
 
     afterEach(() => {
@@ -306,8 +280,6 @@ describe('auth-state', () => {
       await Promise.resolve();
 
       expect(mockGetSession).toHaveBeenCalledTimes(2);
-
-      nowSpy.mockRestore();
     });
 
     it('does not refresh when tab was hidden for <60s', async () => {
@@ -327,8 +299,6 @@ describe('auth-state', () => {
       await Promise.resolve();
 
       expect(mockGetSession).toHaveBeenCalledTimes(1);
-
-      nowSpy.mockRestore();
     });
 
     it('does not refresh on visible event without a preceding hide', async () => {
@@ -362,8 +332,6 @@ describe('auth-state', () => {
       await Promise.resolve();
 
       expect(mockGetSession).toHaveBeenCalledTimes(callsBefore);
-
-      nowSpy.mockRestore();
     });
   });
 

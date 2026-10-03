@@ -7,21 +7,34 @@
 
 import { Hono, type Context } from 'hono';
 import type { AppEnv } from '../types.js';
-import type { MapData, Stop, StopRow, MapRole } from '../../../shared/types.js';
-import { rowToStop } from '../../../shared/types.js';
+import type { MapData, StopRow, MapRole } from '../../../shared/types.js';
+import { canEditRole, rowToStop } from '../../../shared/types.js';
 import { VALID_ICONS } from '../../../shared/icons.js';
-import { VALID_TRAVEL_MODES, type TravelMode } from '../../../shared/travel-modes.js';
+import { isTravelMode } from '../../../shared/travel-modes.js';
+import { readJsonBody } from '../lib/json-body.js';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Value checkers ───────────────────────────────────────────────────────────
+// Each returns an error message for an invalid present value, or null.
+// Required, absent and null handling stays with the calling handler.
 
-const VALID_TYPES = new Set(['point', 'route']);
-
-function isValidLat(v: number): boolean {
-  return isFinite(v) && v >= -90 && v <= 90;
+function lengthError(field: string, value: string, max: number): string | null {
+  return value.trim().length > max ? `${field} must be ${max} characters or fewer` : null;
 }
 
-function isValidLng(v: number): boolean {
-  return isFinite(v) && v >= -180 && v <= 180;
+function latError(field: string, value: number): string | null {
+  return isFinite(value) && value >= -90 && value <= 90
+    ? null
+    : `${field} must be a finite number between -90 and 90`;
+}
+
+function lngError(field: string, value: number): string | null {
+  return isFinite(value) && value >= -180 && value <= 180
+    ? null
+    : `${field} must be a finite number between -180 and 180`;
+}
+
+function enumError(field: string, value: unknown, allowed: ReadonlySet<string>): string | null {
+  return allowed.has(value as string) ? null : `Invalid ${field}: ${value}`;
 }
 
 // ── Role-based access control ────────────────────────────────────────────────
@@ -59,23 +72,42 @@ export async function getMapWithRole(
   return null;
 }
 
-function canEdit(role: MapRole): boolean {
-  return role === 'owner' || role === 'editor';
-}
-
-/** Resolve user + map + assert edit permission. Returns null and sends error response on failure. */
-async function requireEditableMap(c: Context<AppEnv>): Promise<{ map: MapData; role: MapRole } | null> {
-  const userId = c.get('user')!.id;
-  const mapId = c.req.param('id')!;
-  const result = await getMapWithRole(c.env.DB, mapId, userId);
-  if (!result) { c.res = c.json({ error: 'Map not found' }, 404); return null; }
-  if (!canEdit(result.role)) { c.res = c.json({ error: 'Forbidden' }, 403); return null; }
-  return result;
+/**
+ * Load the map named by route param `param` for the signed-in user and require `minRole`.
+ * On failure sets `c.res` and returns null: 404 for a missing map, 403 for too low a role.
+ * `hideForbidden` answers both with the same 404 so the response does not reveal the map exists.
+ */
+export async function requireMapRole(
+  c: Context<AppEnv>,
+  minRole: 'owner' | 'editor',
+  { param = 'id', hideForbidden = false }: { param?: string; hideForbidden?: boolean } = {},
+): Promise<{ map: MapData; role: MapRole } | null> {
+  const result = await getMapWithRole(c.env.DB, c.req.param(param)!, c.get('user')!.id);
+  const allowed = result && (minRole === 'owner' ? result.role === 'owner' : canEditRole(result.role));
+  if (allowed) return result;
+  if (hideForbidden) {
+    c.res = c.json({ error: 'Not found or forbidden' }, 404);
+  } else {
+    c.res = result ? c.json({ error: 'Forbidden' }, 403) : c.json({ error: 'Map not found' }, 404);
+  }
+  return null;
 }
 
 /** Prepared statement to bump map updated_at. */
 function touchMapStmt(db: D1Database, mapId: string, now: string): D1PreparedStatement {
   return db.prepare('UPDATE maps SET updated_at = ? WHERE id = ?').bind(now, mapId);
+}
+
+/** Prepared statement inserting every column of a stop row. */
+export function insertStopStmt(db: D1Database, row: StopRow): D1PreparedStatement {
+  return db.prepare(
+    'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind(
+    row.id, row.map_id, row.position, row.type, row.name, row.label,
+    row.latitude, row.longitude, row.icon, row.travel_mode,
+    row.dest_name, row.dest_latitude, row.dest_longitude, row.dest_icon,
+    row.route_geometry, row.created_at,
+  );
 }
 
 // ── Sub-app ──────────────────────────────────────────────────────────────────
@@ -84,12 +116,8 @@ const maps = new Hono<AppEnv>();
 
 // POST / — create map
 maps.post('/', async (c) => {
-  let body: { name?: string; family_name?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ name?: string; family_name?: string }>(c);
+  if (!body) return c.res;
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
@@ -180,90 +208,76 @@ maps.get('/:id', async (c) => {
 
 // PUT /:id — update map (owner or editor)
 maps.put('/:id', async (c) => {
-  const result = await requireEditableMap(c);
+  const result = await requireMapRole(c, 'editor');
   if (!result) return c.res;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<Record<string, unknown>>(c);
+  if (!body) return c.res;
 
-  const allowed = ['name', 'family_name', 'export_settings'] as const;
-  const updates: string[] = [];
-  const values: unknown[] = [];
+  // Column values as stored; the SQL and the response are both derived from this.
+  const patch: Partial<Pick<MapData, 'name' | 'family_name' | 'export_settings'>> = {};
 
-  for (const key of allowed) {
-    if (key in body) {
-      let val = body[key];
-      if (key === 'name') {
-        if (!val || typeof val !== 'string' || !(val as string).trim()) {
-          return c.json({ error: 'name cannot be empty' }, 400);
-        }
-        val = (val as string).trim();
-        if ((val as string).length > 200) {
-          return c.json({ error: 'name must be 200 characters or fewer' }, 400);
-        }
-      }
-      if (key === 'family_name' && typeof val === 'string' && val.trim().length > 200) {
-        return c.json({ error: 'family_name must be 200 characters or fewer' }, 400);
-      }
-      if (key === 'export_settings') {
-        if (typeof val === 'object' && val !== null) val = JSON.stringify(val);
-        if (typeof val !== 'string') {
-          return c.json({ error: `${key} must be a string or object` }, 400);
-        }
-        if ((val as string).length > 10_000) {
-          return c.json({ error: `${key} is too large` }, 400);
-        }
-        // Validate that it's well-formed JSON (or the sentinel empty-object).
-        if (val !== '' && val !== '{}') {
-          try {
-            const parsed = JSON.parse(val as string);
-            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-              return c.json({ error: `${key} must be a JSON object` }, 400);
-            }
-          } catch {
-            return c.json({ error: `${key} must be valid JSON` }, 400);
-          }
-        }
-      }
-      updates.push(`${key} = ?`);
-      values.push(val);
+  if ('name' in body) {
+    const name = body.name;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return c.json({ error: 'name cannot be empty' }, 400);
     }
+    const error = lengthError('name', name, 200);
+    if (error) return c.json({ error }, 400);
+    patch.name = name.trim();
+  }
+  if ('family_name' in body) {
+    const familyName = body.family_name;
+    if (typeof familyName === 'string') {
+      const error = lengthError('family_name', familyName, 200);
+      if (error) return c.json({ error }, 400);
+    }
+    patch.family_name = typeof familyName === 'string' ? familyName.trim() : familyName as null;
+  }
+  if ('export_settings' in body) {
+    let val = body.export_settings;
+    if (typeof val === 'object' && val !== null) val = JSON.stringify(val);
+    if (typeof val !== 'string') {
+      return c.json({ error: 'export_settings must be a string or object' }, 400);
+    }
+    if (val.length > 10_000) {
+      return c.json({ error: 'export_settings is too large' }, 400);
+    }
+    // Validate that it's well-formed JSON (or the sentinel empty-object).
+    if (val !== '' && val !== '{}') {
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          return c.json({ error: 'export_settings must be a JSON object' }, 400);
+        }
+      } catch {
+        return c.json({ error: 'export_settings must be valid JSON' }, 400);
+      }
+    }
+    patch.export_settings = val;
   }
 
-  if (updates.length === 0) {
+  const entries = Object.entries(patch);
+  if (entries.length === 0) {
     return c.json({ error: 'No valid fields to update' }, 400);
   }
 
   const now = new Date().toISOString();
-  updates.push('updated_at = ?');
-  values.push(now);
-  values.push(result.map.id);
-
   const [, stopsResult] = await c.env.DB.batch([
     c.env.DB.prepare(
-      `UPDATE maps SET ${updates.join(', ')} WHERE id = ?`,
-    ).bind(...values),
+      `UPDATE maps SET ${entries.map(([column]) => `${column} = ?, `).join('')}updated_at = ? WHERE id = ?`,
+    ).bind(...entries.map(([, value]) => value), now, result.map.id),
     c.env.DB.prepare(
       'SELECT * FROM stops WHERE map_id = ? ORDER BY position',
     ).bind(result.map.id),
   ]);
 
-  // Build updated map from in-memory values
-  const updatedMap: Record<string, unknown> = { ...result.map, updated_at: now };
-  for (const key of allowed) {
-    if (key in body) {
-      let val = body[key];
-      if (key === 'export_settings' && typeof val === 'object') val = JSON.stringify(val);
-      else if (typeof val === 'string' && (key === 'name' || key === 'family_name')) val = (val as string).trim();
-      updatedMap[key] = val;
-    }
-  }
-
-  return c.json({ ...updatedMap, stops: (stopsResult as D1Result<StopRow>).results.map(rowToStop) });
+  return c.json({
+    ...result.map,
+    ...patch,
+    updated_at: now,
+    stops: (stopsResult as D1Result<StopRow>).results.map(rowToStop),
+  });
 });
 
 // DELETE /:id — delete map (owner only)
@@ -275,11 +289,8 @@ maps.put('/:id', async (c) => {
 //   • stops    → CASCADE:  delete rows explicitly.
 //   • map_shares → CASCADE: delete rows explicitly.
 maps.delete('/:id', async (c) => {
-  const userId = c.get('user')!.id;
-  const result = await getMapWithRole(c.env.DB, c.req.param('id'), userId);
-
-  if (!result) return c.json({ error: 'Map not found' }, 404);
-  if (result.role !== 'owner') return c.json({ error: 'Forbidden' }, 403);
+  const result = await requireMapRole(c, 'owner');
+  if (!result) return c.res;
 
   // RESTRICT emulation: orders are financial records and must survive.
   const orderCount = await c.env.DB.prepare(
@@ -303,15 +314,11 @@ maps.delete('/:id', async (c) => {
 
 // PUT /:id/stops/reorder — MUST be before /:id/stops/:stopId
 maps.put('/:id/stops/reorder', async (c) => {
-  const result = await requireEditableMap(c);
+  const result = await requireMapRole(c, 'editor');
   if (!result) return c.res;
 
-  let body: { order?: string[] };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ order?: string[] }>(c);
+  if (!body) return c.res;
   if (!body.order || !Array.isArray(body.order)) {
     return c.json({ error: 'order must be an array of stop IDs' }, 400);
   }
@@ -339,12 +346,6 @@ maps.put('/:id/stops/reorder', async (c) => {
     c.env.DB.prepare('UPDATE stops SET position = ? WHERE id = ?').bind(i, sid),
   );
 
-  // Points at position 0 must never have a travel_mode (routes keep theirs)
-  stmts.push(
-    c.env.DB.prepare("UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0 AND type = 'point'")
-      .bind(result.map.id),
-  );
-
   // Include updated_at in the same atomic batch
   stmts.push(touchMapStmt(c.env.DB, result.map.id, new Date().toISOString()));
 
@@ -359,7 +360,7 @@ maps.put('/:id/stops/reorder', async (c) => {
 
 // POST /:id/stops — add stop (owner or editor)
 maps.post('/:id/stops', async (c) => {
-  const result = await requireEditableMap(c);
+  const result = await requireMapRole(c, 'editor');
   if (!result) return c.res;
 
   type StopBody = {
@@ -375,54 +376,36 @@ maps.post('/:id/stops', async (c) => {
     dest_lng?: number;
     dest_icon?: string;
   };
-  let body: StopBody;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<StopBody>(c);
+  if (!body) return c.res;
 
   const type = body.type ?? 'point';
-  if (!VALID_TYPES.has(type)) {
+  if (type !== 'point' && type !== 'route') {
     return c.json({ error: `Invalid type: ${type}` }, 400);
   }
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: 'name is required' }, 400);
   }
-  if (body.name.trim().length > 200) {
-    return c.json({ error: 'name must be 200 characters or fewer' }, 400);
-  }
-  if (body.label && typeof body.label === 'string' && body.label.trim().length > 500) {
-    return c.json({ error: 'label must be 500 characters or fewer' }, 400);
-  }
-  if (body.dest_name && typeof body.dest_name === 'string' && body.dest_name.trim().length > 200) {
-    return c.json({ error: 'dest_name must be 200 characters or fewer' }, 400);
-  }
+  const lengthErr = lengthError('name', body.name, 200)
+    ?? (typeof body.label === 'string' ? lengthError('label', body.label, 500) : null)
+    ?? (typeof body.dest_name === 'string' ? lengthError('dest_name', body.dest_name, 200) : null);
+  if (lengthErr) return c.json({ error: lengthErr }, 400);
   if (typeof body.lat !== 'number' || typeof body.lng !== 'number') {
     return c.json({ error: 'lat and lng are required numbers' }, 400);
   }
-  if (!isValidLat(body.lat)) {
-    return c.json({ error: 'lat must be a finite number between -90 and 90' }, 400);
-  }
-  if (!isValidLng(body.lng)) {
-    return c.json({ error: 'lng must be a finite number between -180 and 180' }, 400);
-  }
-  if (body.icon && !VALID_ICONS.has(body.icon)) {
-    return c.json({ error: `Invalid icon: ${body.icon}` }, 400);
-  }
-  if (body.dest_icon && !VALID_ICONS.has(body.dest_icon)) {
-    return c.json({ error: `Invalid dest_icon: ${body.dest_icon}` }, 400);
-  }
+  // Falsy icon, dest_icon and travel_mode count as absent.
+  const valueErr = latError('lat', body.lat)
+    ?? lngError('lng', body.lng)
+    ?? (body.icon ? enumError('icon', body.icon, VALID_ICONS) : null)
+    ?? (body.dest_icon ? enumError('dest_icon', body.dest_icon, VALID_ICONS) : null)
+    ?? (body.travel_mode && !isTravelMode(body.travel_mode) ? `Invalid travel_mode: ${body.travel_mode}` : null);
+  if (valueErr) return c.json({ error: valueErr }, 400);
 
-  // travel_mode validation: only allowed on routes
-  if (body.travel_mode && !VALID_TRAVEL_MODES.has(body.travel_mode)) {
-    return c.json({ error: `Invalid travel_mode: ${body.travel_mode}` }, 400);
-  }
+  // travel_mode and dest_* are only allowed on routes
   if (type === 'point' && body.travel_mode) {
     return c.json({ error: 'Points cannot have a travel_mode' }, 400);
   }
 
-  // dest_* validation: only for routes
   if (type === 'point' && (body.dest_lat != null || body.dest_lng != null || body.dest_name != null)) {
     return c.json({ error: 'Points cannot have destination fields' }, 400);
   }
@@ -432,12 +415,9 @@ maps.post('/:id/stops', async (c) => {
   if (body.dest_lng != null && typeof body.dest_lng !== 'number') {
     return c.json({ error: 'dest_lng must be a number' }, 400);
   }
-  if (typeof body.dest_lat === 'number' && !isValidLat(body.dest_lat)) {
-    return c.json({ error: 'dest_lat must be a finite number between -90 and 90' }, 400);
-  }
-  if (typeof body.dest_lng === 'number' && !isValidLng(body.dest_lng)) {
-    return c.json({ error: 'dest_lng must be a finite number between -180 and 180' }, 400);
-  }
+  const destErr = (typeof body.dest_lat === 'number' ? latError('dest_lat', body.dest_lat) : null)
+    ?? (typeof body.dest_lng === 'number' ? lngError('dest_lng', body.dest_lng) : null);
+  if (destErr) return c.json({ error: destErr }, 400);
 
   // Enforce per-map stop limit + auto-increment position in one batch
   const [countResult, maxPosResult] = await c.env.DB.batch([
@@ -450,51 +430,37 @@ maps.post('/:id/stops', async (c) => {
   }
   const position = ((maxPosResult as D1Result<{ max_pos: number }>).results[0]?.max_pos ?? -1) + 1;
 
-  const travelMode: TravelMode | null = type === 'route'
-    ? ((body.travel_mode ?? 'drive') as TravelMode)
-    : null;
-
-  const stopId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const stopName = body.name.trim();
-  const stopLabel = body.label?.trim() ?? null;
-  const stopIcon = body.icon ?? null;
-  const destName = body.dest_name?.trim() ?? null;
-  const destLat = body.dest_lat ?? null;
-  const destLng = body.dest_lng ?? null;
-  const destIcon = body.dest_icon ?? null;
+  const row: StopRow = {
+    id: crypto.randomUUID(),
+    map_id: result.map.id,
+    position,
+    type,
+    name: body.name.trim(),
+    label: body.label?.trim() ?? null,
+    latitude: body.lat,
+    longitude: body.lng,
+    icon: body.icon ?? null,
+    travel_mode: type === 'route' ? (isTravelMode(body.travel_mode) ? body.travel_mode : 'drive') : null,
+    dest_name: body.dest_name?.trim() ?? null,
+    dest_latitude: body.dest_lat ?? null,
+    dest_longitude: body.dest_lng ?? null,
+    dest_icon: body.dest_icon ?? null,
+    route_geometry: null,
+    created_at: now,
+  };
 
   await c.env.DB.batch([
-    c.env.DB.prepare(
-      'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(
-      stopId, result.map.id, position, type, stopName, stopLabel,
-      body.lat, body.lng, stopIcon, travelMode,
-      destName, destLat, destLng, destIcon, null, now,
-    ),
+    insertStopStmt(c.env.DB, row),
     touchMapStmt(c.env.DB, result.map.id, now),
   ]);
 
-  const baseStop = {
-    id: stopId, map_id: result.map.id, position,
-    name: stopName, label: stopLabel,
-    latitude: body.lat, longitude: body.lng,
-    icon: stopIcon, created_at: now,
-  };
-  const newStop: Stop = type === 'route'
-    ? {
-        ...baseStop, type: 'route',
-        travel_mode: travelMode,
-        dest_name: destName, dest_latitude: destLat, dest_longitude: destLng,
-        dest_icon: destIcon, route_geometry: null,
-      }
-    : { ...baseStop, type: 'point' };
-  return c.json(newStop, 201);
+  return c.json(rowToStop(row), 201);
 });
 
 // PUT /:id/stops/:stopId — update stop (owner or editor)
 maps.put('/:id/stops/:stopId', async (c) => {
-  const result = await requireEditableMap(c);
+  const result = await requireMapRole(c, 'editor');
   if (!result) return c.res;
 
   const stopId = c.req.param('stopId');
@@ -506,157 +472,130 @@ maps.put('/:id/stops/:stopId', async (c) => {
     return c.json({ error: 'Stop not found' }, 404);
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<Record<string, unknown>>(c);
+  if (!body) return c.res;
 
-  const updates: string[] = [];
-  const values: unknown[] = [];
+  // Column values as stored; null clears a nullable field.
+  // The SQL and the response (no re-SELECT) are both derived from this.
+  const patch: Partial<StopRow> = {};
 
   if ('name' in body) {
-    if (!body.name || typeof body.name !== 'string' || !(body.name as string).trim()) {
+    const name = body.name;
+    if (!name || typeof name !== 'string' || !name.trim()) {
       return c.json({ error: 'name cannot be empty' }, 400);
     }
-    if ((body.name as string).trim().length > 200) {
-      return c.json({ error: 'name must be 200 characters or fewer' }, 400);
-    }
-    updates.push('name = ?');
-    values.push((body.name as string).trim());
+    const error = lengthError('name', name, 200);
+    if (error) return c.json({ error }, 400);
+    patch.name = name.trim();
   }
   if ('label' in body) {
-    if (body.label !== null && typeof body.label !== 'string') {
+    const label = body.label;
+    if (label !== null && typeof label !== 'string') {
       return c.json({ error: 'label must be a string or null' }, 400);
     }
-    if (typeof body.label === 'string' && body.label.trim().length > 500) {
-      return c.json({ error: 'label must be 500 characters or fewer' }, 400);
+    if (typeof label === 'string') {
+      const error = lengthError('label', label, 500);
+      if (error) return c.json({ error }, 400);
     }
-    updates.push('label = ?');
-    values.push(typeof body.label === 'string' ? body.label.trim() : null);
+    patch.label = typeof label === 'string' ? label.trim() : null;
   }
   if ('lat' in body) {
     if (typeof body.lat !== 'number') return c.json({ error: 'lat must be a number' }, 400);
-    if (!isValidLat(body.lat as number)) return c.json({ error: 'lat must be a finite number between -90 and 90' }, 400);
-    updates.push('latitude = ?');
-    values.push(body.lat);
+    const error = latError('lat', body.lat);
+    if (error) return c.json({ error }, 400);
+    patch.latitude = body.lat;
   }
   if ('lng' in body) {
     if (typeof body.lng !== 'number') return c.json({ error: 'lng must be a number' }, 400);
-    if (!isValidLng(body.lng as number)) return c.json({ error: 'lng must be a finite number between -180 and 180' }, 400);
-    updates.push('longitude = ?');
-    values.push(body.lng);
+    const error = lngError('lng', body.lng);
+    if (error) return c.json({ error }, 400);
+    patch.longitude = body.lng;
   }
   if ('icon' in body) {
-    if (body.icon !== null && !VALID_ICONS.has(body.icon as string)) {
-      return c.json({ error: `Invalid icon: ${body.icon}` }, 400);
-    }
-    updates.push('icon = ?');
-    values.push(body.icon ?? null);
+    const error = body.icon === null ? null : enumError('icon', body.icon, VALID_ICONS);
+    if (error) return c.json({ error }, 400);
+    patch.icon = body.icon as string | null;
   }
   if ('dest_icon' in body) {
-    if (body.dest_icon !== null && !VALID_ICONS.has(body.dest_icon as string)) {
-      return c.json({ error: `Invalid dest_icon: ${body.dest_icon}` }, 400);
-    }
-    updates.push('dest_icon = ?');
-    values.push(body.dest_icon ?? null);
+    const error = body.dest_icon === null ? null : enumError('dest_icon', body.dest_icon, VALID_ICONS);
+    if (error) return c.json({ error }, 400);
+    patch.dest_icon = body.dest_icon as string | null;
   }
   if ('travel_mode' in body) {
-    if (body.travel_mode !== null && !VALID_TRAVEL_MODES.has(body.travel_mode as string)) {
-      return c.json({ error: `Invalid travel_mode: ${body.travel_mode}` }, 400);
+    const travelMode = body.travel_mode;
+    if (travelMode !== null && !isTravelMode(travelMode)) {
+      return c.json({ error: `Invalid travel_mode: ${travelMode}` }, 400);
     }
-    if (stop.type === 'point' && body.travel_mode !== null) {
+    if (stop.type === 'point' && travelMode !== null) {
       return c.json({ error: 'Points cannot have a travel_mode' }, 400);
     }
-    updates.push('travel_mode = ?');
-    values.push(body.travel_mode ?? null);
+    patch.travel_mode = travelMode;
   }
   if ('type' in body) {
     return c.json({ error: 'type cannot be changed after creation' }, 400);
   }
   if ('dest_name' in body) {
-    if (body.dest_name !== null && typeof body.dest_name !== 'string') {
+    const destName = body.dest_name;
+    if (destName !== null && typeof destName !== 'string') {
       return c.json({ error: 'dest_name must be a string or null' }, 400);
     }
-    if (typeof body.dest_name === 'string' && body.dest_name.trim().length > 200) {
-      return c.json({ error: 'dest_name must be 200 characters or fewer' }, 400);
+    if (typeof destName === 'string') {
+      const error = lengthError('dest_name', destName, 200);
+      if (error) return c.json({ error }, 400);
     }
-    updates.push('dest_name = ?');
-    values.push(typeof body.dest_name === 'string' ? body.dest_name.trim() : null);
+    patch.dest_name = typeof destName === 'string' ? destName.trim() : null;
   }
   if ('dest_lat' in body) {
-    if (body.dest_lat !== null && typeof body.dest_lat !== 'number') {
+    const destLat = body.dest_lat;
+    if (destLat !== null && typeof destLat !== 'number') {
       return c.json({ error: 'dest_lat must be a number' }, 400);
     }
-    if (typeof body.dest_lat === 'number' && !isValidLat(body.dest_lat)) {
-      return c.json({ error: 'dest_lat must be a finite number between -90 and 90' }, 400);
-    }
-    updates.push('dest_latitude = ?');
-    values.push(body.dest_lat ?? null);
+    const error = destLat === null ? null : latError('dest_lat', destLat);
+    if (error) return c.json({ error }, 400);
+    patch.dest_latitude = destLat;
   }
   if ('dest_lng' in body) {
-    if (body.dest_lng !== null && typeof body.dest_lng !== 'number') {
+    const destLng = body.dest_lng;
+    if (destLng !== null && typeof destLng !== 'number') {
       return c.json({ error: 'dest_lng must be a number' }, 400);
     }
-    if (typeof body.dest_lng === 'number' && !isValidLng(body.dest_lng)) {
-      return c.json({ error: 'dest_lng must be a finite number between -180 and 180' }, 400);
-    }
-    updates.push('dest_longitude = ?');
-    values.push(body.dest_lng ?? null);
+    const error = destLng === null ? null : lngError('dest_lng', destLng);
+    if (error) return c.json({ error }, 400);
+    patch.dest_longitude = destLng;
   }
   if ('route_geometry' in body) {
-    if (body.route_geometry !== null && typeof body.route_geometry !== 'string') {
+    const geometry = body.route_geometry;
+    if (geometry !== null && typeof geometry !== 'string') {
       return c.json({ error: 'route_geometry must be a string or null' }, 400);
     }
-    if (typeof body.route_geometry === 'string' && body.route_geometry.length > 1_048_576) {
+    if (typeof geometry === 'string' && geometry.length > 1_048_576) {
       return c.json({ error: 'route_geometry is too large' }, 400);
     }
-    updates.push('route_geometry = ?');
-    values.push(body.route_geometry ?? null);
+    patch.route_geometry = geometry;
+  } else if (['lat', 'lng', 'dest_lat', 'dest_lng', 'travel_mode'].some((f) => f in body)) {
+    // Coordinate or travel_mode changes invalidate cached geometry.
+    patch.route_geometry = null;
   }
 
-  // Auto-invalidate cached geometry when coordinates or travel_mode change
-  const geoFields = ['lat', 'lng', 'dest_lat', 'dest_lng', 'travel_mode'];
-  if (geoFields.some((f) => f in body) && !('route_geometry' in body)) {
-    updates.push('route_geometry = ?');
-    values.push(null);
-  }
-
-  if (updates.length === 0) {
+  const entries = Object.entries(patch);
+  if (entries.length === 0) {
     return c.json({ error: 'No valid fields to update' }, 400);
   }
 
-  values.push(stopId);
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `UPDATE stops SET ${updates.join(', ')} WHERE id = ?`,
-    ).bind(...values),
+      `UPDATE stops SET ${entries.map(([column]) => `${column} = ?`).join(', ')} WHERE id = ?`,
+    ).bind(...entries.map(([, value]) => value), stopId),
     touchMapStmt(c.env.DB, result.map.id, now),
   ]);
 
-  // Build response from in-memory values instead of re-SELECTing.
-  // Apply body updates to a raw-row copy, then lift to the Stop union.
-  const updatedRow: StopRow = { ...stop };
-  if ('name' in body) updatedRow.name = (body.name as string).trim();
-  if ('label' in body) updatedRow.label = typeof body.label === 'string' ? body.label.trim() : null;
-  if ('lat' in body) updatedRow.latitude = body.lat as number;
-  if ('lng' in body) updatedRow.longitude = body.lng as number;
-  if ('icon' in body) updatedRow.icon = (body.icon as string) ?? null;
-  if ('dest_icon' in body) updatedRow.dest_icon = (body.dest_icon as string) ?? null;
-  if ('travel_mode' in body) updatedRow.travel_mode = (body.travel_mode as string) ?? null;
-  if ('dest_name' in body) updatedRow.dest_name = typeof body.dest_name === 'string' ? body.dest_name.trim() : null;
-  if ('dest_lat' in body) updatedRow.dest_latitude = (body.dest_lat as number) ?? null;
-  if ('dest_lng' in body) updatedRow.dest_longitude = (body.dest_lng as number) ?? null;
-  if ('route_geometry' in body) updatedRow.route_geometry = (body.route_geometry as string) ?? null;
-  else if (geoFields.some((f) => f in body)) updatedRow.route_geometry = null;
-  return c.json(rowToStop(updatedRow));
+  return c.json(rowToStop({ ...stop, ...patch }));
 });
 
 // DELETE /:id/stops/:stopId — delete stop (owner or editor)
 maps.delete('/:id/stops/:stopId', async (c) => {
-  const result = await requireEditableMap(c);
+  const result = await requireMapRole(c, 'editor');
   if (!result) return c.res;
 
   const stopId = c.req.param('stopId');
@@ -668,16 +607,13 @@ maps.delete('/:id/stops/:stopId', async (c) => {
     return c.json({ error: 'Stop not found' }, 404);
   }
 
-  // Atomic: delete, re-compact positions, null point travel_mode at pos 0, touch map
+  // Atomic: delete, re-compact positions, touch map
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM stops WHERE id = ?').bind(stopId),
     c.env.DB.prepare(
       'UPDATE stops SET position = position - 1 WHERE map_id = ? AND position > ?',
     ).bind(result.map.id, stop.position),
-    c.env.DB.prepare(
-      "UPDATE stops SET travel_mode = NULL WHERE map_id = ? AND position = 0 AND type = 'point'",
-    ).bind(result.map.id),
     touchMapStmt(c.env.DB, result.map.id, now),
   ]);
 

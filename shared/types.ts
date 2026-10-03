@@ -3,6 +3,7 @@
  */
 
 import type { TravelMode } from './travel-modes.js';
+import type { PaperSize, Orientation } from './paper.js';
 
 export interface MapData {
   id: string;
@@ -37,10 +38,9 @@ export interface PointStop extends StopBase {
 }
 
 /**
- * A→B segment. `travel_mode` may be null only when this route sits at
- * position 0 of a map (the app nulls it there via DB triggers on reorder
- * + delete); otherwise it is one of the valid `TravelMode` values. The
- * `route_geometry` field caches the ORS/great-circle polyline as GeoJSON.
+ * A→B segment. New routes default `travel_mode` to 'drive'; it is null only
+ * if a client explicitly clears it. `route_geometry` caches the
+ * ORS/great-circle polyline as GeoJSON.
  */
 export interface RouteStop extends StopBase {
   type: 'route';
@@ -70,7 +70,7 @@ export interface StopRow {
   latitude: number;
   longitude: number;
   icon: string | null;
-  travel_mode: string | null;
+  travel_mode: TravelMode | null;
   dest_name: string | null;
   dest_latitude: number | null;
   dest_longitude: number | null;
@@ -96,7 +96,7 @@ export function rowToStop(row: StopRow): Stop {
     return {
       ...base,
       type: 'route',
-      travel_mode: row.travel_mode as TravelMode | null,
+      travel_mode: row.travel_mode,
       dest_name: row.dest_name,
       dest_latitude: row.dest_latitude,
       dest_longitude: row.dest_longitude,
@@ -114,8 +114,8 @@ export interface ShareData {
   user_email: string | null;
   role: 'viewer' | 'editor';
   claim_token: string | null;
-  /** ISO timestamp. NULL on legacy rows (pre-migration 0011). Omitted in API responses once claimed. */
-  claim_token_expires_at?: string | null;
+  /** ISO timestamp, or null when the invite has no expiry. Null in API responses once claimed. */
+  claim_token_expires_at: string | null;
   claimed: boolean;
   created_at: string;
 }
@@ -126,11 +126,16 @@ export interface ShareRow {
   user_id: string | null;
   role: 'viewer' | 'editor';
   claim_token: string | null;
-  claim_token_expires_at?: string | null;
+  claim_token_expires_at: string | null;
   created_at: string;
 }
 
 export type MapRole = 'owner' | 'editor' | 'viewer' | 'public';
+
+/** True for roles allowed to modify a map and order prints of it. */
+export function canEditRole(role: MapRole): boolean {
+  return role === 'owner' || role === 'editor';
+}
 
 export interface SessionUser {
   id: string;
@@ -142,14 +147,12 @@ export interface SessionUser {
 /**
  * Persisted export/print preferences + saved map viewport per map.
  * Serialized as JSON into maps.export_settings. All fields optional so
- * partial objects from older writes are safe to parse. Kept structural
- * (paperSize/orientation are plain strings) so this file doesn't need
- * to import frontend-only union types.
+ * partial objects from older writes are safe to parse.
  */
 export interface ExportSettings {
   format?: 'pdf' | 'png' | 'jpeg';
-  paperSize?: string;
-  orientation?: 'landscape' | 'portrait';
+  paperSize?: PaperSize;
+  orientation?: Orientation;
   center?: [number, number];
   zoom?: number;
   bearing?: number;
@@ -207,6 +210,23 @@ export function parseShippingAddress(raw: string | null | undefined): ShippingAd
   } catch {
     return null;
   }
+}
+
+/** Request body for POST /api/checkout. */
+export interface CheckoutBody {
+  map_id: string;
+  product_sku: string;
+  size: string;
+  shipping_address: ShippingAddress;
+  image_key: string;
+  shipping_cost_cents?: number;
+}
+
+/** Request body for POST /api/print-quote. */
+export interface PrintQuoteBody {
+  product_sku: string;
+  size: string;
+  country: string;
 }
 
 export type OrderStatus = 'pending_payment' | 'paid' | 'pending_render' | 'submitted' | 'in_production' | 'shipped' | 'completed' | 'cancelled' | 'failed';

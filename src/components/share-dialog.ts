@@ -13,6 +13,8 @@ import {
   updateVisibility,
 } from '../services/maps.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { roleBadge } from './ui.js';
+import { fieldChecked, fieldValue } from '../utils/form.js';
 
 @customElement('share-dialog')
 export class ShareDialog extends LitElement {
@@ -245,7 +247,7 @@ export class ShareDialog extends LitElement {
             <div class="pending-label">Pending invite</div>
             ${claimUrl ? html`<div class="collaborator-email claim-url">${claimUrl}</div>` : nothing}
           </div>
-          <wa-badge variant=${share.role === 'editor' ? 'brand' : 'neutral'}>${share.role}</wa-badge>
+          ${roleBadge(share.role)}
           ${claimUrl ? html`
             <wa-copy-button
               value=${claimUrl}
@@ -275,7 +277,7 @@ export class ShareDialog extends LitElement {
           label="Role"
           size="small"
           .value=${share.role}
-          @change=${(e: Event) => this._onRoleChange(share.id, (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor')}
+          @change=${(e: Event) => this._onRoleChange(share.id, fieldValue(e) as 'viewer' | 'editor')}
           class="role-select"
         >
           <wa-option value="viewer">Viewer</wa-option>
@@ -290,7 +292,7 @@ export class ShareDialog extends LitElement {
   }
 
   private async _onVisibilityToggle(e: Event) {
-    const isPublic = (e.target as HTMLElement & { checked: boolean }).checked;
+    const isPublic = fieldChecked(e);
     const newVisibility = isPublic ? 'public' : 'private';
     try {
       await updateVisibility(this.mapId, newVisibility);
@@ -306,7 +308,7 @@ export class ShareDialog extends LitElement {
   }
 
   private _onLinkRoleChange(e: Event) {
-    this._linkRole = (e.target as HTMLElement & { value: string }).value as 'viewer' | 'editor';
+    this._linkRole = fieldValue(e) as 'viewer' | 'editor';
   }
 
   private async _onGenerateLink() {

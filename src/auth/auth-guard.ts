@@ -7,12 +7,10 @@
  */
 
 import { isAuthenticated, initAuth } from './auth-state.js';
+import { signInUrl } from '../nav.js';
 import type { RouteParams } from '../router.js';
 
 export async function requireAuth(_params: RouteParams): Promise<string | void> {
   await initAuth();
-  if (!isAuthenticated()) {
-    const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-    return `/sign-in?returnTo=${returnTo}`;
-  }
+  if (!isAuthenticated()) return signInUrl();
 }

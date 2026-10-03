@@ -9,11 +9,13 @@
  */
 
 import { Hono } from 'hono';
-import type { AppEnv } from '../types.js';
+import type { AppEnv, Env } from '../types.js';
 import { getStripe } from '../lib/stripe.js';
 import { notifyDiscord } from '../lib/discord.js';
-import { createOrder as createProdigiOrder, isSandbox } from '../lib/prodigi.js';
-import { parseShippingAddress } from '../../../shared/types.js';
+import { secretsEqual } from '../lib/hash.js';
+import { readJsonBody } from '../lib/json-body.js';
+import { submitOrderToProdigi } from '../lib/orders.js';
+import { parseShippingAddress, type ShippingAddress } from '../../../shared/types.js';
 
 const webhooks = new Hono<AppEnv>();
 
@@ -70,7 +72,8 @@ webhooks.post('/stripe', async (c) => {
 
     // Atomically claim this order for processing by flipping out of pending_payment.
     // If two webhook deliveries race, only one UPDATE will match and proceed.
-    const provisionalStatus = order.image_url ? 'paid' : 'pending_render';
+    const address = parseShippingAddress(order.shipping_address);
+    const provisionalStatus = order.image_url && address ? 'paid' : 'pending_render';
     const claim = await c.env.DB.prepare(
       'UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status = ?',
     ).bind(provisionalStatus, now, orderId, 'pending_payment').run();
@@ -82,7 +85,7 @@ webhooks.post('/stripe', async (c) => {
     // Return 200 ASAP — slow external calls (Prodigi + Discord) run in the
     // background so Stripe doesn't time out and retry.
     c.executionCtx.waitUntil(
-      finalizeOrderAfterPayment(c.env, order).catch((err) => {
+      finalizeOrderAfterPayment(c.env, order, address).catch((err) => {
         console.error('Post-payment finalization failed:', err);
       }),
     );
@@ -97,49 +100,32 @@ webhooks.post('/stripe', async (c) => {
  * webhook response is not blocked on external APIs.
  */
 async function finalizeOrderAfterPayment(
-  env: import('../types.js').Env,
+  env: Env,
   order: { id: string; image_url: string | null; product_sku: string; shipping_address: string | null },
+  address: ShippingAddress | null,
 ): Promise<void> {
   const now = new Date().toISOString();
-  let finalStatus: 'submitted' | 'pending_render' = order.image_url ? 'submitted' : 'pending_render';
+  let finalStatus: 'submitted' | 'pending_render' = 'pending_render';
 
-  const address = parseShippingAddress(order.shipping_address);
   if (order.image_url && address) {
     try {
-      const baseUrl = env.BETTER_AUTH_URL;
-      const imageUrl = order.image_url.startsWith('/')
-        ? `${baseUrl}${order.image_url}`
-        : order.image_url;
-
-      const prodigiResult = await createProdigiOrder(env.PRODIGI_API_KEY, {
-        orderId: order.id,
-        sku: order.product_sku,
-        imageUrl,
+      await submitOrderToProdigi(env, {
+        id: order.id,
+        product_sku: order.product_sku,
+        image_url: order.image_url,
         shippingAddress: address,
-      }, isSandbox(env.PRODIGI_SANDBOX));
-
-      try {
-        await env.DB.prepare(
-          'UPDATE orders SET status = ?, prodigi_order_id = ?, updated_at = ? WHERE id = ?',
-        ).bind('submitted', prodigiResult.prodigiOrderId, now, order.id).run();
-      } catch (dbErr: unknown) {
-        if (dbErr instanceof Error && dbErr.message.includes('UNIQUE constraint')) return;
-        throw dbErr;
-      }
+      }, now);
+      finalStatus = 'submitted';
     } catch (err) {
+      // The claim wrote 'paid'; demote so an admin can resubmit.
       console.error('Prodigi auto-submit failed:', err);
-      finalStatus = 'pending_render';
       await env.DB.prepare(
         'UPDATE orders SET status = ?, updated_at = ? WHERE id = ?',
       ).bind('pending_render', now, order.id).run();
     }
   } else if (order.image_url && order.shipping_address) {
-    // Malformed JSON — log and leave at pending_render so an admin can review
+    // The claim already left the order at pending_render for admin review.
     console.error(`Order ${order.id} has unparseable shipping_address JSON`);
-    finalStatus = 'pending_render';
-    await env.DB.prepare(
-      'UPDATE orders SET status = ?, updated_at = ? WHERE id = ?',
-    ).bind('pending_render', now, order.id).run();
   }
 
   const notified = await notifyDiscord(
@@ -164,15 +150,6 @@ const PRODIGI_STATUS_MAP: Record<string, string> = {
   Cancelled: 'cancelled',
 };
 
-/** Constant-time comparison of two strings. */
-async function secretsEqual(a: string, b: string): Promise<boolean> {
-  const enc = new TextEncoder();
-  const aBytes = enc.encode(a);
-  const bBytes = enc.encode(b);
-  if (aBytes.byteLength !== bBytes.byteLength) return false;
-  return crypto.subtle.timingSafeEqual(aBytes, bBytes);
-}
-
 webhooks.post('/prodigi', async (c) => {
   // Secret comes from a header rather than the URL so it doesn't leak via
   // access logs, proxy logs, or browser history.
@@ -182,7 +159,7 @@ webhooks.post('/prodigi', async (c) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
-  let body: {
+  const body = await readJsonBody<{
     specversion?: string;
     type?: string;
     data?: {
@@ -195,12 +172,8 @@ webhooks.post('/prodigi', async (c) => {
         }>;
       };
     };
-  };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  }>(c);
+  if (!body) return c.res;
 
   const prodigiOrderId = body.data?.order?.id;
   const prodigiStatus = body.data?.order?.status?.stage;

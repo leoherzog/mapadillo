@@ -7,13 +7,12 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Stop } from '../services/maps.js';
-import type { GeocodingResult } from '../services/geocoding.js';
-import './icon-picker.js';
-import './location-search.js';
+import { DEFAULT_ICON } from '../../shared/icons.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
-import { extractExistingLocations } from '../utils/existing-locations.js';
+import { fieldValue } from '../utils/form.js';
+import { renderEndpointEditor, type LocationSelectedEvent } from './endpoint-editor.js';
 
 @customElement('point-card')
 export class PointCard extends LitElement {
@@ -38,11 +37,6 @@ export class PointCard extends LitElement {
       border-left: var(--wa-border-width-l) solid var(--wa-color-brand-50);
     }
 
-    .name-input {
-      flex: 1;
-      min-width: 0;
-    }
-
     .point-icon {
       color: var(--wa-color-brand-60);
     }
@@ -55,10 +49,6 @@ export class PointCard extends LitElement {
     .card-header {
       margin-bottom: var(--wa-space-3xs);
     }
-
-    icon-picker {
-      --wa-font-size-l: var(--wa-font-size-m);
-    }
   `];
 
   render() {
@@ -66,7 +56,7 @@ export class PointCard extends LitElement {
       return html`
         <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'}>
           <div class="wa-cluster wa-align-items-center wa-gap-xs">
-            <wa-icon class="point-icon" name=${this.item.icon ?? 'location-dot'}></wa-icon>
+            <wa-icon class="point-icon" name=${this.item.icon ?? DEFAULT_ICON}></wa-icon>
             <span class="name-input point-name">${this.item.name}</span>
           </div>
         </wa-card>
@@ -84,29 +74,19 @@ export class PointCard extends LitElement {
           <wa-tooltip for="delete-point">Delete point</wa-tooltip>
         </div>
 
-        ${this._hasLocation && !this._editingLocation ? html`
-          <div class="wa-cluster wa-align-items-center wa-gap-xs">
-            <icon-picker
-              .value=${this.item.icon ?? 'circle-plus'}
-              @icon-change=${this._onIconChange}
-            ></icon-picker>
-            <wa-input
-              class="name-input"
-              size="small"
-              .value=${this.item.name}
-              placeholder="Point name"
-              @input=${this._onNameInput}
-            >
-              <wa-icon class="change-btn" name="pencil" slot="end" label="Change location" @click=${() => { this._editingLocation = true; }}></wa-icon>
-            </wa-input>
-          </div>
-        ` : html`
-          <location-search
-            placeholder="Search for a place to mark..."
-            .existingLocations=${extractExistingLocations(this.allItems)}
-            @location-selected=${this._onLocationSelected}
-          ></location-search>
-        `}
+        ${renderEndpointEditor({
+          placed: this._hasLocation && !this._editingLocation,
+          icon: this.item.icon,
+          name: this.item.name,
+          namePlaceholder: 'Point name',
+          changeLabel: 'Change location',
+          searchPlaceholder: 'Search for a place to mark...',
+          allItems: this.allItems,
+          onIconChange: this._onIconChange,
+          onNameInput: this._onNameInput,
+          onChangeRequest: () => { this._editingLocation = true; },
+          onLocationSelected: this._onLocationSelected,
+        })}
       </wa-card>
     `;
   }
@@ -122,14 +102,14 @@ export class PointCard extends LitElement {
   }
 
   private _onNameInput(e: Event) {
-    this._fire('name', (e.target as HTMLInputElement).value);
+    this._fire('name', fieldValue(e));
   }
 
-  private _onIconChange(e: CustomEvent) {
+  private _onIconChange(e: CustomEvent<string>) {
     this._fire('icon', e.detail);
   }
 
-  private _onLocationSelected(e: CustomEvent<GeocodingResult & { icon?: string | null }>) {
+  private _onLocationSelected(e: LocationSelectedEvent) {
     e.stopPropagation();
     const { longitude, latitude, name, icon } = e.detail;
     this._editingLocation = false;

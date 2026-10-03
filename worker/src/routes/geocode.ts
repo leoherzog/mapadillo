@@ -9,6 +9,7 @@
 import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
 import { sha256Hex } from '../lib/hash.js';
+import { proxyWithCache } from '../lib/cached-proxy.js';
 
 export async function geocodeHandler(c: Context<AppEnv>) {
   const q = c.req.query('q')?.trim();
@@ -43,20 +44,10 @@ export async function geocodeHandler(c: Context<AppEnv>) {
   const hasBias = !Number.isNaN(biasLat) && !Number.isNaN(biasLon)
     && Math.abs(biasLat) <= 90 && Math.abs(biasLon) <= 180;
 
-  // KV cache lookup — include bias (rounded to ~11 km) to limit cache cardinality
+  // Bias is rounded to ~11 km in the cache key to limit cache cardinality.
   const biasKey = hasBias ? `:${biasLat.toFixed(1)}:${biasLon.toFixed(1)}` : '';
   const cacheKey = `geocode:${await sha256Hex(`${q.toLowerCase()}:${lang}:${limit}:${layer}${biasKey}`)}`;
-  const cached = await c.env.API_CACHE.get(cacheKey);
-  if (cached) {
-    try {
-      return c.json(JSON.parse(cached));
-    } catch {
-      // Corrupted cache entry — delete and fall through to re-fetch
-      try { await c.env.API_CACHE.delete(cacheKey); } catch { /* best-effort */ }
-    }
-  }
 
-  // Proxy to Photon
   const url = new URL('https://photon.komoot.io/api');
   url.searchParams.set('q', q);
   url.searchParams.set('lang', lang);
@@ -71,40 +62,10 @@ export async function geocodeHandler(c: Context<AppEnv>) {
     }
   }
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(url.toString());
-  } catch {
-    return c.json({ error: 'Geocoding service unavailable' }, 502);
-  }
-
-  if (!upstream.ok) {
-    return c.json({ error: 'Geocoding service unavailable' }, 502);
-  }
-
-  const contentLength = upstream.headers.get('Content-Length');
-  if (contentLength !== null && parseInt(contentLength, 10) > 1_048_576) {
-    return c.json({ error: 'Upstream response too large' }, 502);
-  }
-
-  const body = await upstream.text();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return c.json({ error: 'Geocoding service returned invalid response' }, 502);
-  }
-
-  // Cache for 7 days (604 800 seconds). KV write is best-effort — a
-  // failure must never prevent serving the response.
-  try {
-    await c.env.API_CACHE.put(cacheKey, body, { expirationTtl: 604_800 });
-  } catch {
-    // KV write can fail in test environments (Miniflare isolated storage).
-    // Non-critical: the next identical request will simply re-fetch.
-  }
-
-  return c.json(parsed);
+  return proxyWithCache(c, {
+    cacheKey,
+    fetchUpstream: () => fetch(url.toString()),
+    unavailableError: 'Geocoding service unavailable',
+    invalidResponseError: 'Geocoding service returned invalid response',
+  });
 }
-

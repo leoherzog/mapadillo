@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { applyTestSchema, request, createTestSession } from '../test-helpers.js';
+import { applyTestSchema, request, createTestSession, grantShare } from '../test-helpers.js';
 // env is used directly in test bodies for insertOrder and other DB operations
 
 beforeAll(applyTestSchema);
@@ -75,14 +75,10 @@ describe('Image upload & serving', () => {
   });
 
   it('returns 403 for viewer uploading image', async () => {
-    const { cookie: ownerCookie, userId: ownerId } = await createTestSession();
+    const { userId: ownerId } = await createTestSession();
     const { cookie: viewerCookie, userId: viewerId } = await createTestSession();
     const mapId = await createTestMap(ownerId);
-
-    // Share as viewer
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, \'viewer\')',
-    ).bind(crypto.randomUUID(), mapId, viewerId).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const formData = new FormData();
     formData.append('image', new File(['x'], 'test.png', { type: 'image/png' }));
@@ -150,10 +146,7 @@ describe('Image upload & serving', () => {
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createTestMap(ownerId);
 
-    // Share as editor
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, \'editor\')',
-    ).bind(crypto.randomUUID(), mapId, editorId).run();
+    await grantShare(mapId, editorId, 'editor');
 
     const formData = new FormData();
     formData.append('image', new File(['PNG data'], 'map.png', { type: 'image/png' }));
@@ -227,10 +220,7 @@ describe('Checkout', () => {
     const { userId: ownerId } = await createTestSession();
     const { cookie: viewerCookie, userId: viewerId } = await createTestSession();
     const mapId = await createTestMap(ownerId);
-
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, \'viewer\')',
-    ).bind(crypto.randomUUID(), mapId, viewerId).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await request('/api/checkout', {
       method: 'POST',

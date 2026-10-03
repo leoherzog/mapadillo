@@ -9,12 +9,14 @@ import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 import { contentPageStyles } from '../styles/content-page.js';
-import { STATUS_VARIANTS } from '../../shared/products.js';
-import type { Order } from '../../shared/types.js';
+import { ORDER_STATUSES } from '../../shared/products.js';
+import { errorCallout, orderStatusBadge } from '../components/ui.js';
+import type { AdminOrder } from '../services/orders.js';
+import { fieldValue } from '../utils/form.js';
 
-interface AdminOrder extends Order {
-  map_name: string;
-  user_email: string;
+/** Title-case label for an order status, e.g. 'in_production' -> 'In Production'. */
+function statusLabel(status: string): string {
+  return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 @customElement('admin-page')
@@ -69,7 +71,6 @@ export class AdminPage extends LitElement {
     const stored = sessionStorage.getItem('admin_secret');
     if (stored) {
       this._secret = stored;
-      this._authenticated = true;
       this._fetchOrders();
     }
   }
@@ -82,11 +83,10 @@ export class AdminPage extends LitElement {
     if (!this._secret.trim()) return;
     this._error = '';
     sessionStorage.setItem('admin_secret', this._secret);
-    this._authenticated = true;
     await this._fetchOrders();
-    // If fetchOrders got a 401, _authenticated is already reset
   }
 
+  /** Loads orders; sets `_authenticated` from whether the stored secret was accepted. */
   private async _fetchOrders() {
     this._loading = true;
     this._error = '';
@@ -96,11 +96,12 @@ export class AdminPage extends LitElement {
       if (res.status === 401) {
         sessionStorage.removeItem('admin_secret');
         this._authenticated = false;
-        this._error = 'Session expired. Please re-authenticate.';
+        this._error = 'Invalid admin secret.';
         return;
       }
       if (!res.ok) throw new Error('Failed to fetch orders');
       this._orders = await res.json() as AdminOrder[];
+      this._authenticated = true;
     } catch {
       this._error = 'Failed to load orders.';
     } finally {
@@ -137,10 +138,10 @@ export class AdminPage extends LitElement {
             label="Admin Secret"
             type="password"
             .value=${this._secret}
-            @input=${(e: Event) => { this._secret = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._secret = fieldValue(e); }}
             @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this._authenticate(); }}
           ></wa-input>
-          ${this._error ? html`<wa-callout variant="danger"><wa-icon slot="icon" name="circle-xmark"></wa-icon>${this._error}</wa-callout>` : nothing}
+          ${this._error ? errorCallout(this._error) : nothing}
           <wa-button variant="brand" ?loading=${this._loading} @click=${this._authenticate}>Sign In</wa-button>
         </div>
       `;
@@ -155,24 +156,17 @@ export class AdminPage extends LitElement {
           placeholder="All statuses"
           with-clear
           .value=${this._statusFilter}
-          @change=${(e: Event) => { this._statusFilter = (e.target as HTMLElement & { value: string }).value; this._fetchOrders(); }}
+          @change=${(e: Event) => { this._statusFilter = fieldValue(e); this._fetchOrders(); }}
           @wa-clear=${() => { this._statusFilter = ''; this._fetchOrders(); }}
         >
-          <wa-option value="pending_payment">Pending Payment</wa-option>
-          <wa-option value="paid">Paid</wa-option>
-          <wa-option value="pending_render">Pending Render</wa-option>
-          <wa-option value="submitted">Submitted</wa-option>
-          <wa-option value="in_production">In Production</wa-option>
-          <wa-option value="shipped">Shipped</wa-option>
-          <wa-option value="completed">Completed</wa-option>
-          <wa-option value="cancelled">Cancelled</wa-option>
+          ${ORDER_STATUSES.map((s) => html`<wa-option value=${s}>${statusLabel(s)}</wa-option>`)}
         </wa-select>
         <wa-button size="small" variant="neutral" appearance="outlined" ?loading=${this._loading} @click=${() => this._fetchOrders()}>
           <wa-icon slot="start" name="arrows-rotate"></wa-icon> Refresh
         </wa-button>
       </div>
 
-      ${this._error ? html`<wa-callout variant="danger"><wa-icon slot="icon" name="circle-xmark"></wa-icon>${this._error}</wa-callout>` : nothing}
+      ${this._error ? errorCallout(this._error) : nothing}
 
       ${this._loading && this._orders.length === 0
         ? html`<div class="wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
@@ -201,7 +195,7 @@ export class AdminPage extends LitElement {
                       <td>${o.product_type}</td>
                       <td>${o.poster_size}</td>
                       <td>
-                        <wa-badge variant=${STATUS_VARIANTS[o.status] ?? 'neutral'}>${o.status.replace(/_/g, ' ')}</wa-badge>
+                        ${orderStatusBadge(o.status)}
                       </td>
                       <td><wa-relative-time .date=${new Date(o.created_at)}></wa-relative-time></td>
                       <td>

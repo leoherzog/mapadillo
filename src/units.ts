@@ -1,17 +1,15 @@
 /**
  * Global distance-units manager.
  *
- * - Syncs to server when authenticated (per-account preference)
- * - Falls back to localStorage / browser locale for anonymous users
- * - Dispatches 'units-change' on document for reactive updates
+ * Persists to localStorage with a locale-based default for anonymous users, and
+ * syncs with the per-account server preference while signed in.
  */
 
 import { apiGet, apiPut } from './services/api-client.js';
 import { isAuthenticated, onAuthChange } from './auth/auth-state.js';
+import { createPreference } from './utils/preference.js';
 import type { Units } from '../shared/units.js';
 export type { Units } from '../shared/units.js';
-
-const STORAGE_KEY = 'mapadillo-units';
 
 /** Detect sensible default from browser locale via Intl API. */
 function detectDefault(): Units {
@@ -19,21 +17,20 @@ function detectDefault(): Units {
   return region === 'US' || region === 'GB' ? 'mi' : 'km';
 }
 
-/** Read stored preference, falling back to locale-based default. */
-export function getUnits(): Units {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'km' || stored === 'mi') return stored;
-  return detectDefault();
-}
+const preference = createPreference<Units>('mapadillo-units', ['km', 'mi'], detectDefault);
 
-function _apply(units: Units): void {
-  localStorage.setItem(STORAGE_KEY, units);
-  document.dispatchEvent(new CustomEvent('units-change', { detail: { units } }));
-}
+/** Read stored preference, falling back to locale-based default. */
+export const getUnits = preference.get;
+
+/**
+ * Call `fn` whenever the units change.
+ * @returns an unsubscribe function
+ */
+export const onUnitsChange = preference.subscribe;
 
 /** Set units and notify listeners. Saves to server if authenticated. */
 export function setUnits(units: Units): void {
-  _apply(units);
+  preference.set(units);
   if (isAuthenticated()) {
     apiPut('/api/user/preferences', { units }).catch(() => {});
   }
@@ -44,22 +41,19 @@ export function toggleUnits(): void {
   setUnits(getUnits() === 'km' ? 'mi' : 'km');
 }
 
-/**
- * Fetch units from server and sync to localStorage.
- * Called automatically when auth state changes.
- */
+/** Fetch units from the server and store them locally without echoing a PUT. */
 async function _syncFromServer(): Promise<void> {
   try {
     const { units } = await apiGet<{ units: Units }>('/api/user/preferences');
     if (units === 'km' || units === 'mi') {
-      _apply(units);
+      preference.set(units);
     }
   } catch {
     // Offline or not authenticated — keep localStorage value
   }
 }
 
-/** Initialize: sync from server on sign-in, clear on sign-out. */
+/** Initialize: sync from server whenever the user signs in. */
 export function initUnits(): void {
   onAuthChange(() => {
     if (isAuthenticated()) {

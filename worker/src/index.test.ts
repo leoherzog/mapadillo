@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
-import { applyTestSchema, request, createTestSession, jsonRequest } from './test-helpers.js';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import {
+  applyTestSchema, request, createTestSession, jsonRequest, createMap, createStop, grantShare,
+} from './test-helpers.js';
 import { getClientIp } from './index.js';
 import type { Context } from 'hono';
 import type { AppEnv } from './types.js';
@@ -14,22 +16,24 @@ function ctxWithHeaders(headers: Record<string, string>): Context<AppEnv> {
 }
 
 beforeAll(applyTestSchema);
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
-/** Create a map via the API and return its id */
-async function createMap(cookie: string, name = 'Test Map'): Promise<string> {
-  const res = await jsonRequest('/api/maps', 'POST', { name }, cookie);
-  const body = (await res.json()) as { id: string };
-  return body.id;
+const FEATURE_COLLECTION = {
+  type: 'FeatureCollection',
+  features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [13.4, 52.5] }, properties: { name: 'Berlin' } }],
+};
+
+/** Stub the upstream fetch with a canned FeatureCollection. */
+function stubUpstreamFetch() {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(FEATURE_COLLECTION));
 }
 
-/** Create a stop via the API and return its id */
-async function createStop(
-  cookie: string, mapId: string,
-  data: { name: string; lat: number; lng: number; travel_mode?: string; icon?: string; type?: string },
-): Promise<string> {
-  const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', data, cookie);
-  const body = (await res.json()) as { id: string };
-  return body.id;
+/** @returns every API_CACHE value whose key starts with `prefix` */
+async function cachedValues(prefix: string): Promise<string[]> {
+  const { keys } = await env.API_CACHE.list({ prefix });
+  return Promise.all(keys.map(async (k: { name: string }) => (await env.API_CACHE.get(k.name)) ?? ''));
 }
 
 // ── Health check ──────────────────────────────────────────────────────────────
@@ -45,14 +49,14 @@ describe('GET /api/health', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
   });
 
-  it('returns status ok with milestone 9', async () => {
+  it('returns status ok', async () => {
     const res = await request('/api/health');
     const body = await res.json();
-    expect(body).toEqual({ status: 'ok', milestone: 9 });
+    expect(body).toEqual({ status: 'ok' });
   });
 });
 
-// ── Auth routes (Milestone 2 — Better Auth handler) ──────────────────────────
+// ── Auth routes (Better Auth handler) ───────────────────────────────────────
 
 describe('Auth routes - Better Auth handler', () => {
   it('GET /api/auth/ok returns 200 (Better Auth health)', async () => {
@@ -86,7 +90,7 @@ describe('Map routes - require auth', () => {
   });
 
   it('GET /api/maps/:id returns 404 without session (optional auth — public maps viewable unauthenticated)', async () => {
-    // M6: GET /:id uses optional auth so unauthenticated users can view public maps.
+    // GET /:id uses optional auth so unauthenticated users can view public maps.
     // A nonexistent / private map returns 404, not 401.
     const res = await request('/api/maps/abc-123');
     expect(res.status).toBe(404);
@@ -234,7 +238,7 @@ describe('Map CRUD', () => {
 
 describe('Map ownership', () => {
   it('GET /api/maps/:id returns 404 for non-owner accessing private map (no info leak)', async () => {
-    // M6: Private maps return 404 (not 403) to unauthorized users — prevents map ID enumeration.
+    // Private maps return 404 (not 403) to unauthorized users — prevents map ID enumeration.
     const { cookie: cookie1 } = await createTestSession();
     const { cookie: cookie2 } = await createTestSession();
     const mapId = await createMap(cookie1, 'Owner Map');
@@ -265,16 +269,10 @@ describe('Map ownership', () => {
 
   it('PUT /api/maps/:id returns 403 for editor trying to delete (owner-only)', async () => {
     // An editor can see the map but cannot delete it — 403.
-    const { cookie: ownerCookie, userId: ownerId } = await createTestSession();
+    const { cookie: ownerCookie } = await createTestSession();
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createMap(ownerCookie, 'Shared Map');
-
-    // Give editor access via map_shares
-    const shareId = crypto.randomUUID();
-    const token = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(shareId, mapId, editorId, 'editor', token).run();
+    await grantShare(mapId, editorId, 'editor');
 
     // Editor can edit — 200
     const putRes = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { name: 'Editor Edit' }, editorCookie);
@@ -283,7 +281,6 @@ describe('Map ownership', () => {
     // Editor cannot delete — 403
     const delRes = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: editorCookie } });
     expect(delRes.status).toBe(403);
-    void ownerId; // used in setup
   });
 
   it('GET /api/maps only lists own maps and shared maps', async () => {
@@ -580,7 +577,7 @@ describe('Route travel_mode at position 0', () => {
   });
 });
 
-// ── Geocoding proxy (Milestone 3) ────────────────────────────────────────────
+// ── Geocoding proxy ─────────────────────────────────────────────────────────
 
 describe('Geocoding - /api/geocode', () => {
   it('returns 401 without session', async () => {
@@ -611,24 +608,27 @@ describe('Geocoding - /api/geocode', () => {
       expect(res.status).toBe(400);
     });
 
-    it('proxies to Photon and returns GeoJSON for valid query', { timeout: 15_000 }, async () => {
-      const res = await request('/api/geocode?q=Berlin&lang=en&limit=3', {
-        headers: { cookie },
-      });
-      // In test environments outbound fetch or KV may fail — skip gracefully
-      if (res.status !== 200) {
-        expect([502, 500]).toContain(res.status);
-        return;
-      }
+    it('proxies a valid query to Photon, caches the result and serves repeats from cache', async () => {
+      const fetchSpy = stubUpstreamFetch();
+      // A unique query keeps the cache key fresh across watch-mode reruns.
+      const path = `/api/geocode?q=${encodeURIComponent(`Berlin ${crypto.randomUUID()}`)}&lang=en&limit=3`;
 
-      const body = (await res.json()) as { type: string; features: unknown[] };
-      expect(body.type).toBe('FeatureCollection');
-      expect(Array.isArray(body.features)).toBe(true);
+      const res = await request(path, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(FEATURE_COLLECTION);
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(String(fetchSpy.mock.calls[0][0])).toContain('https://photon.komoot.io/api');
+      expect(await cachedValues('geocode:')).toContain(JSON.stringify(FEATURE_COLLECTION));
+
+      const cachedRes = await request(path, { headers: { cookie } });
+      expect(cachedRes.status).toBe(200);
+      expect(await cachedRes.json()).toEqual(FEATURE_COLLECTION);
+      expect(fetchSpy).toHaveBeenCalledOnce();
     });
   });
 });
 
-// ── Routing proxy (Milestone 5) ───────────────────────────────────────────────
+// ── Routing proxy ───────────────────────────────────────────────────────────
 
 describe('Routing proxy - POST /api/route', () => {
   it('returns 401 without session', async () => {
@@ -705,25 +705,32 @@ describe('Routing proxy - POST /api/route', () => {
       expect(res.status).toBe(400);
     });
 
-    it('proxies to ORS for valid request', { timeout: 15_000 }, async () => {
-      const res = await jsonRequest('/api/route', 'POST', {
+    it('proxies a valid request to ORS, caches the result and serves repeats from cache', async () => {
+      const fetchSpy = stubUpstreamFetch();
+      // A random end point keeps the cache key fresh across watch-mode reruns.
+      const payload = {
         profile: 'driving-car',
         start: [13.388860, 52.517037],
-        end: [11.575382, 48.137154],
-      }, cookie);
-      // In test environments outbound fetch may fail — skip gracefully
-      if (res.status !== 200) {
-        expect([502, 500, 429]).toContain(res.status);
-        return;
-      }
-      const body = (await res.json()) as { type: string; features: unknown[] };
-      expect(body.type).toBe('FeatureCollection');
-      expect(Array.isArray(body.features)).toBe(true);
+        end: [11.575382, 48 + Math.random()],
+      };
+
+      const res = await jsonRequest('/api/route', 'POST', payload, cookie);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(FEATURE_COLLECTION);
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(String(fetchSpy.mock.calls[0][0]))
+        .toBe('https://api.openrouteservice.org/v2/directions/driving-car/geojson');
+      expect(await cachedValues('route:driving-car:')).toContain(JSON.stringify(FEATURE_COLLECTION));
+
+      const cachedRes = await jsonRequest('/api/route', 'POST', payload, cookie);
+      expect(cachedRes.status).toBe(200);
+      expect(await cachedRes.json()).toEqual(FEATURE_COLLECTION);
+      expect(fetchSpy).toHaveBeenCalledOnce();
     });
   });
 });
 
-// ── Sharing routes (Milestone 6) ──────────────────────────────────────────────
+// ── Sharing routes ──────────────────────────────────────────────────────────
 
 describe('Sharing - GET/POST /:id/shares', () => {
   it('GET /:id/shares returns 401 without session', async () => {
@@ -828,7 +835,7 @@ describe('Sharing - PUT/DELETE /:id/shares/:shareId', () => {
   });
 });
 
-// ── Claim share token (Milestone 6) ──────────────────────────────────────────
+// ── Claim share token ───────────────────────────────────────────────────────
 
 describe('Sharing - POST /api/shares/claim/:token', () => {
   it('returns 401 without session', async () => {
@@ -895,7 +902,7 @@ describe('Sharing - POST /api/shares/claim/:token', () => {
   });
 });
 
-// ── Visibility toggle (Milestone 6) ──────────────────────────────────────────
+// ── Visibility toggle ───────────────────────────────────────────────────────
 
 describe('Sharing - PUT /:id/visibility', () => {
   it('returns 401 without session', async () => {
@@ -957,7 +964,7 @@ describe('Sharing - PUT /:id/visibility', () => {
   });
 });
 
-// ── Duplicate map (Milestone 6) ───────────────────────────────────────────────
+// ── Duplicate map ───────────────────────────────────────────────────────────
 
 describe('Sharing - POST /:id/duplicate', () => {
   it('returns 401 without session', async () => {

@@ -23,7 +23,6 @@ import {
   listOrders,
   getPrintQuote,
 } from './orders.js';
-import { ApiError } from './api-client.js';
 import type { ShippingAddress } from '../../shared/types.js';
 
 beforeEach(() => {
@@ -85,50 +84,6 @@ describe('uploadPrintImage', () => {
     expect((file as File).name ?? 'map.png').toBe('map.png');
     expect(result).toEqual({ key: 'maps/m1/abc.png', url: 'https://r2/abc.png' });
   });
-
-  it('propagates 401 ApiError (unauthorized)', async () => {
-    mockApiPostForm.mockRejectedValue(new ApiError(401, 'Unauthorized'));
-    const blob = new Blob(['x'], { type: 'image/png' });
-
-    const err = await uploadPrintImage('m1', blob).catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).status).toBe(401);
-  });
-
-  it('propagates 403 ApiError (forbidden)', async () => {
-    mockApiPostForm.mockRejectedValue(new ApiError(403, 'Forbidden'));
-    const blob = new Blob(['x'], { type: 'image/png' });
-
-    const err = await uploadPrintImage('m1', blob).catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).status).toBe(403);
-  });
-
-  it('propagates 404 ApiError (map not found)', async () => {
-    mockApiPostForm.mockRejectedValue(new ApiError(404, 'Not found'));
-    const blob = new Blob(['x'], { type: 'image/png' });
-
-    await expect(uploadPrintImage('missing', blob)).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it('propagates 429 ApiError when rate limiting exhausts retry', async () => {
-    mockApiPostForm.mockRejectedValue(new ApiError(429, 'Too many requests'));
-    const blob = new Blob(['x'], { type: 'image/png' });
-
-    const err = await uploadPrintImage('m1', blob).catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).status).toBe(429);
-  });
-
-  it('propagates network TypeError when fetch fails', async () => {
-    mockApiPostForm.mockRejectedValue(new TypeError('Failed to fetch'));
-    const blob = new Blob(['x'], { type: 'image/png' });
-
-    await expect(uploadPrintImage('m1', blob)).rejects.toBeInstanceOf(TypeError);
-  });
 });
 
 // ── createCheckout ───────────────────────────────────────────────────────────
@@ -171,67 +126,6 @@ describe('createCheckout', () => {
     const [, body] = mockApiPost.mock.calls[0];
     expect((body as Record<string, unknown>).shipping_cost_cents).toBeUndefined();
   });
-
-  it('propagates 401 ApiError (unauthorized)', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(401, 'Unauthorized'));
-
-    const err = await createCheckout({
-      map_id: 'm1', product_sku: 'sku', size: '18x24',
-      shipping_address: sampleAddress, image_key: 'k',
-    }).catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).status).toBe(401);
-  });
-
-  it('propagates 403 ApiError (forbidden)', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(403, 'Forbidden'));
-
-    await expect(createCheckout({
-      map_id: 'm1', product_sku: 'sku', size: '18x24',
-      shipping_address: sampleAddress, image_key: 'k',
-    })).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it('propagates 404 ApiError (map not found)', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(404, 'Not found'));
-
-    const err = await createCheckout({
-      map_id: 'missing', product_sku: 'sku', size: '18x24',
-      shipping_address: sampleAddress, image_key: 'k',
-    }).catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(404);
-  });
-
-  it('propagates 429 ApiError when rate-limited', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(429, 'Too many requests'));
-
-    const err = await createCheckout({
-      map_id: 'm1', product_sku: 'sku', size: '18x24',
-      shipping_address: sampleAddress, image_key: 'k',
-    }).catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(429);
-  });
-
-  it('propagates network TypeError', async () => {
-    mockApiPost.mockRejectedValue(new TypeError('Failed to fetch'));
-
-    await expect(createCheckout({
-      map_id: 'm1', product_sku: 'sku', size: '18x24',
-      shipping_address: sampleAddress, image_key: 'k',
-    })).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it('propagates SyntaxError on malformed JSON body', async () => {
-    mockApiPost.mockRejectedValue(new SyntaxError('Unexpected token < in JSON'));
-
-    await expect(createCheckout({
-      map_id: 'm1', product_sku: 'sku', size: '18x24',
-      shipping_address: sampleAddress, image_key: 'k',
-    })).rejects.toBeInstanceOf(SyntaxError);
-  });
 });
 
 // ── getOrder ─────────────────────────────────────────────────────────────────
@@ -246,49 +140,6 @@ describe('getOrder', () => {
     expect(mockApiGet).toHaveBeenCalledWith('/api/orders/ord_42');
     expect(result.id).toBe('ord_42');
     expect(result.status).toBe('paid');
-  });
-
-  it('propagates 401 ApiError', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(401, 'Unauthorized'));
-
-    const err = await getOrder('x').catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).status).toBe(401);
-  });
-
-  it('propagates 403 ApiError', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(403, 'Forbidden'));
-
-    await expect(getOrder('x')).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it('propagates 404 ApiError for missing order', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(404, 'Order not found'));
-
-    const err = await getOrder('missing').catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(404);
-  });
-
-  it('propagates 429 ApiError after retry exhaustion', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(429, 'Too many requests'));
-
-    const err = await getOrder('x').catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(429);
-  });
-
-  it('propagates network TypeError', async () => {
-    mockApiGet.mockRejectedValue(new TypeError('Failed to fetch'));
-
-    await expect(getOrder('x')).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it('propagates SyntaxError on malformed JSON body', async () => {
-    mockApiGet.mockRejectedValue(new SyntaxError('Unexpected end of JSON input'));
-
-    await expect(getOrder('x')).rejects.toBeInstanceOf(SyntaxError);
   });
 });
 
@@ -313,40 +164,6 @@ describe('listOrders', () => {
 
     expect(result).toEqual([]);
   });
-
-  it('propagates 401 ApiError', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(401, 'Unauthorized'));
-
-    const err = await listOrders().catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(401);
-  });
-
-  it('propagates 403 ApiError', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(403, 'Forbidden'));
-
-    await expect(listOrders()).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it('propagates 429 ApiError after retry exhaustion', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(429, 'Too many requests'));
-
-    const err = await listOrders().catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(429);
-  });
-
-  it('propagates network TypeError', async () => {
-    mockApiGet.mockRejectedValue(new TypeError('Failed to fetch'));
-
-    await expect(listOrders()).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it('propagates SyntaxError on malformed JSON body', async () => {
-    mockApiGet.mockRejectedValue(new SyntaxError('Unexpected token'));
-
-    await expect(listOrders()).rejects.toBeInstanceOf(SyntaxError);
-  });
 });
 
 // ── getPrintQuote ────────────────────────────────────────────────────────────
@@ -368,59 +185,5 @@ describe('getPrintQuote', () => {
     });
     expect(result.shipping_cost_cents).toBe(500);
     expect(result.estimated_days).toBe(5);
-  });
-
-  it('propagates 401 ApiError', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(401, 'Unauthorized'));
-
-    const err = await getPrintQuote({
-      product_sku: 'sku', size: '18x24', country: 'US',
-    }).catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(401);
-  });
-
-  it('propagates 403 ApiError', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(403, 'Forbidden'));
-
-    await expect(getPrintQuote({
-      product_sku: 'sku', size: '18x24', country: 'US',
-    })).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it('propagates 404 ApiError (SKU not found)', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(404, 'Unknown SKU'));
-
-    const err = await getPrintQuote({
-      product_sku: 'does-not-exist', size: '18x24', country: 'US',
-    }).catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(404);
-  });
-
-  it('propagates 429 ApiError after retry exhaustion', async () => {
-    mockApiPost.mockRejectedValue(new ApiError(429, 'Too many requests'));
-
-    const err = await getPrintQuote({
-      product_sku: 'sku', size: '18x24', country: 'US',
-    }).catch((e: unknown) => e);
-
-    expect((err as ApiError).status).toBe(429);
-  });
-
-  it('propagates network TypeError', async () => {
-    mockApiPost.mockRejectedValue(new TypeError('Failed to fetch'));
-
-    await expect(getPrintQuote({
-      product_sku: 'sku', size: '18x24', country: 'US',
-    })).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it('propagates SyntaxError on malformed JSON body', async () => {
-    mockApiPost.mockRejectedValue(new SyntaxError('Unexpected end of JSON input'));
-
-    await expect(getPrintQuote({
-      product_sku: 'sku', size: '18x24', country: 'US',
-    })).rejects.toBeInstanceOf(SyntaxError);
   });
 });

@@ -1,21 +1,22 @@
 /**
- * Map export module — renders a MapLibre map to PNG, JPEG, or decorative PDF.
+ * Map export module: renders a MapLibre map to PNG, JPEG, or decorative PDF.
  *
- * Uses `@watergis/maplibre-gl-export`'s `MapGeneratorBase` for high-resolution
- * canvas capture, then converts to the desired format.
+ * Renders an offscreen MapLibre map at print resolution, draws markers and
+ * poster overlays with Canvas 2D, then encodes with `canvas.toBlob` or jsPDF.
  */
 import * as maplibregl from 'maplibre-gl';
-import type { StyleSpecification } from 'maplibre-gl';
 import { jsPDF } from 'jspdf';
-import { MapGeneratorBase, DPI, Size, Unit } from '@watergis/maplibre-gl-export';
-import type { DPIType } from '@watergis/maplibre-gl-export';
 import type { MapData, Stop } from '../services/maps.js';
+import type { PaperSize, Orientation } from '../../shared/paper.js';
 import { formatDistance, haversineDistance, sanitizeFilename } from '../utils/geo.js';
+import { DEFAULT_ICON } from '../../shared/icons.js';
 import { renderMarkerCanvas } from './map-controller.js';
+
+export type { PaperSize, Orientation };
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_DPI: DPIType = DPI[300];
+const EXPORT_DPI = 300;
 const RENDER_TIMEOUT_MS = 30_000;
 
 /** Query the GPU's max texture size once, with a conservative fallback. */
@@ -36,9 +37,10 @@ const MAX_CANVAS_DIM = (() => {
   return 4096;
 })();
 const RENDER_ERROR_MSG = 'Unable to render map at this resolution. Try on a desktop browser.';
+const RENDER_TIMEOUT_MSG = 'Map rendering timed out. Please try again.';
 
 /** Paper dimensions in mm (portrait: width × height). */
-export const PAPER_SIZES: Record<string, [number, number]> = {
+const PAPER_SIZES: Record<PaperSize, [number, number]> = {
   letter: [215.9, 279.4],
   a4: [210, 297],
   a3: [297, 420],
@@ -50,224 +52,135 @@ export const PAPER_SIZES: Record<string, [number, number]> = {
   a1: [594, 841],
 };
 
-// ── MapExporter (subclass of MapGeneratorBase) ──────────────────────────────
+/** Page dimensions in mm as [width, height] for the given orientation. */
+export function pageMm(paperSize: PaperSize, orientation: Orientation): [number, number] {
+  const [pw, ph] = PAPER_SIZES[paperSize];
+  const short = Math.min(pw, ph);
+  const long = Math.max(pw, ph);
+  return orientation === 'landscape' ? [long, short] : [short, long];
+}
 
-class MapExporter extends MapGeneratorBase {
-  /**
-   * CSS pixel dimensions for the offscreen render container.
-   * Matches the paper frame's on-screen size (or the full viewport for 'auto')
-   * so that MapLibre style elements (line widths, text, icons) render at the
-   * same visual proportions as the live preview.
-   */
-  private _cssWidth: number;
-  private _cssHeight: number;
+// ── High-resolution map render ──────────────────────────────────────────────
 
-  /** Ratio of export canvas pixels to CSS pixels — drives MapLibre's internal scaling. */
-  private _renderPixelRatio: number;
+/**
+ * Render the map's current view for a paper size at EXPORT_DPI in an
+ * offscreen MapLibre map, with custom markers drawn on top.
+ */
+async function renderMapCanvas(
+  map: maplibregl.Map,
+  paperSize: PaperSize,
+  orientation: Orientation,
+  markerFeatures: GeoJSON.Feature<GeoJSON.Point>[],
+): Promise<HTMLCanvasElement> {
+  const [mmW, mmH] = pageMm(paperSize, orientation);
+  let width = Math.round((mmW / 25.4) * EXPORT_DPI);
+  let height = Math.round((mmH / 25.4) * EXPORT_DPI);
 
-  constructor(
-    map: maplibregl.Map,
-    dpi: DPIType = DEFAULT_DPI,
-    paperSize: PaperSize = 'auto',
-    orientation: Orientation = 'landscape',
-  ) {
-    super(map, { size: Size.A3, dpi, format: 'png', unit: Unit.mm, fileName: 'map' });
+  // Size the render container to the paper frame's on-screen CSS pixels so
+  // line widths, text and icons keep the live preview's proportions.
+  // Frame CSS in map-preview-page.ts: width: min(85cqw, 85cqh * pw / ph); aspect-ratio: pw / ph
+  const srcContainer = map.getContainer();
+  const exportAspect = width / height;
+  const cssWidth = Math.min(0.85 * srcContainer.clientWidth, 0.85 * srcContainer.clientHeight * exportAspect);
+  const cssHeight = cssWidth / exportAspect;
 
-    const srcContainer = map.getContainer();
-    const cw = srcContainer.clientWidth;
-    const ch = srcContainer.clientHeight;
-
-    let w: number;
-    let h: number;
-
-    if (paperSize === 'auto') {
-      const scaleFactor = dpi / 96;
-      w = Math.round(cw * scaleFactor);
-      h = Math.round(ch * scaleFactor);
-      this._cssWidth = cw;
-      this._cssHeight = ch;
-    } else {
-      // Compute pixel dimensions from paper size at export DPI
-      const [pw, ph] = PAPER_SIZES[paperSize];
-      const mmW = orientation === 'landscape' ? ph : pw;
-      const mmH = orientation === 'landscape' ? pw : ph;
-      w = Math.round((mmW / 25.4) * dpi);
-      h = Math.round((mmH / 25.4) * dpi);
-
-      // Match the paper frame's on-screen CSS pixel size (see map-preview-page.ts).
-      // CSS: width: min(85cqw, 85cqh * pw / ph); aspect-ratio: pw / ph
-      const exportAspect = w / h;
-      const frameW = Math.min(0.85 * cw, 0.85 * ch * exportAspect);
-      this._cssWidth = frameW;
-      this._cssHeight = frameW / exportAspect;
-    }
-
-    // Cap max canvas dimension — scale down proportionally if either exceeds limit
-    if (w > MAX_CANVAS_DIM || h > MAX_CANVAS_DIM) {
-      const ratio = Math.min(MAX_CANVAS_DIM / w, MAX_CANVAS_DIM / h);
-      w = Math.round(w * ratio);
-      h = Math.round(h * ratio);
-    }
-
-    this.width = w;
-    this.height = h;
-    this._renderPixelRatio = this.width / this._cssWidth;
+  // Cap max canvas dimension — scale down proportionally if either exceeds limit
+  if (width > MAX_CANVAS_DIM || height > MAX_CANVAS_DIM) {
+    const ratio = Math.min(MAX_CANVAS_DIM / width, MAX_CANVAS_DIM / height);
+    width = Math.round(width * ratio);
+    height = Math.round(height * ratio);
   }
+  const renderPixelRatio = width / cssWidth;
 
-  protected getRenderedMap(container: HTMLElement, style: StyleSpecification): maplibregl.Map {
-    const sourceMap = this.map as maplibregl.Map;
+  // Hidden container at the paper frame's CSS pixel size. MapLibre's
+  // pixelRatio scales the internal canvas up to width × height.
+  const container = document.createElement('div');
+  container.style.position = 'fixed';
+  container.style.left = '-99999px';
+  container.style.top = '-99999px';
+  container.style.width = `${cssWidth}px`;
+  container.style.height = `${cssHeight}px`;
+  container.style.visibility = 'hidden';
+  document.body.appendChild(container);
 
-    // The container is sized to match the paper frame's on-screen CSS pixels.
-    // pixelRatio tells MapLibre to render a canvas that's _renderPixelRatio×
-    // larger, producing the high-res output while keeping all style elements
-    // (line widths, text sizes, icons) at the same visual proportions as the
-    // live preview. No zoom adjustment is needed.
-    return new maplibregl.Map({
+  let renderMap: maplibregl.Map | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const style = map.getStyle();
+
+    // Hide marker icons in the MapLibre render (they'll be drawn manually
+    // at full export resolution), but keep them in the layout so MapLibre
+    // correctly positions text labels with text-radial-offset around icons.
+    for (const layer of style.layers ?? []) {
+      if (layer.type === 'symbol' && layer.id.endsWith('-markers-symbol')) {
+        (layer as Record<string, unknown>).paint = {
+          ...((layer as Record<string, unknown>).paint as object),
+          'icon-opacity': 0,
+        };
+      }
+    }
+
+    renderMap = new maplibregl.Map({
       container,
       style,
-      center: sourceMap.getCenter(),
-      zoom: sourceMap.getZoom(),
-      bearing: sourceMap.getBearing(),
-      pitch: sourceMap.getPitch(),
-      pixelRatio: this._renderPixelRatio,
-      // MapLibre defaults maxCanvasSize to [4096, 4096] and silently
-      // clamps pixelRatio to fit.  Override to match our intended export
-      // dimensions so the canvas is not downscaled behind our back.
-      maxCanvasSize: [this.width, this.height] as [number, number],
+      center: map.getCenter(),
+      zoom: map.getZoom(),
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+      pixelRatio: renderPixelRatio,
+      // MapLibre defaults maxCanvasSize to [4096, 4096] and silently clamps
+      // pixelRatio to fit, which would downscale the export.
+      maxCanvasSize: [width, height],
       canvasContextAttributes: { preserveDrawingBuffer: true },
       interactive: false,
       attributionControl: false,
     });
-  }
 
-  /**
-   * Required by `MapGeneratorBase`, but only reached from the base class's own
-   * `generate()` / `toCanvas()` paths. This exporter renders via `renderCanvas()`
-   * and composites its own decoration, so both controls are intentionally no-ops.
-   */
-  protected addScaleControl(): void { /* export has no scale bar */ }
-
-  protected addAttributionControl(): void { /* attribution is drawn by the caller */ }
-
-  /**
-   * Render the current map view at high resolution into a canvas with
-   * custom markers drawn on top.
-   */
-  renderCanvas(markerFeatures: GeoJSON.Feature<GeoJSON.Point>[]): Promise<HTMLCanvasElement> {
-    const sourceMap = this.map as maplibregl.Map;
-
-    return new Promise<HTMLCanvasElement>((resolve, reject) => {
-      // Create hidden container at the paper frame's CSS pixel size.
-      // MapLibre's pixelRatio will scale the internal canvas up to the
-      // full export resolution (this.width × this.height).
-      const container = document.createElement('div');
-      container.style.position = 'fixed';
-      container.style.left = '-99999px';
-      container.style.top = '-99999px';
-      container.style.width = `${this._cssWidth}px`;
-      container.style.height = `${this._cssHeight}px`;
-      container.style.visibility = 'hidden';
-      document.body.appendChild(container);
-
-      let tempMap: maplibregl.Map | null = null;
-      let settled = false;
-
-      const cleanup = () => {
-        if (tempMap) {
-          tempMap.remove();
-          tempMap = null;
-        }
-        container.remove();
-      };
-
-      // Timeout to prevent the promise from hanging indefinitely
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          reject(new Error('Map rendering timed out. Please try again.'));
-        }
-      }, RENDER_TIMEOUT_MS);
-
-      try {
-        const style = sourceMap.getStyle();
-
-        // Hide marker icons in the MapLibre render (they'll be drawn manually
-        // at full export resolution), but keep them in the layout so MapLibre
-        // correctly positions text labels with text-radial-offset around icons.
-        for (const layer of style.layers ?? []) {
-          if (layer.type === 'symbol' && layer.id.endsWith('-markers-symbol')) {
-            (layer as Record<string, unknown>).paint = {
-              ...((layer as Record<string, unknown>).paint as object),
-              'icon-opacity': 0,
-            };
-          }
-        }
-
-        tempMap = this.getRenderedMap(container, style);
-
-        // Supply marker images on demand so MapLibre can compute correct
-        // text label positioning (even though the icons are invisible).
-        tempMap.setMissingStyleImageResolver((id: string) => {
-          if (id.startsWith('marker-')) {
-            const img = sourceMap.getImage(id);
-            if (img) tempMap!.addImage(id, img.data);
-          }
-        });
-
-        tempMap.once('idle', () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-
-          try {
-            const canvas = tempMap!.getCanvas();
-            if (!canvas || canvas.width === 0 || canvas.height === 0) {
-              cleanup();
-              reject(new Error(RENDER_ERROR_MSG));
-              return;
-            }
-
-            // Clone the canvas data so we can destroy the temp map
-            const outputCanvas = document.createElement('canvas');
-            outputCanvas.width = canvas.width;
-            outputCanvas.height = canvas.height;
-            const ctx = outputCanvas.getContext('2d');
-            if (!ctx) {
-              cleanup();
-              reject(new Error(RENDER_ERROR_MSG));
-              return;
-            }
-            ctx.drawImage(canvas, 0, 0);
-
-            // Draw composite marker images onto the output canvas (they are not part of the style).
-            // tempMap.project() returns CSS pixel coords — scale by pixelRatio for canvas coords.
-            // Use the actual canvas-to-CSS ratio rather than the pre-computed _renderPixelRatio
-            // in case MapLibre clamped the pixel ratio (e.g. due to GPU limits).
-            const actualPixelRatio = canvas.width / container.clientWidth;
-            drawMarkersOnCanvas(ctx, tempMap!, outputCanvas.width, outputCanvas.height, markerFeatures, actualPixelRatio)
-              .then(() => { cleanup(); resolve(outputCanvas); })
-              .catch(() => { cleanup(); reject(new Error(RENDER_ERROR_MSG)); });
-          } catch {
-            cleanup();
-            reject(new Error(RENDER_ERROR_MSG));
-          }
-        });
-
-        tempMap.once('error', () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          cleanup();
-          reject(new Error(RENDER_ERROR_MSG));
-        });
-      } catch {
-        settled = true;
-        clearTimeout(timer);
-        cleanup();
-        reject(new Error(RENDER_ERROR_MSG));
+    // Supply marker images on demand so MapLibre can compute correct
+    // text label positioning (even though the icons are invisible).
+    renderMap.setMissingStyleImageResolver((id: string) => {
+      if (id.startsWith('marker-')) {
+        const img = map.getImage(id);
+        if (img) renderMap?.addImage(id, img.data);
       }
     });
+
+    const failed = renderMap.once('error').then(() => { throw new Error(RENDER_ERROR_MSG); });
+    // A tile or glyph error after 'idle' wins must not surface as an unhandled rejection.
+    failed.catch(() => {});
+    await Promise.race([
+      renderMap.once('idle'),
+      failed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(RENDER_TIMEOUT_MSG)), RENDER_TIMEOUT_MS);
+      }),
+    ]);
+
+    const canvas = renderMap.getCanvas();
+    if (!canvas || canvas.width === 0 || canvas.height === 0) throw new Error(RENDER_ERROR_MSG);
+
+    // Clone the canvas data so the temp map can be destroyed
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = canvas.width;
+    outputCanvas.height = canvas.height;
+    const ctx = outputCanvas.getContext('2d');
+    if (!ctx) throw new Error(RENDER_ERROR_MSG);
+    ctx.drawImage(canvas, 0, 0);
+
+    // Draw composite marker images onto the output canvas (they are not part of the style).
+    // renderMap.project() returns CSS pixel coords — scale by pixelRatio for canvas coords.
+    // Use the actual canvas-to-CSS ratio rather than the pre-computed renderPixelRatio
+    // in case MapLibre clamped the pixel ratio (e.g. due to GPU limits).
+    const actualPixelRatio = canvas.width / container.clientWidth;
+    await drawMarkersOnCanvas(ctx, renderMap, outputCanvas.width, outputCanvas.height, markerFeatures, actualPixelRatio);
+    return outputCanvas;
+  } catch (err) {
+    throw err instanceof Error && err.message === RENDER_TIMEOUT_MSG ? err : new Error(RENDER_ERROR_MSG);
+  } finally {
+    clearTimeout(timer);
+    renderMap?.remove();
+    container.remove();
   }
 }
 
@@ -296,7 +209,7 @@ async function drawMarkersOnCanvas(
   const uniqueIcons = new Set<string>();
   for (const f of markerFeatures) {
     const iconId = f.properties?.icon as string | undefined;
-    const iconName = iconId?.replace(/^marker-/, '') ?? 'location-dot';
+    const iconName = iconId?.replace(/^marker-/, '') ?? DEFAULT_ICON;
     uniqueIcons.add(iconName);
   }
   await Promise.all([...uniqueIcons].map(async (name) => {
@@ -313,7 +226,7 @@ async function drawMarkersOnCanvas(
     if (x < -halfSize || y < -halfSize || x > canvasW + halfSize || y > canvasH + halfSize) continue;
 
     const iconId = feature.properties?.icon as string | undefined;
-    const iconName = iconId?.replace(/^marker-/, '') ?? 'location-dot';
+    const iconName = iconId?.replace(/^marker-/, '') ?? DEFAULT_ICON;
     const iconCanvas = iconCanvases.get(iconName);
     if (iconCanvas) {
       ctx.drawImage(iconCanvas, x - halfSize, y - halfSize, markerSize, markerSize);
@@ -394,15 +307,11 @@ function compositeWithOverlays(
   orientation: Orientation,
   details: TripDetails,
 ): HTMLCanvasElement {
-  const effectiveSize = paperSize === 'auto' ? 'a3' : paperSize;
-  const effectiveOrientation: Orientation = paperSize === 'auto' ? 'landscape' : orientation;
-  const [pw, ph] = PAPER_SIZES[effectiveSize];
-  const pageW_mm = effectiveOrientation === 'landscape' ? Math.max(pw, ph) : Math.min(pw, ph);
-  const pageH_mm = effectiveOrientation === 'landscape' ? Math.min(pw, ph) : Math.max(pw, ph);
+  const [pageW_mm, pageH_mm] = pageMm(paperSize, orientation);
 
   // Compute poster pixel dimensions. Cap to MAX_CANVAS_DIM so browsers
   // don't silently fail on huge canvases (e.g. 40×60" at 300 DPI = 12000×18000).
-  const pxPerMm = DEFAULT_DPI / 25.4;
+  const pxPerMm = EXPORT_DPI / 25.4;
   let posterW = Math.round(pageW_mm * pxPerMm);
   let posterH = Math.round(pageH_mm * pxPerMm);
   let effectivePxPerMm = pxPerMm;
@@ -474,8 +383,7 @@ async function downloadRaster(
   mimeType: string, filename: string, quality?: number,
   tripDetails?: TripDetails,
 ): Promise<void> {
-  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const mapCanvas = await exporter.renderCanvas(markerFeatures);
+  const mapCanvas = await renderMapCanvas(map, paperSize, orientation, markerFeatures);
 
   let outputCanvas: HTMLCanvasElement;
   if (tripDetails) {
@@ -538,24 +446,6 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines;
 }
 
-/** Trace a rounded rectangle path (caller must stroke/fill). */
-function roundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-}
-
 /**
  * Draw poster overlays onto the composited canvas: gradient banners with
  * title, itinerary, stats, and attribution rendered via Canvas 2D text
@@ -579,7 +469,8 @@ function drawPosterOverlays(
   const b = mm(4);
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
   ctx.lineWidth = mm(0.4);
-  roundedRect(ctx, b, b, w - b * 2, h - b * 2, mm(3));
+  ctx.beginPath();
+  ctx.roundRect(b, b, w - b * 2, h - b * 2, mm(3));
   ctx.stroke();
 
   // ── Top gradient banner ────────────────────────────────────────────────
@@ -693,16 +584,11 @@ async function downloadPDF(
   tripDetails?: TripDetails,
 ): Promise<void> {
   // 1. Render the map at high resolution
-  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const mapCanvas = await exporter.renderCanvas(markerFeatures);
+  const mapCanvas = await renderMapCanvas(map, paperSize, orientation, markerFeatures);
 
   // 2. Compute page dimensions in mm
-  const effectiveSize = paperSize === 'auto' ? 'a3' : paperSize;
-  const pdfOrientation: Orientation = paperSize === 'auto' ? 'landscape' : orientation;
-  const [pw, ph] = PAPER_SIZES[effectiveSize];
-  const pageW_mm = pdfOrientation === 'landscape' ? Math.max(pw, ph) : Math.min(pw, ph);
-  const pageH_mm = pdfOrientation === 'landscape' ? Math.min(pw, ph) : Math.max(pw, ph);
-  const pdf = new jsPDF({ unit: 'mm', format: [pageW_mm, pageH_mm], orientation: pdfOrientation });
+  const [pageW_mm, pageH_mm] = pageMm(paperSize, orientation);
+  const pdf = new jsPDF({ unit: 'mm', format: [pageW_mm, pageH_mm], orientation });
 
   let outputCanvas: HTMLCanvasElement;
 
@@ -728,8 +614,7 @@ export async function renderToBlob(
   paperSize: PaperSize,
   orientation: Orientation,
 ): Promise<Blob> {
-  const exporter = new MapExporter(map, DEFAULT_DPI, paperSize, orientation);
-  const canvas = await exporter.renderCanvas(markerFeatures);
+  const canvas = await renderMapCanvas(map, paperSize, orientation, markerFeatures);
   drawAttribution(canvas);
   return canvasToBlob(canvas, 'image/png');
 }
@@ -737,8 +622,6 @@ export async function renderToBlob(
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export type ExportFormat = 'png' | 'jpeg' | 'pdf';
-export type PaperSize = 'auto' | 'letter' | 'a4' | 'a3' | 'tabloid' | '18x24' | '24x36' | '40x60' | 'a2' | 'a1';
-export type Orientation = 'landscape' | 'portrait';
 
 export async function exportMap(
   map: maplibregl.Map,

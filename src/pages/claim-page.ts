@@ -11,6 +11,7 @@ import { claimShareToken } from '../services/maps.js';
 import { ApiError } from '../services/api-client.js';
 import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { errorCallout } from '../components/ui.js';
 
 @customElement('claim-page')
 export class ClaimPage extends LitElement {
@@ -76,10 +77,7 @@ export class ClaimPage extends LitElement {
 
     return html`
       <div class="wa-stack wa-gap-l">
-        <wa-callout variant="danger">
-          <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-          ${this._error}
-        </wa-callout>
+        ${errorCallout(this._error)}
         <div>
           <wa-button variant="brand" @click=${() => navigateTo('/dashboard')}>
             Go to Dashboard

@@ -10,14 +10,15 @@
   --wa-color-brand-50: #ff6b00;
   --wa-color-brand-60: #e05e00;
 
-  /* Slightly increase border-radius for a rounder, friendlier feel */
+  /* Border radius reduced from Playful's defaults */
   --wa-border-radius-m: 0.625rem;
   --wa-border-radius-l: 1rem;
 
-  /* Rounded system font stack — no external font downloads */
+  /* Rounded system font stack for body text, which avoids a font download.
+     Headings and code keep Playful's Fredoka and Azeret Mono from fonts.bunny.net. */
   --wa-font-family-body: ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT', 'Arial Rounded MT Bold', Calibri, source-sans-pro, system-ui, sans-serif;
 
-  /* Slightly larger default body text for readability */
+  /* Body text size reduced slightly from Playful's 1.125rem default */
   --wa-font-size-m: 1.0625rem;
 }
 

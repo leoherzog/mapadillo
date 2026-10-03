@@ -7,19 +7,19 @@
  * Fires `location-selected` with a GeocodingResult when the user picks a place.
  */
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, query, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
+import type WaCombobox from '@web.awesome.me/webawesome-pro/dist/components/combobox/combobox.js';
 import { searchPlaces, type GeocodingResult } from '../services/geocoding.js';
 import { getActiveMapCenter } from '../map/map-controller.js';
+import { fieldValue } from '../utils/form.js';
+import { waUtilities } from '../styles/wa-utilities.js';
 
 export interface ExistingLocation {
   name: string;
   latitude: number;
   longitude: number;
   icon?: string | null;
-  city?: string;
-  state?: string;
-  country?: string;
 }
 
 @customElement('location-search')
@@ -32,12 +32,15 @@ export class LocationSearch extends LitElement {
   @state() private _loading = false;
   @state() private _searched = false;
 
+  /** Cached: render() always outputs the same combobox. */
+  @query('wa-combobox', true) private _combobox!: WaCombobox;
+
   private _debounceTimer?: ReturnType<typeof setTimeout>;
   private _searchGeneration = 0;
   /** Suppresses wa-hide during Lit re-renders that replace option DOM nodes. */
   private _updatingOptions = false;
 
-  static styles = css`
+  static styles = [waUtilities, css`
     :host {
       display: block;
     }
@@ -59,15 +62,14 @@ export class LocationSearch extends LitElement {
       font-size: var(--wa-font-size-s);
       color: var(--wa-color-text-quiet);
     }
-  `;
+  `];
 
   protected firstUpdated(): void {
     // wa-combobox internally calls stopPropagation() on the native input
     // event from typing, so @input on the host only fires on selection.
     // We capture the native event before it's stopped, using composedPath()
     // to read the typed value from the internal <input>.
-    const combobox = this.shadowRoot!.querySelector<HTMLElement>('wa-combobox')!;
-    combobox.addEventListener(
+    this._combobox.addEventListener(
       'input',
       (e: Event) => {
         const origin = e.composedPath()[0];
@@ -126,9 +128,6 @@ export class LocationSearch extends LitElement {
               name="star"
             ></wa-icon>
             ${r.name}
-            <span class="option-detail wa-text-truncate">
-              ${this._formatDetail(r)}
-            </span>
           </wa-option>
         `,
       ) : nothing}
@@ -180,8 +179,7 @@ export class LocationSearch extends LitElement {
 
     // Show the combobox immediately if we have existing matches
     if (matches.length) {
-      const combobox = this.shadowRoot?.querySelector<HTMLElement & { open: boolean; show(): void }>('wa-combobox');
-      if (combobox && !combobox.open) combobox.show();
+      if (!this._combobox.open) void this._combobox.show();
     }
   }
 
@@ -206,9 +204,8 @@ export class LocationSearch extends LitElement {
       await this.updateComplete;
       this._updatingOptions = false;
       if (results.length) {
-        const combobox = this.shadowRoot!.querySelector<HTMLElement & { open: boolean; show(): void }>('wa-combobox')!;
         // show() toggles closed when already open — only call when closed
-        if (!combobox.open) combobox.show();
+        if (!this._combobox.open) void this._combobox.show();
       }
     } catch {
       if (gen !== this._searchGeneration) return;
@@ -234,8 +231,7 @@ export class LocationSearch extends LitElement {
   }
 
   private _onSelect(e: Event) {
-    const combobox = e.target as HTMLInputElement;
-    const val = combobox.value;
+    const val = fieldValue(e);
 
     let result: GeocodingResult | undefined;
     let icon: string | null | undefined;
@@ -243,7 +239,7 @@ export class LocationSearch extends LitElement {
       // Existing location
       const loc = this._existingMatches[parseInt(val.slice(1), 10)];
       if (loc) {
-        result = { name: loc.name, latitude: loc.latitude, longitude: loc.longitude, city: loc.city, state: loc.state, country: loc.country };
+        result = { name: loc.name, latitude: loc.latitude, longitude: loc.longitude };
         icon = loc.icon;
       }
     } else {

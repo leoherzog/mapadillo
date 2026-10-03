@@ -1,16 +1,12 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { applyTestSchema, request, createTestSession, jsonRequest } from '../test-helpers.js';
+import {
+  applyTestSchema, request, createTestSession, jsonRequest, createMap, grantShare,
+} from '../test-helpers.js';
 
 beforeAll(applyTestSchema);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-async function createMap(cookie: string, name = 'Test Map'): Promise<string> {
-  const res = await jsonRequest('/api/maps', 'POST', { name }, cookie);
-  const body = (await res.json()) as { id: string };
-  return body.id;
-}
 
 /** Create a share invite via the API and return its id + claim_token */
 async function createShare(
@@ -114,7 +110,8 @@ describe('Sharing - GET /:id/shares response details', () => {
         user_name: string | null;
         user_email: string | null;
         role: string;
-        claim_token?: string;
+        claim_token: string | null;
+        claim_token_expires_at: string | null;
         claimed: boolean;
       }>;
     };
@@ -132,7 +129,8 @@ describe('Sharing - GET /:id/shares response details', () => {
 
     // Claimed share should NOT expose claim_token, and should have user info
     expect(claimedShare.claimed).toBe(true);
-    expect(claimedShare.claim_token).toBeUndefined();
+    expect(claimedShare.claim_token).toBeNull();
+    expect(claimedShare.claim_token_expires_at).toBeNull();
     expect(claimedShare.user_id).toBe(claimeeId);
     expect(claimedShare.user_name).toBe('Test User');
     expect(claimedShare.user_email).toBeTruthy();
@@ -202,11 +200,8 @@ describe('Sharing - claim edge cases', () => {
     const { cookie: claimeeCookie, userId: claimeeId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    // Give user a viewer share first (direct DB insert to simulate a claimed share)
-    const existingShareId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
-    ).bind(existingShareId, mapId, claimeeId, 'viewer').run();
+    // Give user a claimed viewer share first
+    await grantShare(mapId, claimeeId, 'viewer');
 
     // Create an unclaimed editor invite
     const { claim_token } = await createShare(mapId, ownerCookie, 'editor');
@@ -230,10 +225,7 @@ describe('Sharing - claim edge cases', () => {
     const mapId = await createMap(ownerCookie);
 
     // Give user an editor share first
-    const existingShareId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
-    ).bind(existingShareId, mapId, claimeeId, 'editor').run();
+    await grantShare(mapId, claimeeId, 'editor');
 
     // Create an unclaimed viewer invite
     const { claim_token, id: inviteId } = await createShare(mapId, ownerCookie, 'viewer');
@@ -400,11 +392,7 @@ describe('Sharing - duplicate copies stops', () => {
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    // Give editor access
-    const shareId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
-    ).bind(shareId, mapId, editorId, 'editor').run();
+    await grantShare(mapId, editorId, 'editor');
 
     // Editor duplicates the map
     const res = await jsonRequest(`/api/maps/${mapId}/duplicate`, 'POST', {}, editorCookie);
@@ -459,11 +447,7 @@ describe('Sharing - visibility non-owner with share access', () => {
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    // Give editor access
-    const shareId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
-    ).bind(shareId, mapId, editorId, 'editor').run();
+    await grantShare(mapId, editorId, 'editor');
 
     const res = await jsonRequest(
       `/api/maps/${mapId}/visibility`,
@@ -471,7 +455,7 @@ describe('Sharing - visibility non-owner with share access', () => {
       { visibility: 'public' },
       editorCookie,
     );
-    // getOwnedMap only returns for owner, so editor gets 404
+    // Owner-only routes hide the map from non-owners, so an editor gets 404
     expect(res.status).toBe(404);
   });
 });

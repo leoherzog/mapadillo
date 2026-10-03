@@ -10,6 +10,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { TRAVEL_MODES } from '../config/travel-modes.js';
+import { fieldValue } from '../utils/form.js';
 
 const MODES = TRAVEL_MODES.map((m) => ({
   icon: m.icon,
@@ -108,8 +109,7 @@ export class TravelModePicker extends LitElement {
   }
 
   private _onChange(e: Event) {
-    const group = e.currentTarget as HTMLElement & { value: string };
-    this.value = group.value;
+    this.value = fieldValue(e);
     this.dispatchEvent(
       new CustomEvent('mode-change', {
         detail: this.value,

@@ -3,22 +3,24 @@
  * paper size/orientation selection. User positions the map here,
  * then continues to /export/:id for download and print ordering.
  */
-import { html, css, nothing, type PropertyValues } from 'lit';
+import { html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { familyNameStyles } from '../styles/page-layout.js';
 import { navigateTo } from '../nav.js';
+import { errorCallout } from '../components/ui.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { formatDistance } from '../utils/geo.js';
-import { PAPER_SIZES, type PaperSize, type Orientation } from '../map/map-export.js';
+import { pageMm, type PaperSize, type Orientation } from '../map/map-export.js';
 import { updateMap } from '../services/maps.js';
 import { MapPageBase } from './map-page-base.js';
-import { getUnits, type Units } from '../units.js';
-import type { MapView } from '../components/map-view.js';
-import { parseExportSettings, type ExportSettings } from '../../shared/types.js';
+import { getUnits, onUnitsChange } from '../units.js';
+import { StoreController } from '../utils/store-controller.js';
+import { fieldValue } from '../utils/form.js';
+import { canEditRole, parseExportSettings, type ExportSettings } from '../../shared/types.js';
 import '../components/map-view.js';
 
-const PAPER_SIZE_LABELS: Partial<Record<PaperSize, string>> = {
+const PAPER_SIZE_LABELS: Record<PaperSize, string> = {
   letter: 'Letter (8.5 \u00d7 11\u2033)',
   a4: 'A4 (210 \u00d7 297 mm)',
   a3: 'A3 (297 \u00d7 420 mm)',
@@ -34,10 +36,9 @@ const PAPER_SIZE_LABELS: Partial<Record<PaperSize, string>> = {
 export class MapPreviewPage extends MapPageBase {
   @state() private _paperSize: PaperSize = 'letter';
   @state() private _orientation: Orientation = 'landscape';
-  @state() private _units: Units = getUnits();
 
-  private _onUnitsChange = () => { this._units = getUnits(); };
-  private _detailsInitDone = false;
+  private _units = new StoreController(this, getUnits, onUnitsChange);
+  private readonly _detailsOpen = !matchMedia('(max-width: 700px)').matches;
   private _settingsLoaded = false;
   private _restoring = false;
   private _moveListenerAdded = false;
@@ -167,30 +168,22 @@ export class MapPreviewPage extends MapPageBase {
 
   /** Returns inline style setting --pw and --ph for the paper frame CSS. */
   private get _paperFrameStyle(): string {
-    const [w, h] = PAPER_SIZES[this._paperSize] ?? [1, 1];
-    const pw = this._orientation === 'landscape' ? h : w;
-    const ph = this._orientation === 'landscape' ? w : h;
+    const [pw, ph] = pageMm(this._paperSize, this._orientation);
     return `--pw: ${pw}; --ph: ${ph}`;
-  }
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    document.addEventListener('units-change', this._onUnitsChange);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    document.removeEventListener('units-change', this._onUnitsChange);
     clearTimeout(this._saveTimer);
   }
 
   protected override _onMapReady() {
     // Attach moveend listener before sync so it catches the initial viewport
     if (!this._moveListenerAdded) {
-      const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-      if (mapView?.map) {
+      const map = this._mapView?.map;
+      if (map) {
         this._moveListenerAdded = true;
-        mapView.map.on('moveend', () => {
+        map.on('moveend', () => {
           if (this._settingsLoaded && !this._restoring) this._scheduleSave();
         });
       }
@@ -214,7 +207,7 @@ export class MapPreviewPage extends MapPageBase {
 
     const settings: ExportSettings = parseExportSettings(this._map.export_settings) ?? {};
 
-    if (settings.paperSize) this._paperSize = settings.paperSize as PaperSize;
+    if (settings.paperSize) this._paperSize = settings.paperSize;
     if (settings.orientation) this._orientation = settings.orientation;
 
     // Restore saved viewport (overrides the auto-fit from drawItems).
@@ -229,17 +222,14 @@ export class MapPreviewPage extends MapPageBase {
   }
 
   private _scheduleSave() {
-    if (!isAuthenticated() || !this._map) return;
-    const role = this._map?.role;
-    if (role !== 'owner' && role !== 'editor') return;
+    if (!isAuthenticated() || !this._map || !canEditRole(this._map.role)) return;
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this._saveSettings(), 1000);
   }
 
   private async _saveSettings() {
     if (!this._map) return;
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    const map = mapView?.map;
+    const map = this._mapView?.map;
 
     const settings: ExportSettings = {
       paperSize: this._paperSize,
@@ -259,21 +249,8 @@ export class MapPreviewPage extends MapPageBase {
     } catch { /* user may not have edit permission */ }
   }
 
-  protected override updated(changed: PropertyValues) {
-    super.updated(changed);
-    if (!this._detailsInitDone && !this._loading && !this._error) {
-      const details = this.shadowRoot?.querySelector('wa-details') as HTMLElement & { open: boolean } | null;
-      if (details) {
-        this._detailsInitDone = true;
-        if (!window.matchMedia('(max-width: 700px)').matches) {
-          details.open = true;
-        }
-      }
-    }
-  }
-
   render() {
-    const units = this._units;
+    const units = this._units.value;
 
     return html`
       <div class="map-panel">
@@ -289,14 +266,11 @@ export class MapPreviewPage extends MapPageBase {
           </div>
         ` : this._error ? html`
           <div class="overlay error-overlay">
-            <wa-callout variant="danger">
-              <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-              ${this._error}
-            </wa-callout>
+            ${errorCallout(this._error)}
           </div>
         ` : html`
           <div class="overlay">
-            <wa-details appearance="plain">
+            <wa-details appearance="plain" ?open=${this._detailsOpen}>
               <div slot="summary" class="overlay-summary">
                 <h2>${this._map?.name ?? 'Untitled Trip'}</h2>
                 ${this._map?.family_name
@@ -372,12 +346,12 @@ export class MapPreviewPage extends MapPageBase {
   // ── Event handlers ────────────────────────────────────────────────────
 
   private _onPaperSizeChange(e: Event) {
-    this._paperSize = (e.target as HTMLElement & { value: string }).value as PaperSize;
+    this._paperSize = fieldValue(e) as PaperSize;
     this._scheduleSave();
   }
 
   private _onOrientationChange(e: Event) {
-    this._orientation = (e.target as HTMLElement & { value: string }).value as Orientation;
+    this._orientation = fieldValue(e) as Orientation;
     this._scheduleSave();
   }
 

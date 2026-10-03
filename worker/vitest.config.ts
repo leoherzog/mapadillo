@@ -1,5 +1,7 @@
-import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
+import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers';
 import { defineConfig } from 'vitest/config';
+
+const migrations = await readD1Migrations('./src/db/migrations');
 
 export default defineConfig({
   plugins: [
@@ -7,6 +9,8 @@ export default defineConfig({
       wrangler: { configPath: './wrangler.toml' },
       miniflare: {
         bindings: {
+          // Applied to D1 by applyTestSchema in src/test-helpers.ts.
+          TEST_MIGRATIONS: migrations,
           // Test-only secrets — never used in production
           BETTER_AUTH_SECRET: 'test-secret-at-least-32-chars-for-better-auth',
           BETTER_AUTH_URL: 'http://localhost',
@@ -29,6 +33,12 @@ export default defineConfig({
   test: {
     // Suppress Hono logger stdout during test runs
     silent: true,
+    // The Workers pool cannot run v8 coverage, which needs node:inspector.
+    coverage: {
+      provider: 'istanbul',
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.test.ts', 'src/test-helpers.ts'],
+    },
     server: {
       deps: {
         // Bundle CJS deps that break in the workerd ESM runtime.

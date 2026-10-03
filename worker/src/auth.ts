@@ -1,7 +1,7 @@
 /**
  * Better Auth server configuration for Cloudflare Workers.
  *
- * The betterAuth() instance is cached at module level (M8) because
+ * The betterAuth() instance is cached at module level because
  * constructing it is expensive (router, plugins, DB adapter). In Workers,
  * module-level state persists within an isolate for the lifetime of that
  * isolate, so subsequent requests reuse the same instance.
@@ -10,19 +10,15 @@
  * comes from env.BETTER_AUTH_URL — a fixed operator secret — instead of
  * the incoming request.url. This prevents OAuth redirect-URI mismatches,
  * trustedOrigins accepting attacker-influenced Host headers, and passkey
- * rpID drift between workers.dev and production domains (M2, M3).
+ * rpID drift between workers.dev and production domains.
  *
- * NOTE: The project plan calls for Better Auth's native D1 support, but
- * we use kysely-d1 here because Better Auth's Kysely adapter is the
- * documented approach for D1 in production. Better Auth's D1
- * auto-detection may not handle the Kysely dialect internally, so
- * kysely-d1 stays for now.
+ * The D1 binding is passed directly; Better Auth's Kysely adapter detects it
+ * and uses its bundled D1 dialect.
  */
 
 import { betterAuth } from 'better-auth';
 import type { Auth } from 'better-auth';
 import { passkey } from '@better-auth/passkey';
-import { D1Dialect } from 'kysely-d1';
 import type { Env } from './types.js';
 
 let _auth: Auth | null = null;
@@ -43,10 +39,7 @@ export function getAuth(env: Env): Auth {
 
     _cachedDB = env.DB;
     _auth = betterAuth({
-      database: {
-        dialect: new D1Dialect({ database: env.DB }),
-        type: 'sqlite',
-      },
+      database: env.DB,
       secret: env.BETTER_AUTH_SECRET,
       baseURL: url.origin,
       basePath: '/api/auth',
@@ -63,19 +56,12 @@ export function getAuth(env: Env): Auth {
        * random UUID generated client-side, so it is unguessable, and no
        * password-reset flow is exposed.
        *
-       * TODO: Enable requireEmailVerification: true once an email service
-       * (e.g. Mailchannels, SES) is integrated. This closes the email-based
-       * account-linking attack path.
+       * TODO: Once an email service (e.g. Mailchannels, SES) is integrated,
+       * set emailAndPassword.requireEmailVerification: true and add an
+       * emailVerification.sendVerificationEmail sender. This closes the
+       * email-based account-linking attack path.
        */
       emailAndPassword: { enabled: true, autoSignIn: true },
-      emailVerification: {
-        sendOnSignUp: false,
-        requireEmailVerification: false, // TODO: set true once email service is wired up
-        sendVerificationEmail: async () => {
-          // No-op: email service not yet integrated. Wire this to a real
-          // provider (Mailchannels, SES) before setting sendOnSignUp and requireEmailVerification to true.
-        },
-      },
       socialProviders: {
         google: {
           clientId: env.GOOGLE_CLIENT_ID,

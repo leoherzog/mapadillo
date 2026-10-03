@@ -19,6 +19,16 @@ function createMockHost() {
   return host;
 }
 
+const home: RouteDefinition = { path: '/', render: () => html`<p>Home</p>` };
+
+/** Construct a Router on a mock host and connect it. */
+function mountRouter(routes: RouteDefinition[] = [home]) {
+  const host = createMockHost();
+  const router = new Router(host, routes);
+  router.hostConnected();
+  return { host, router };
+}
+
 // ── URLPattern stub ──────────────────────────────────────────────────────────
 // happy-dom doesn't provide URLPattern; stub it for route matching.
 
@@ -64,11 +74,8 @@ describe('Router', () => {
   describe('construction', () => {
     it('registers itself as a controller on the host', () => {
       const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
 
-      new Router(host, routes);
+      new Router(host, [home]);
 
       expect(host.addController).toHaveBeenCalledTimes(1);
     });
@@ -76,68 +83,66 @@ describe('Router', () => {
 
   describe('outlet', () => {
     it('starts with an empty template', () => {
-      const host = createMockHost();
-      const router = new Router(host, []);
+      const router = new Router(createMockHost(), []);
 
-      expect(router.outlet).toBeDefined();
+      expect(router.outlet.strings.join('')).toBe('');
     });
   });
 
   describe('hostConnected — popstate fallback', () => {
     it('falls back to popstate when Navigation API is unavailable', () => {
-      const host = createMockHost();
       const addSpy = vi.spyOn(window, 'addEventListener');
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
 
-      router.hostConnected();
+      mountRouter();
 
       expect(addSpy).toHaveBeenCalledWith('popstate', expect.any(Function));
     });
 
     it('renders matched route on connect', async () => {
-      const host = createMockHost();
       const renderFn = vi.fn(() => html`<p>Home</p>`);
-      const routes: RouteDefinition[] = [
-        { path: '/', render: renderFn },
-      ];
-      const router = new Router(host, routes);
+      const routes: RouteDefinition[] = [{ path: '/', render: renderFn }];
 
-      router.hostConnected();
+      const { host, router } = mountRouter(routes);
 
       await vi.waitFor(() => expect(host.requestUpdate).toHaveBeenCalled());
       expect(renderFn).toHaveBeenCalled();
+      expect(router.current).toBe(routes[0]);
+    });
+
+    it('sets target before the enter guard resolves', async () => {
+      let release!: () => void;
+      const routes: RouteDefinition[] = [{
+        path: '/',
+        fullHeight: true,
+        enter: () => new Promise<void>((resolve) => { release = resolve; }),
+        render: () => html`<p>Home</p>`,
+      }];
+
+      const { host, router } = mountRouter(routes);
+
+      expect(router.target).toBe(routes[0]);
+      expect(router.current).toBeNull();
+      expect(host.requestUpdate).toHaveBeenCalled();
+      release();
+      await vi.waitFor(() => expect(router.current).toBe(routes[0]));
     });
 
     it('renders not-found when no route matches', async () => {
-      // Navigate to an unknown path
       window.history.pushState(null, '', '/unknown');
 
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
-
-      router.hostConnected();
+      const { host, router } = mountRouter();
 
       await vi.waitFor(() => expect(host.requestUpdate).toHaveBeenCalled());
-      expect(router.outlet).toBeDefined();
+      expect(router.outlet.strings.join('')).toContain('404');
+      expect(router.current).toBeNull();
     });
   });
 
   describe('hostDisconnected', () => {
     it('removes popstate listener on disconnect', () => {
-      const host = createMockHost();
       const removeSpy = vi.spyOn(window, 'removeEventListener');
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
+      const { router } = mountRouter();
 
-      router.hostConnected();
       router.hostDisconnected();
 
       expect(removeSpy).toHaveBeenCalledWith('popstate', expect.any(Function));
@@ -147,16 +152,10 @@ describe('Router', () => {
   describe('navigateTo (popstate fallback)', () => {
     it('pushes state and re-renders', async () => {
       const { navigateTo } = await import('./nav.js');
-      const host = createMockHost();
       const dashRender = vi.fn(() => html`<p>Dashboard</p>`);
       const pushSpy = vi.spyOn(window.history, 'pushState');
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-        { path: '/dashboard', render: dashRender },
-      ];
-      const router = new Router(host, routes);
 
-      router.hostConnected();
+      const { host } = mountRouter([home, { path: '/dashboard', render: dashRender }]);
       await vi.waitFor(() => expect(host.requestUpdate).toHaveBeenCalled());
 
       navigateTo('/dashboard');
@@ -168,35 +167,24 @@ describe('Router', () => {
 
   describe('route guards (enter)', () => {
     it('calls enter guard before rendering', async () => {
-      const host = createMockHost();
       const enterFn = vi.fn(async () => undefined);
       const renderFn = vi.fn(() => html`<p>Protected</p>`);
-      const routes: RouteDefinition[] = [
-        { path: '/', render: renderFn, enter: enterFn },
-      ];
-      const router = new Router(host, routes);
 
-      router.hostConnected();
+      mountRouter([{ path: '/', render: renderFn, enter: enterFn }]);
 
       await vi.waitFor(() => expect(enterFn).toHaveBeenCalled());
       expect(renderFn).toHaveBeenCalled();
     });
 
     it('redirects when enter guard returns a path', async () => {
-      const host = createMockHost();
       const protectedRender = vi.fn(() => html`<p>Protected</p>`);
-      const signInRender = vi.fn(() => html`<p>Sign In</p>`);
 
-      const routes: RouteDefinition[] = [
+      const { host } = mountRouter([
         { path: '/', render: protectedRender, enter: async () => '/sign-in' },
-        { path: '/sign-in', render: signInRender },
-      ];
-      const router = new Router(host, routes);
-
-      router.hostConnected();
+        { path: '/sign-in', render: () => html`<p>Sign In</p>` },
+      ]);
 
       await vi.waitFor(() => expect(host.requestUpdate).toHaveBeenCalled());
-      // Protected page should NOT have rendered
       expect(protectedRender).not.toHaveBeenCalled();
     });
   });
@@ -214,31 +202,35 @@ describe('Router', () => {
         navigate: vi.fn(),
       };
       vi.stubGlobal('navigation', navigation);
-      return { navigation, listeners };
+      const dispatch = (event: object) => {
+        for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+      };
+      return { navigation, dispatch };
+    }
+
+    /** Fake same-origin, interceptable navigate event targeting `/`. */
+    function navEvent(overrides: Record<string, unknown> = {}) {
+      return {
+        canIntercept: true,
+        downloadRequest: null,
+        destination: { url: `${window.location.origin}/` },
+        intercept: vi.fn(),
+        ...overrides,
+      };
     }
 
     it('registers navigate listener when Navigation API is available', () => {
       const { navigation } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
 
-      router.hostConnected();
+      mountRouter();
 
       expect(navigation.addEventListener).toHaveBeenCalledWith('navigate', expect.any(Function));
     });
 
     it('removes navigate listener on disconnect', () => {
       const { navigation } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
+      const { router } = mountRouter();
 
-      router.hostConnected();
       router.hostDisconnected();
 
       expect(navigation.removeEventListener).toHaveBeenCalledWith('navigate', expect.any(Function));
@@ -247,124 +239,69 @@ describe('Router', () => {
     it('uses navigation.navigate() for programmatic navigation', async () => {
       const { navigateTo } = await import('./nav.js');
       const { navigation } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-        { path: '/dashboard', render: () => html`<p>Dash</p>` },
-      ];
-      const router = new Router(host, routes);
+      mountRouter([home, { path: '/dashboard', render: () => html`<p>Dash</p>` }]);
 
-      router.hostConnected();
       navigateTo('/dashboard');
 
       expect(navigation.navigate).toHaveBeenCalledWith('/dashboard', undefined);
     });
 
     it('intercepts same-origin navigations for matching routes', async () => {
-      const { listeners } = setupNavigation();
-      const host = createMockHost();
+      const { dispatch } = setupNavigation();
       const renderFn = vi.fn(() => html`<p>Home</p>`);
-      const routes: RouteDefinition[] = [
-        { path: '/', render: renderFn },
-      ];
-      const router = new Router(host, routes);
-      router.hostConnected();
+      mountRouter([{ path: '/', render: renderFn }]);
 
       const interceptOpts: { handler?: () => Promise<void> } = {};
-      const event = {
-        canIntercept: true,
-        downloadRequest: null,
-        destination: { url: `${window.location.origin}/` },
+      const event = navEvent({
         intercept: vi.fn((opts: typeof interceptOpts) => Object.assign(interceptOpts, opts)),
-      };
-      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+      });
+      dispatch(event);
 
       expect(event.intercept).toHaveBeenCalledWith(expect.objectContaining({
         scroll: 'after-transition',
         handler: expect.any(Function),
       }));
 
-      // Execute the handler to cover _runRouteAsync via intercept
       await interceptOpts.handler!();
       await vi.waitFor(() => expect(renderFn).toHaveBeenCalled());
     });
 
     it('skips non-interceptable events', () => {
-      const { listeners } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
-      router.hostConnected();
+      const { dispatch } = setupNavigation();
+      mountRouter();
 
-      const event = {
-        canIntercept: false,
-        downloadRequest: null,
-        destination: { url: `${window.location.origin}/` },
-        intercept: vi.fn(),
-      };
-      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+      const event = navEvent({ canIntercept: false });
+      dispatch(event);
 
       expect(event.intercept).not.toHaveBeenCalled();
     });
 
     it('skips download requests', () => {
-      const { listeners } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
-      router.hostConnected();
+      const { dispatch } = setupNavigation();
+      mountRouter();
 
-      const event = {
-        canIntercept: true,
-        downloadRequest: 'file.pdf',
-        destination: { url: `${window.location.origin}/` },
-        intercept: vi.fn(),
-      };
-      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+      const event = navEvent({ downloadRequest: 'file.pdf' });
+      dispatch(event);
 
       expect(event.intercept).not.toHaveBeenCalled();
     });
 
     it('skips cross-origin navigations', () => {
-      const { listeners } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/', render: () => html`<p>Home</p>` },
-      ];
-      const router = new Router(host, routes);
-      router.hostConnected();
+      const { dispatch } = setupNavigation();
+      mountRouter();
 
-      const event = {
-        canIntercept: true,
-        downloadRequest: null,
-        destination: { url: 'https://example.com/' },
-        intercept: vi.fn(),
-      };
-      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+      const event = navEvent({ destination: { url: 'https://example.com/' } });
+      dispatch(event);
 
       expect(event.intercept).not.toHaveBeenCalled();
     });
 
     it('skips when no route matches', () => {
-      const { listeners } = setupNavigation();
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        { path: '/dashboard', render: () => html`<p>Dash</p>` },
-      ];
-      const router = new Router(host, routes);
-      router.hostConnected();
+      const { dispatch } = setupNavigation();
+      mountRouter([{ path: '/dashboard', render: () => html`<p>Dash</p>` }]);
 
-      const event = {
-        canIntercept: true,
-        downloadRequest: null,
-        destination: { url: `${window.location.origin}/nope` },
-        intercept: vi.fn(),
-      };
-      for (const fn of listeners['navigate'] ?? []) fn(event as unknown as Event);
+      const event = navEvent({ destination: { url: `${window.location.origin}/nope` } });
+      dispatch(event);
 
       expect(event.intercept).not.toHaveBeenCalled();
     });
@@ -373,16 +310,9 @@ describe('Router', () => {
   describe('route params', () => {
     it('passes URL params to render function', async () => {
       window.history.pushState(null, '', '/map/abc-123');
-
-      const host = createMockHost();
       const renderFn = vi.fn(() => html`<p>Map</p>`);
 
-      const routes: RouteDefinition[] = [
-        { path: '/map/:id', render: renderFn },
-      ];
-      const router = new Router(host, routes);
-
-      router.hostConnected();
+      mountRouter([{ path: '/map/:id', render: renderFn }]);
 
       await vi.waitFor(() => expect(renderFn).toHaveBeenCalled());
       expect(renderFn).toHaveBeenCalledWith({ id: 'abc-123' });
@@ -391,21 +321,15 @@ describe('Router', () => {
 
   describe('error handling', () => {
     it('renders error callout when route throws', async () => {
-      const host = createMockHost();
-      const routes: RouteDefinition[] = [
-        {
-          path: '/',
-          render: () => { throw new Error('boom'); },
-        },
-      ];
-      const router = new Router(host, routes);
-
       vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      router.hostConnected();
+      const { host, router } = mountRouter([
+        { path: '/', render: () => { throw new Error('boom'); } },
+      ]);
 
       await vi.waitFor(() => expect(host.requestUpdate).toHaveBeenCalled());
-      expect(router.outlet).toBeDefined();
+      expect(router.outlet.strings.join('')).toContain('Something went wrong');
+      expect(router.current).toBeNull();
     });
   });
 });

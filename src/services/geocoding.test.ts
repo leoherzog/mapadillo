@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { searchPlaces, searchPlacesResult } from './geocoding.js';
+import { searchPlaces } from './geocoding.js';
 import { apiGet, ApiError } from './api-client.js';
 
 vi.mock('./api-client.js', async (importOriginal) => {
@@ -230,62 +230,5 @@ describe('searchPlaces', () => {
 
       expect(results).toEqual([]);
     });
-  });
-});
-
-describe('searchPlacesResult — tagged failure reasons', () => {
-  it('returns ok with results on happy path', async () => {
-    mockApiGet.mockResolvedValue(photonResponse([photonFeature({ name: 'Berlin' })]));
-
-    const result = await searchPlacesResult('Berlin');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data[0].name).toBe('Berlin');
-  });
-
-  it('returns rate-limit reason on 429', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(429, 'Too Many Requests'));
-
-    const result = await searchPlacesResult('Berlin');
-
-    expect(result).toEqual({ ok: false, reason: 'rate-limit', status: 429 });
-  });
-
-  it('returns unauthorized reason on 401', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(401, 'Unauthorized'));
-
-    const result = await searchPlacesResult('Berlin');
-
-    expect(result).toEqual({ ok: false, reason: 'unauthorized', status: 401 });
-  });
-
-  it('returns unauthorized reason on 403', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(403, 'Forbidden'));
-
-    const result = await searchPlacesResult('Berlin');
-
-    expect(result).toEqual({ ok: false, reason: 'unauthorized', status: 403 });
-  });
-
-  it('returns upstream-error on other ApiError (5xx)', async () => {
-    mockApiGet.mockRejectedValue(new ApiError(502, 'Bad Gateway'));
-
-    const result = await searchPlacesResult('Berlin');
-
-    expect(result).toEqual({ ok: false, reason: 'upstream-error', status: 502 });
-  });
-
-  it('returns network reason on non-ApiError', async () => {
-    mockApiGet.mockRejectedValue(new TypeError('Failed to fetch'));
-
-    const result = await searchPlacesResult('Berlin');
-
-    expect(result).toEqual({ ok: false, reason: 'network' });
-  });
-
-  it('rethrows AbortError', async () => {
-    mockApiGet.mockRejectedValue(new DOMException('aborted', 'AbortError'));
-
-    await expect(searchPlacesResult('Berlin')).rejects.toThrow('aborted');
   });
 });

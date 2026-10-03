@@ -1,11 +1,10 @@
+/**
+ * Page-level styles: the trip builder's sidebar + map-panel layout and the
+ * `.family-name` subtitle used by the export and preview pages.
+ */
+
 import { css } from 'lit';
 
-/**
- * Shared page layout styles for sidebar + map-panel pages.
- *
- * Desktop: uses `<wa-split-panel>` for a resizable sidebar + map layout.
- * Mobile: hides the split panel; trip-builder uses a drawer instead.
- */
 /** Reusable .family-name subtitle style (quiet, small text). */
 export const familyNameStyles = css`
   .family-name {
@@ -15,6 +14,10 @@ export const familyNameStyles = css`
   }
 `;
 
+/**
+ * Trip builder layout. Desktop uses `<wa-split-panel>` for a resizable
+ * sidebar + map; mobile hides the split panel in favour of a drawer.
+ */
 export const pageLayoutStyles = css`
   :host {
     display: flex;
@@ -52,11 +55,6 @@ export const pageLayoutStyles = css`
 
   .stat-row {
     font-size: var(--wa-font-size-s);
-  }
-
-  .stat-row wa-icon {
-    color: var(--wa-color-brand-60);
-    font-size: var(--wa-font-size-m);
   }
 
   .stat-value {

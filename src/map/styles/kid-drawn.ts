@@ -20,7 +20,8 @@ const ROAD_PRIMARY = '#FFD54F';
 const ROAD_SECONDARY = '#AED581';
 const ROAD_MINOR = '#FFCCBC';
 const BOUNDARY_PURPLE = '#9C6ADE';
-const LABEL_BROWN = '#4E342E';
+export const LABEL_BROWN = '#4E342E';
+export const LABEL_HALO = 'rgba(255, 248, 231, 0.85)';
 const SAND_YELLOW = '#FFE4A0';
 const GLACIER_WHITE = '#E8F4FD';
 const FOREST_GREEN = '#5DAA68';
@@ -47,7 +48,7 @@ function widenWidth<T>(value: T, factor: number): T {
 // ── Transformer ───────────────────────────────────────────────────────────
 
 export function transformToKidDrawn(bright: StyleSpecification): StyleSpecification {
-  const style: StyleSpecification = JSON.parse(JSON.stringify(bright));
+  const style = structuredClone(bright);
 
   // Keep the original glyphs URL from Bright (OpenFreeMap's glyph server).
   // Caveat PBFs can be added later; for now the kid-drawn look comes from colors/widths.
@@ -297,11 +298,10 @@ function transformLayer(layer: LayerSpecification): void {
       // Water labels stay blue-ish
       if (idStartsWith(id, 'water_name', 'waterway_line_label')) {
         paint['text-color'] = '#2980B9';
-        paint['text-halo-color'] = 'rgba(255, 248, 231, 0.85)';
       } else {
         paint['text-color'] = LABEL_BROWN;
-        paint['text-halo-color'] = 'rgba(255, 248, 231, 0.85)';
       }
+      paint['text-halo-color'] = LABEL_HALO;
       paint['text-halo-width'] = 2;
     }
 

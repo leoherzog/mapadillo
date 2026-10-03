@@ -29,4 +29,13 @@ export const cardSharedStyles = css`
   .change-btn:hover {
     color: var(--wa-color-brand-50);
   }
+
+  .name-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  icon-picker {
+    --wa-font-size-l: var(--wa-font-size-m);
+  }
 `;

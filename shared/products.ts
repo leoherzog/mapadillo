@@ -1,10 +1,13 @@
 /**
- * Product catalog for print ordering (M9).
+ * Product catalog for print ordering.
  */
+
+import type { PaperSize } from './paper.js';
+import type { OrderStatus } from './types.js';
 
 export interface ProductSize {
   label: string;
-  size: string;
+  size: PaperSize;
   priceCents: number;
   shippingPlaceholderCents: number;
 }
@@ -13,10 +16,10 @@ export interface Product {
   sku: string;
   name: string;
   description: string;
-  sizes: ProductSize[];
+  sizes: readonly ProductSize[];
 }
 
-export const PRODUCTS: Product[] = [
+export const PRODUCTS = [
   {
     sku: 'GLOBAL-BLP',
     name: 'Budget Poster',
@@ -37,9 +40,14 @@ export const PRODUCTS: Product[] = [
       { label: '40" × 60"', size: '40x60', priceCents: 5999, shippingPlaceholderCents: 999 },
     ],
   },
-];
+] as const satisfies readonly Product[];
 
-export const PRINTABLE_SIZES = new Set(PRODUCTS.flatMap(p => p.sizes.map(s => s.size)));
+/** Paper sizes offered by at least one product. */
+export type PrintablePaperSize = (typeof PRODUCTS)[number]['sizes'][number]['size'];
+
+export const PRINTABLE_SIZES: ReadonlySet<string> = new Set<string>(
+  PRODUCTS.flatMap((p) => p.sizes.map((s) => s.size)),
+);
 
 export function getProductBySku(sku: string): Product | undefined {
   return PRODUCTS.find((p) => p.sku === sku);
@@ -54,22 +62,13 @@ export function buildFullSku(productSku: string, size: string): string {
 }
 
 /**
- * Map a product "size" string to the PaperSize used by the export pipeline.
- * Poster sizes ('18x24', '24x36', '40x60') map directly to the same PaperSize
- * literal values in `src/map/map-export.ts`; this helper centralizes the
- * conversion (and the validation) so callers don't have to hand-cast.
+ * Narrow a product size string to the PaperSize used by the export pipeline.
+ * @throws when no product offers the size.
  */
-const _PRINTABLE_PAPER_SIZES = ['18x24', '24x36', '40x60'] as const;
-export type PrintablePaperSize = typeof _PRINTABLE_PAPER_SIZES[number];
-
 export function skuToPaperSize(size: string): PrintablePaperSize {
-  if ((_PRINTABLE_PAPER_SIZES as readonly string[]).includes(size)) {
-    return size as PrintablePaperSize;
-  }
+  if (PRINTABLE_SIZES.has(size)) return size as PrintablePaperSize;
   throw new Error(`Unknown printable size: ${size}`);
 }
-
-import type { OrderStatus } from './types.js';
 
 /** Maps order status strings to wa-badge variant names. */
 export const STATUS_VARIANTS: Record<OrderStatus, string> = {
@@ -83,3 +82,6 @@ export const STATUS_VARIANTS: Record<OrderStatus, string> = {
   cancelled: 'danger',
   failed: 'danger',
 };
+
+/** Every order status, in lifecycle order. */
+export const ORDER_STATUSES = Object.keys(STATUS_VARIANTS) as OrderStatus[];

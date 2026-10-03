@@ -4,37 +4,28 @@
  * Route: /order/:id (mapId)
  * Access: owner + editor only
  */
-import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { html, css, nothing } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 import { contentPageStyles } from '../styles/content-page.js';
 import { hiddenMapStyles } from '../styles/hidden-map.js';
-import { navigateTo, navClick } from '../nav.js';
-import { isAuthenticated } from '../auth/auth-state.js';
-import { getMap, type MapWithRole } from '../services/maps.js';
+import { errorCallout } from '../components/ui.js';
 import { uploadPrintImage, createCheckout, getPrintQuote } from '../services/orders.js';
 import { PRODUCTS, getProductSize, skuToPaperSize } from '../../shared/products.js';
-import { renderToBlob, type Orientation } from '../map/map-export.js';
-import { MapController } from '../map/map-controller.js';
-import { MAP_CONTROLLER_OPTIONS } from '../config/map-themes.js';
+import { canEditRole, parseExportSettings } from '../../shared/types.js';
+import { renderToBlob } from '../map/map-export.js';
 import { COUNTRIES } from '../utils/countries.js';
-import type { MapView } from '../components/map-view.js';
+import { fieldValue } from '../utils/form.js';
+import { MapPageBase } from './map-page-base.js';
 import '../components/map-view.js';
 
 type OrderStep = 'form' | 'rendering' | 'uploading' | 'redirecting';
 
 @customElement('order-page')
-export class OrderPage extends LitElement {
-  @property() mapId = '';
-
-  @state() private _map: MapWithRole | null = null;
-  @state() private _loading = true;
-  @state() private _error = '';
-  @state() private _mapReady = false;
-
+export class OrderPage extends MapPageBase {
   // Form state
-  @state() private _productSku = PRODUCTS[0].sku;
+  @state() private _productSku: string = PRODUCTS[0].sku;
   @state() private _size = '18x24';
   @state() private _name = '';
   @state() private _line1 = '';
@@ -53,7 +44,6 @@ export class OrderPage extends LitElement {
   @state() private _step: OrderStep = 'form';
   @state() private _orderError = '';
 
-  private _mapController?: MapController;
   private _quoteTimer?: ReturnType<typeof setTimeout>;
   /** Resolves once drawItems + saved-viewport restore are done; gates the render. */
   private _mapDrawn?: Promise<void>;
@@ -68,15 +58,6 @@ export class OrderPage extends LitElement {
       color: var(--wa-color-text-quiet);
       font-size: var(--wa-font-size-s);
       margin-bottom: var(--wa-space-l);
-    }
-
-    .product-card {
-      cursor: pointer;
-      transition: outline-color 0.15s;
-    }
-
-    .product-card[data-selected] {
-      outline: 2px solid var(--wa-color-brand-50);
     }
 
     .price {
@@ -126,86 +107,29 @@ export class OrderPage extends LitElement {
     }
   `];
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    if (!isAuthenticated()) {
-      navigateTo(`/sign-in?returnTo=${encodeURIComponent(window.location.pathname)}`);
-      return;
-    }
-    this._loadMap();
-  }
-
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._mapController?.destroy();
     clearTimeout(this._quoteTimer);
   }
 
-  private async _loadMap() {
-    if (!this.mapId) return;
-    this._loading = true;
-    this._error = '';
-    try {
-      const data = await getMap(this.mapId);
-      if (data.role !== 'owner' && data.role !== 'editor') {
-        this._error = 'You do not have permission to order prints for this map.';
-        return;
-      }
-      this._map = data;
-      this._fetchQuote(); // Get initial shipping estimate
-    } catch {
-      this._error = 'Failed to load map.';
-    } finally {
-      this._loading = false;
+  protected override async _loadMap() {
+    await super._loadMap();
+    if (!this._map) return;
+    if (!canEditRole(this._map.role)) {
+      this._error = 'You do not have permission to order prints for this map.';
+      this._map = null;
+      return;
     }
+    this._fetchQuote();
   }
 
-  private _onMapReady() {
-    this._mapReady = true;
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (!mapView?.map || !this._map) return;
-
-    this._mapController?.destroy();
-    this._mapController = new MapController(mapView.map, MAP_CONTROLLER_OPTIONS);
-
-    // Kick off drawItems + restore saved viewport. _onOrder awaits this
-    // promise before rendering to guarantee the correct camera.
-    this._mapDrawn = this._drawAndRestore(mapView.map);
-  }
-
-  /**
-   * Draw stops, then apply the saved viewport from export_settings and wait
-   * for the map to settle. Required so renderToBlob captures the user's
-   * chosen view (not the auto-fit view) and so fitBounds's late moveend
-   * doesn't clobber our jumpTo mid-render.
-   */
-  private async _drawAndRestore(map: import('maplibre-gl').Map): Promise<void> {
-    if (!this._map || !this._mapController) return;
-    await this._mapController.drawItems(this._map.stops);
-
-    // Parse saved viewport (same shape as preview/export pages)
-    let settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number } = {};
-    try {
-      const raw = this._map.export_settings;
-      if (raw && raw !== '{}') settings = JSON.parse(raw);
-    } catch { /* use defaults */ }
-
-    if (settings.center && settings.zoom != null) {
-      map.jumpTo({
-        center: settings.center,
-        zoom: settings.zoom,
-        bearing: settings.bearing ?? 0,
-        pitch: settings.pitch ?? 0,
-      });
-    }
-
-    // Wait for map to fully settle — drains any late moveend from fitBounds/jumpTo.
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const done = () => { if (!settled) { settled = true; resolve(); } };
-      map.once('idle', done);
-      setTimeout(done, 3000);
-    });
+  /** Draw stops, then restore the saved viewport so renderToBlob captures it rather than the auto-fit view. */
+  protected override _syncMap(): Promise<void> {
+    this._mapDrawn = (async () => {
+      await super._syncMap();
+      await this._applyRestoredViewport(parseExportSettings(this._map?.export_settings) ?? {});
+    })();
+    return this._mapDrawn;
   }
 
   private get _currentProduct() {
@@ -224,16 +148,12 @@ export class OrderPage extends LitElement {
   }
 
   render() {
-    if (this._loading) {
+    // _loadMap's role check runs after the base has set _map, so hold the form until it has.
+    if (this._loading || (this._map && !canEditRole(this._map.role))) {
       return html`<div class="wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`;
     }
     if (this._error) {
-      return html`
-        <wa-callout variant="danger">
-          <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-          ${this._error}
-        </wa-callout>
-      `;
+      return errorCallout(this._error);
     }
 
     return html`
@@ -251,7 +171,7 @@ export class OrderPage extends LitElement {
     const sizeInfo = this._currentSize;
 
     return html`
-      <wa-button size="small" variant="neutral" appearance="outlined" href="/export/${this.mapId}" @click=${navClick(`/export/${this.mapId}`)}>
+      <wa-button size="small" variant="neutral" appearance="outlined" href="/export/${this.mapId}">
         <wa-icon slot="start" name="arrow-left"></wa-icon>
         Back
       </wa-button>
@@ -302,7 +222,7 @@ export class OrderPage extends LitElement {
             required
             autocomplete="name"
             .value=${this._name}
-            @input=${(e: Event) => { this._name = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._name = fieldValue(e); }}
           ></wa-input>
 
           <wa-input
@@ -311,7 +231,7 @@ export class OrderPage extends LitElement {
             required
             autocomplete="address-line1"
             .value=${this._line1}
-            @input=${(e: Event) => { this._line1 = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._line1 = fieldValue(e); }}
           ></wa-input>
 
           <wa-input
@@ -319,7 +239,7 @@ export class OrderPage extends LitElement {
             label="Address line 2"
             autocomplete="address-line2"
             .value=${this._line2}
-            @input=${(e: Event) => { this._line2 = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._line2 = fieldValue(e); }}
           ></wa-input>
 
           <wa-input
@@ -327,14 +247,14 @@ export class OrderPage extends LitElement {
             required
             autocomplete="address-level2"
             .value=${this._city}
-            @input=${(e: Event) => { this._city = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._city = fieldValue(e); }}
           ></wa-input>
 
           <wa-input
             label="State / Province"
             autocomplete="address-level1"
             .value=${this._state}
-            @input=${(e: Event) => { this._state = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._state = fieldValue(e); }}
           ></wa-input>
 
           <wa-input
@@ -342,7 +262,7 @@ export class OrderPage extends LitElement {
             required
             autocomplete="postal-code"
             .value=${this._postalCode}
-            @input=${(e: Event) => { this._postalCode = (e.target as HTMLElement & { value: string }).value; }}
+            @input=${(e: Event) => { this._postalCode = fieldValue(e); }}
           ></wa-input>
 
           <wa-select
@@ -380,12 +300,7 @@ export class OrderPage extends LitElement {
           <span class="price-note">${sizeInfo ? `${product.name} — ${sizeInfo.label}` : ''}</span>
         </div>
 
-        ${this._orderError ? html`
-          <wa-callout variant="danger">
-            <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-            ${this._orderError}
-          </wa-callout>
-        ` : nothing}
+        ${this._orderError ? errorCallout(this._orderError) : nothing}
 
         <wa-button
           variant="brand"
@@ -419,10 +334,7 @@ export class OrderPage extends LitElement {
         ${this._orderError ? nothing : html`<wa-spinner></wa-spinner>`}
         <p>${messages[this._step]}</p>
         ${this._orderError ? html`
-          <wa-callout variant="danger">
-            <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-            ${this._orderError}
-          </wa-callout>
+          ${errorCallout(this._orderError)}
           <wa-button variant="neutral" appearance="outlined" @click=${() => { this._step = 'form'; this._orderError = ''; }}>
             Try Again
           </wa-button>
@@ -434,7 +346,7 @@ export class OrderPage extends LitElement {
   // ── Event handlers ──────────────────────────────────────────────────────
 
   private _onProductChange(e: Event) {
-    this._productSku = (e.target as HTMLElement & { value: string }).value;
+    this._productSku = fieldValue(e);
     // Reset size if not available for new product
     const product = this._currentProduct;
     if (!product.sizes.find(s => s.size === this._size)) {
@@ -444,12 +356,12 @@ export class OrderPage extends LitElement {
   }
 
   private _onSizeChange(e: Event) {
-    this._size = (e.target as HTMLElement & { value: string }).value;
+    this._size = fieldValue(e);
     this._fetchQuote();
   }
 
   private _onCountryChange(e: Event) {
-    this._country = (e.target as HTMLElement & { value: string }).value;
+    this._country = fieldValue(e);
     this._fetchQuote();
   }
 
@@ -492,30 +404,18 @@ export class OrderPage extends LitElement {
       return;
     }
 
-    const mapView = this.shadowRoot?.querySelector('map-view') as MapView | null;
-    if (!mapView?.map) {
+    const map = this._mapView?.map;
+    if (!map) {
       this._orderError = 'Map not ready.';
       this._step = 'form';
       return;
     }
 
     try {
-      // Read saved orientation from export settings
-      let orientation: Orientation = 'portrait';
-      try {
-        const raw = this._map?.export_settings;
-        if (raw && raw !== '{}') {
-          const parsed = JSON.parse(raw);
-          if (parsed.orientation) orientation = parsed.orientation;
-        }
-      } catch { /* use default */ }
+      const orientation = parseExportSettings(this._map?.export_settings)?.orientation ?? 'portrait';
 
-      // Wait for drawItems + saved-viewport restore before rendering —
-      // otherwise renderToBlob captures the auto-fit viewport, not the
-      // viewport the user actually saved on the preview page.
-      if (this._mapDrawn) {
-        await this._mapDrawn;
-      }
+      // Without this wait renderToBlob captures the auto-fit viewport, not the saved one.
+      await this._mapDrawn;
 
       // Convert the selected size (e.g. '18x24') to a PaperSize. Validates
       // the size is a known printable paper; renderToBlob's paper-size aware
@@ -524,7 +424,7 @@ export class OrderPage extends LitElement {
 
       // Step 1: Render
       const blob = await renderToBlob(
-        mapView.map,
+        map,
         this._mapController.markerFeatures,
         paperSize,
         orientation,

@@ -3,9 +3,19 @@
  */
 
 import { apiGet, apiPost, apiPostForm } from './api-client.js';
-import type { Order, ShippingAddress } from '../../shared/types.js';
+import type { Order, CheckoutBody, PrintQuoteBody } from '../../shared/types.js';
 
 export type { Order } from '../../shared/types.js';
+
+/** Order row joined with its map's name. */
+export interface OrderWithMap extends Order {
+  map_name: string;
+}
+
+/** Admin order row, additionally joined with the buyer's email. */
+export interface AdminOrder extends OrderWithMap {
+  user_email: string;
+}
 
 export interface UploadResult {
   key: string;
@@ -27,29 +37,18 @@ export function uploadPrintImage(mapId: string, blob: Blob): Promise<UploadResul
   return apiPostForm<UploadResult>(`/api/images/${mapId}`, form);
 }
 
-export function createCheckout(data: {
-  map_id: string;
-  product_sku: string;
-  size: string;
-  shipping_address: ShippingAddress;
-  image_key: string;
-  shipping_cost_cents?: number;
-}): Promise<CheckoutResult> {
+export function createCheckout(data: CheckoutBody): Promise<CheckoutResult> {
   return apiPost<CheckoutResult>('/api/checkout', data);
 }
 
-export function getOrder(id: string): Promise<Order> {
-  return apiGet<Order>(`/api/orders/${id}`);
+export function getOrder(id: string): Promise<OrderWithMap> {
+  return apiGet<OrderWithMap>(`/api/orders/${id}`);
 }
 
-export function listOrders(): Promise<Order[]> {
-  return apiGet<Order[]>('/api/orders');
+export function listOrders(): Promise<OrderWithMap[]> {
+  return apiGet<OrderWithMap[]>('/api/orders');
 }
 
-export function getPrintQuote(data: {
-  product_sku: string;
-  size: string;
-  country: string;
-}): Promise<PrintQuoteResult> {
+export function getPrintQuote(data: PrintQuoteBody): Promise<PrintQuoteResult> {
   return apiPost<PrintQuoteResult>('/api/print-quote', data);
 }

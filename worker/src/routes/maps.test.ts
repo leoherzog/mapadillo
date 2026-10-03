@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { applyTestSchema, request, createTestSession, jsonRequest } from '../test-helpers.js';
+import {
+  applyTestSchema, request, createTestSession, jsonRequest, createMap, createStop, grantShare,
+} from '../test-helpers.js';
 
 beforeAll(applyTestSchema);
 
@@ -12,26 +14,6 @@ function rawRequest(path: string, method: string, rawBody: string, cookie: strin
     headers: { 'Content-Type': 'application/json', cookie },
     body: rawBody,
   });
-}
-
-async function createMap(cookie: string, name = 'Test Map'): Promise<string> {
-  const res = await jsonRequest('/api/maps', 'POST', { name }, cookie);
-  const body = (await res.json()) as { id: string };
-  return body.id;
-}
-
-async function createStop(
-  cookie: string,
-  mapId: string,
-  data: {
-    name: string; lat: number; lng: number;
-    travel_mode?: string; icon?: string; type?: string;
-    label?: string; dest_name?: string; dest_lat?: number; dest_lng?: number; dest_icon?: string;
-  },
-): Promise<string> {
-  const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', data, cookie);
-  const body = (await res.json()) as { id: string };
-  return body.id;
 }
 
 // ── Map creation — validation edge cases ─────────────────────────────────────
@@ -196,14 +178,10 @@ describe('PUT /api/maps/:id — validation edge cases', () => {
 
 describe('DELETE /api/maps/:id — role-based access', () => {
   it('viewer cannot delete a map (returns 403)', async () => {
-    const { cookie: ownerCookie, userId: _ownerId } = await createTestSession();
+    const { cookie: ownerCookie } = await createTestSession();
     const { cookie: viewerCookie, userId: viewerId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
-
-    // Give viewer access
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: viewerCookie } });
     expect(res.status).toBe(403);
@@ -214,9 +192,7 @@ describe('DELETE /api/maps/:id — role-based access', () => {
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, editorId, 'editor', crypto.randomUUID()).run();
+    await grantShare(mapId, editorId, 'editor');
 
     const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: editorCookie } });
     expect(res.status).toBe(403);
@@ -229,9 +205,7 @@ describe('DELETE /api/maps/:id — role-based access', () => {
 
     // Seed a stop + a share so we can verify they disappear.
     await createStop(ownerCookie, mapId, { name: 'Stop A', lat: 10, lng: 20 });
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, collaboratorId, 'viewer').run();
+    await grantShare(mapId, collaboratorId, 'viewer');
 
     const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: ownerCookie } });
     expect(res.status).toBe(200);
@@ -550,9 +524,7 @@ describe('POST /:id/stops — role-based access', () => {
     const { cookie: viewerCookie, userId: viewerId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
       name: 'Forbidden', lat: 50, lng: 10,
@@ -565,9 +537,7 @@ describe('POST /:id/stops — role-based access', () => {
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, editorId, 'editor', crypto.randomUUID()).run();
+    await grantShare(mapId, editorId, 'editor');
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
       name: 'Editor Stop', lat: 50, lng: 10,
@@ -879,9 +849,7 @@ describe('PUT /:id/stops/:stopId — role-based access', () => {
     const mapId = await createMap(ownerCookie);
     const stopId = await createStop(ownerCookie, mapId, { name: 'S', lat: 50, lng: 10 });
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops/${stopId}`, 'PUT', { name: 'Hacked' }, viewerCookie);
     expect(res.status).toBe(403);
@@ -893,9 +861,7 @@ describe('PUT /:id/stops/:stopId — role-based access', () => {
     const mapId = await createMap(ownerCookie);
     const stopId = await createStop(ownerCookie, mapId, { name: 'S', lat: 50, lng: 10 });
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, editorId, 'editor', crypto.randomUUID()).run();
+    await grantShare(mapId, editorId, 'editor');
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops/${stopId}`, 'PUT', { name: 'Editor Edit' }, editorCookie);
     expect(res.status).toBe(200);
@@ -922,9 +888,7 @@ describe('DELETE /:id/stops/:stopId — role-based access', () => {
     const mapId = await createMap(ownerCookie);
     const stopId = await createStop(ownerCookie, mapId, { name: 'S', lat: 50, lng: 10 });
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await request(`/api/maps/${mapId}/stops/${stopId}`, {
       method: 'DELETE', headers: { cookie: viewerCookie },
@@ -938,9 +902,7 @@ describe('DELETE /:id/stops/:stopId — role-based access', () => {
     const mapId = await createMap(ownerCookie);
     const stopId = await createStop(ownerCookie, mapId, { name: 'S', lat: 50, lng: 10 });
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, editorId, 'editor', crypto.randomUUID()).run();
+    await grantShare(mapId, editorId, 'editor');
 
     const res = await request(`/api/maps/${mapId}/stops/${stopId}`, {
       method: 'DELETE', headers: { cookie: editorCookie },
@@ -1014,37 +976,6 @@ describe('DELETE /:id/stops/:stopId — re-compaction edge cases', () => {
     const after = (await afterRes.json()) as { stops: unknown[] };
     expect(after.stops.length).toBe(0);
   });
-
-  it('nullifies travel_mode on point promoted to position 0', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-
-    // Create a route as first stop, then a point
-    const r1 = await createStop(cookie, mapId, { name: 'Route', lat: 50, lng: 10, type: 'route', travel_mode: 'drive' });
-
-    // Manually insert a point at position 1 with a travel_mode (shouldn't normally happen,
-    // but tests the safety guard in the DELETE handler)
-    const pointId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO stops (id, map_id, position, type, name, latitude, longitude, travel_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(pointId, mapId, 1, 'point', 'P', 51, 11, 'walk', new Date().toISOString()).run();
-
-    // Delete the route at position 0 — point gets promoted, travel_mode should be nulled
-    await request(`/api/maps/${mapId}/stops/${r1}`, { method: 'DELETE', headers: { cookie } });
-
-    const afterRes = await request(`/api/maps/${mapId}`, { headers: { cookie } });
-    const after = (await afterRes.json()) as { stops: Array<{ id: string; position: number; type: string }> };
-    const promoted = after.stops.find(s => s.id === pointId)!;
-    expect(promoted.position).toBe(0);
-    expect(promoted.type).toBe('point');
-    // Points no longer carry a travel_mode field in the API response
-    expect((promoted as { travel_mode?: unknown }).travel_mode).toBeUndefined();
-    // The underlying column is still nulled by the DELETE handler's safety guard
-    const dbRow = await env.DB.prepare(
-      'SELECT travel_mode FROM stops WHERE id = ?',
-    ).bind(pointId).first<{ travel_mode: string | null }>();
-    expect(dbRow?.travel_mode).toBeNull();
-  });
 });
 
 // ── Reorder — edge cases ────────────────────────────────────────────────────
@@ -1110,9 +1041,7 @@ describe('PUT /:id/stops/reorder — edge cases', () => {
     const mapId = await createMap(ownerCookie);
     const s1 = await createStop(ownerCookie, mapId, { name: 'A', lat: 50, lng: 10 });
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', {
       order: [s1],
@@ -1134,39 +1063,6 @@ describe('PUT /:id/stops/reorder — edge cases', () => {
     expect(body[0].id).toBe(s1);
     expect(body[0].position).toBe(0);
   });
-
-  it('nullifies travel_mode on point moved to position 0', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-
-    // Route first, then a point with no travel_mode
-    const r1 = await createStop(cookie, mapId, { name: 'Route', lat: 50, lng: 10, type: 'route', travel_mode: 'drive' });
-
-    // Manually insert point at position 1 with erroneous travel_mode
-    const pointId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO stops (id, map_id, position, type, name, latitude, longitude, travel_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(pointId, mapId, 1, 'point', 'P', 51, 11, 'walk', new Date().toISOString()).run();
-
-    // Reorder: point first, route second
-    const res = await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', {
-      order: [pointId, r1],
-    }, cookie);
-    expect(res.status).toBe(200);
-
-    const mapRes = await request(`/api/maps/${mapId}`, { headers: { cookie } });
-    const mapData = (await mapRes.json()) as { stops: Array<{ id: string; type: string; position: number }> };
-    const first = mapData.stops.find(s => s.position === 0)!;
-    expect(first.id).toBe(pointId);
-    expect(first.type).toBe('point');
-    // Points no longer carry a travel_mode field in the API response
-    expect((first as { travel_mode?: unknown }).travel_mode).toBeUndefined();
-    // The underlying column is still nulled by the reorder handler's safety guard
-    const dbRow = await env.DB.prepare(
-      'SELECT travel_mode FROM stops WHERE id = ?',
-    ).bind(pointId).first<{ travel_mode: string | null }>();
-    expect(dbRow?.travel_mode).toBeNull();
-  });
 });
 
 // ── GET /api/maps — listing edge cases ──────────────────────────────────────
@@ -1185,9 +1081,7 @@ describe('GET /api/maps — listing edge cases', () => {
     const { cookie: viewerCookie, userId: viewerId } = await createTestSession();
     const mapId = await createMap(ownerCookie, 'Shared to Viewer');
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await request('/api/maps', { headers: { cookie: viewerCookie } });
     expect(res.status).toBe(200);
@@ -1228,9 +1122,7 @@ describe('GET /api/maps/:id — access edge cases', () => {
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, editorId, 'editor', crypto.randomUUID()).run();
+    await grantShare(mapId, editorId, 'editor');
 
     const res = await request(`/api/maps/${mapId}`, { headers: { cookie: editorCookie } });
     expect(res.status).toBe(200);
@@ -1243,9 +1135,7 @@ describe('GET /api/maps/:id — access edge cases', () => {
     const { cookie: viewerCookie, userId: viewerId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), mapId, viewerId, 'viewer', crypto.randomUUID()).run();
+    await grantShare(mapId, viewerId, 'viewer');
 
     const res = await request(`/api/maps/${mapId}`, { headers: { cookie: viewerCookie } });
     expect(res.status).toBe(200);

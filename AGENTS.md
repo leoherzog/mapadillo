@@ -6,7 +6,7 @@ This file provides guidance to Claude Code, Codex, Gemini, etc when working with
 
 ### npm install / npm update
 
-`.npmrc` authenticates against private registries for Web Awesome Pro and Font Awesome Pro using `FONTAWESOME_AUTH_TOKEN` and `WEBAWESOME_NPM_TOKEN`. These tokens live in `.dev.vars`. Export them before running any install or update command:
+`.npmrc` authenticates against the private Web Awesome Pro registry using `WEBAWESOME_NPM_TOKEN`. The token lives in `.dev.vars`. Export it before running any install or update command:
 
 ```bash
 export $(cat .dev.vars | xargs) && npm install
@@ -16,9 +16,11 @@ export $(cat .dev.vars | xargs) && npm update
 ### Frontend (root)
 ```bash
 npm run dev          # Vite dev server (frontend only)
-npm run build        # tsc + vite build → dist/
+npm run build        # tsc -b + vite build → dist/
 npm run preview      # Preview built dist/
-npm run test:ui      # Run frontend tests (vitest, node env)
+npm run test:ui      # Frontend tests (vitest, node env)
+npm test             # Worker typecheck + worker tests
+npm run test:all     # Frontend tests, then worker typecheck + worker tests
 ```
 
 ### Worker (full-stack local dev)
@@ -28,9 +30,15 @@ cd worker && npm run dev           # Worker only (wrangler dev)
 cd worker && npm run migrate:local # Apply D1 migrations locally
 cd worker && npm run deploy        # Deploy to Cloudflare
 cd worker && npm run types         # Regenerate wrangler types after provisioning
-cd worker && npm test              # Run worker tests (@cloudflare/vitest-pool-workers)
+cd worker && npm run typecheck     # tsc --noEmit
+cd worker && npm test              # Worker tests (@cloudflare/vitest-pool-workers)
 cd worker && npm run test:watch    # Watch mode
+cd worker && npm run test:coverage # Istanbul coverage report
 ```
+
+### Resetting local D1
+
+If `migrate:local` applies nothing but the local tables lack the CHECK constraints in `0001_initial.sql`, delete `worker/.wrangler/state/v3/d1` and rerun it. This clears local users, sessions and maps.
 
 ### Single test file
 ```bash
@@ -56,58 +64,71 @@ cd worker && npx vitest run src/routes/maps.test.ts
 
 The Worker serves **both** the API (`/api/*`) and the Vite-built SPA static assets. `wrangler.toml` uses `run_worker_first = ["/api/*"]` — non-API paths are served directly from `dist/` with SPA fallback to `index.html`.
 
-### Shared types
+### Shared code: `shared/`
 
-`shared/types.ts` is imported by both frontend (`tsconfig.json` includes `"shared"`) and worker (relative import `../../shared/types.js`). Contains `MapData`, `Stop` (includes `route_geometry`, `dest_icon` fields), `ShareData`, `ShareRow`, `MapRole`, `SessionUser`.
+Imported by the frontend (`tsconfig.json` includes `"shared"`) and by the worker through relative imports. `shared/` is the source of truth for anything both sides validate.
+
+- `types.ts` — `MapData`, `Stop` (`PointStop | RouteStop`), `StopRow` + `rowToStop()`, `ShareData`, `ShareRow`, `MapRole` + `canEditRole()`, `SessionUser`, `ExportSettings` + `parseExportSettings()`, `ShippingAddress` + `parseShippingAddress()`, `CheckoutBody`, `PrintQuoteBody`, `Order`, `OrderStatus`
+- `paper.ts` — `PaperSize` and `Orientation` unions used by export settings and print products
+- `travel-modes.ts` — `TRAVEL_MODES` (icon, colors, ORS profile) and `isTravelMode()`
+- `units.ts` — `Units` and `VALID_UNITS`
+- `icons.ts` — `VALID_ICONS` and `DEFAULT_ICON`
+- `products.ts` — `PRODUCTS` catalog, `PRINTABLE_SIZES`, `STATUS_VARIANTS`, `ORDER_STATUSES`
 
 ### Frontend: `src/`
 
-- **Entry:** `src/index.ts` sets up the Lit `<app-shell>` and initializes auth
-- **Router:** `src/router.ts` — DIY Lit reactive controller using `URLPattern` + Navigation API (no library). Routes defined as `{ path, render, enter? }` objects. `enter()` returns a redirect path string or `void`. Routes: `/`, `/sign-in`, `/dashboard` (guarded), `/map/new` (guarded), `/map/:id` (no guard — public maps), `/preview/:id`, `/export/:id` (guarded), `/claim/:token` (guarded)
-- **Auth state:** `src/auth/auth-state.ts` — module-level singleton (`_user`, `_listeners`). Call `initAuth()` on load; `onAuthChange(fn)` for reactive components; `refreshAuth()` after passkey sign-in
+- **Entry:** `src/index.ts` registers Web Awesome components, sets the Font Awesome kit, initializes dark mode, units and auth, and mounts `<app-shell>`
+- **Router:** `src/router.ts` — DIY Lit reactive controller using `URLPattern` + Navigation API, with a `popstate` fallback. Routes are `{ path, render, enter?, fullHeight? }` objects. `enter()` returns a redirect path string or `void`. `fullHeight` makes the page fill the viewport and hides the shell footer; `router.current` is the rendered definition and `router.target` the one being entered, set before its guard runs.
+- **Route table:** declared in `src/components/app-shell.ts`. Guarded with `requireAuth`: `/dashboard`, `/map/new`, `/claim/:token`, `/order/:id`, `/order-confirmation/:orderId`, `/admin`. Unguarded: `/`, `/sign-in`, `/map/:id` (public maps), `/preview/:id`, `/export/:id` (redirects to sign-in on download). The admin page additionally authenticates its API calls with the admin secret.
+- **Navigation:** `src/nav.ts` — `navigateTo(path, { replace? })` and `signInUrl(returnTo?)`. Links use plain `href`; the router intercepts them through the Navigation API.
+- **Auth state:** `src/auth/auth-state.ts` — module-level singleton. Call `initAuth()` on load; `onAuthChange(fn)` to subscribe; `refreshAuth()` after passkey sign-in. `src/auth/auth-controller.ts` exposes `AuthController`, which re-renders a Lit host on auth changes.
 - **Auth client:** `src/auth/auth-client.ts` — `createAuthClient()` from `better-auth/client`. Methods: `signIn.social({ provider })`, `signIn.passkey()`, `signUp.email()`, `signOut()`, `getSession()`
-- **Auth guard:** `src/auth/auth-guard.ts` — used as `enter()` in route definitions
-- **Services:** `src/services/` — `api-client.ts` base fetch wrapper (same-origin, no CORS); `maps.ts` typed CRUD wrappers; `geocoding.ts` → `/api/geocode`; `routing.ts` → `/api/route`
-- **Map:** `src/map/map-controller.ts` manages MapLibre instance, draws stops + route segments; `src/map/map-export.ts` handles PDF/image export via `@watergis/maplibre-gl-export` + jsPDF
-- **Config:** `src/config/travel-modes.ts`, `src/config/map.ts` — travel mode definitions and map constants
-- **Styles:** `src/styles/card-shared.ts` (shared CSS for point-card + route-card), `src/styles/page-layout.ts` (shared page layout: `wa-split-panel` on desktop, `wa-drawer` on mobile), `src/styles/wa-utilities.ts` (Web Awesome utility classes)
-- **Utils:** `src/utils/geo.ts` — `isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `sanitizeFilename()`. Distance-units detection lives in `src/units.ts` (`getUnits()`, `setUnits()`, `toggleUnits()` — backed by `detectDefault()` from `navigator.language` + localStorage + server sync for authenticated users)
-- **Pages:** `landing-page.ts`, `sign-in-page.ts`, `dashboard-page.ts`, `trip-builder-page.ts`, `claim-page.ts`, `map-preview-page.ts`, `map-page-base.ts` (shared base class), `export-page.ts`
+- **Auth guard:** `src/auth/auth-guard.ts` — `requireAuth`, used as `enter()`; redirects to `signInUrl()`
+- **Preferences:** `src/units.ts` (distance units: locale default, localStorage, server sync via `/api/user/preferences` while signed in) and `src/dark-mode.ts` (explicit choice or `prefers-color-scheme`, applies `wa-dark`). Both are built on `createPreference()` in `src/utils/preference.ts`; components subscribe with `StoreController` from `src/utils/store-controller.ts`.
+- **Services:** `src/services/` — `api-client.ts` base fetch wrapper (same-origin, `ApiError`); `maps.ts` typed map, stop and sharing wrappers; `orders.ts` image upload, checkout, quote and order wrappers; `geocoding.ts` → `/api/geocode` (returns `[]` on failure); `routing.ts` → `/api/route` for drive/walk/bike, client-side geometry for plane/boat, straight-line fallback on failure
+- **Map:** `src/map/map-controller.ts` (`MapController` draws items as GeoJSON layers; `renderMarkerCanvas()`, `settle()`); `src/map/map-export.ts` (`renderMapCanvas()` renders an offscreen MapLibre map at 300 DPI, capped to 80% of the GPU max texture size or 4096px; PNG/JPEG/PDF downloads via `canvas.toBlob` and jsPDF; `renderToBlob()` for print orders); `src/map/mockup-renderer.ts` (poster mockup on the export page); `src/map/styles/kid-drawn.ts` (transforms the OpenFreeMap Bright style)
+- **Config:** `src/config/map.ts` (`MAP_STYLE_URL`, `resolveMapStyle()` returns the cached kid-drawn style); `src/config/travel-modes.ts` re-exports `TRAVEL_MODES` from `shared/` plus color lookup tables
+- **Components:** `src/components/` — `app-shell`, `map-view`, `map-card`, `item-list`, `point-card`, `route-card`, `endpoint-editor.ts` (shared endpoint template for both cards), `location-search`, `icon-picker`, `travel-mode-picker`, `share-dialog`, `user-menu`; `ui.ts` has template helpers `errorCallout()`, `roleBadge()`, `orderStatusBadge()`
+- **Styles:** `src/styles/` — `theme.css`, `global.css`, `card-shared.ts` (point-card + route-card), `page-layout.ts` (trip builder `wa-split-panel` on desktop, `wa-drawer` on mobile, plus `familyNameStyles`), `content-page.ts` (centered non-map pages), `heading-shared.ts`, `hidden-map.ts` (off-screen render containers), `wa-utilities.ts` (Web Awesome utility classes)
+- **Utils:** `src/utils/` — `geo.ts` (`isDraftCoord()`, `formatDistance()`, `haversineDistance()`, `sanitizeFilename()`), `countries.ts` (shipping countries), `existing-locations.ts` (autocomplete suggestions from a map's stops), `form.ts` (`fieldValue()`, `fieldChecked()` for Web Awesome form events), `preference.ts`, `store-controller.ts`
+- **Pages:** `landing-page.ts`, `sign-in-page.ts`, `dashboard-page.ts`, `claim-page.ts`, `admin-page.ts`, `order-confirmation-page.ts`, and `map-page-base.ts`, the base class for `trip-builder-page.ts`, `map-preview-page.ts`, `export-page.ts` and `order-page.ts`
 
 ### Worker: `worker/src/`
 
-- **Entry:** `worker/src/index.ts` — Hono app, mounts all routes
-- **Auth:** Better Auth instance in `worker/src/auth.ts`, mounted at `/api/auth/*`
-- **Middleware:** `worker/src/middleware/auth.ts` (single `authMiddleware(required)` factory exporting both `requireAuth` and `optionalAuth`, attaches `c.get('user')`), `worker/src/middleware/rate-limit.ts`
-- **Routes:** `maps.ts` (CRUD + role checks via `getMapWithRole`), `sharing.ts` (shares + claim), `user-preferences.ts` (per-account units), `orders.ts` (R2 upload, Stripe Checkout, Prodigi quote, user + admin order CRUD), `webhooks.ts` (Stripe + Prodigi), `geocode.ts` (Photon proxy + KV cache), `route.ts` (ORS proxy + KV cache)
-- **Lib:** `worker/src/lib/` — `hash.ts` (crypto hashing helpers), `stripe.ts` (Stripe SDK init), `prodigi.ts` (Prodigi API client for quotes + order placement), `discord.ts` (Discord webhook notifications for order events)
-- **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic). Shared D1 row types (`MapRow`, `StopRow`, `MapRole`) live in `shared/types.ts`
-- **Migrations:** `worker/src/db/migrations/` — 14 migrations (0001–0014)
+- **Entry:** `worker/src/index.ts` — Hono app: auth wiring, CSRF check, rate limits and route mounting
+- **Auth:** Better Auth instance in `worker/src/auth.ts` (`database: env.DB`), mounted at `/api/auth/*`
+- **Middleware:** `worker/src/middleware/auth.ts` (`authMiddleware(required)` factory exporting `requireAuth` and `optionalAuth`, attaches `c.get('user')`); `worker/src/middleware/rate-limit.ts` (`rateLimit(binding, keyFn)`, answers 429)
+- **Routes:** `maps.ts` (map + stop CRUD; `getMapWithRole()`, `requireMapRole(c, minRole, { param, hideForbidden })`, `insertStopStmt()`), `sharing.ts` (shares, visibility, duplicate, `claimShareHandler`), `user-preferences.ts` (per-account units), `orders.ts` (R2 image upload + serving, Stripe Checkout, Prodigi quote, user + admin order routes), `webhooks.ts` (Stripe + Prodigi), `geocode.ts` (Photon proxy), `route.ts` (ORS proxy)
+- **Lib:** `worker/src/lib/` — `hash.ts` (`sha256Hex()`, constant-time `secretsEqual()`), `cached-proxy.ts` (`proxyWithCache()`: KV-cached upstream JSON fetch used by geocode and route), `json-body.ts` (`readJsonBody()`), `orders.ts` (`submitOrderToProdigi()`), `stripe.ts` (Stripe SDK init), `prodigi.ts` (Prodigi API client), `discord.ts` (order notifications)
+- **Handler convention:** `requireMapRole()` and `readJsonBody()` set `c.res` to the error response and return `null`; callers `return c.res`
+- **Types:** `worker/src/types.ts` defines `Env` (all bindings) and `AppEnv` (Hono generic). D1 row types live in `shared/types.ts`
+- **Migrations:** `worker/src/db/migrations/0001_initial.sql` holds the full schema
+- **Tests:** `worker/src/test-helpers.ts` — `applyTestSchema()` applies the real migrations (passed in as the `TEST_MIGRATIONS` binding by `vitest.config.ts`), plus `request()`, `createTestSession()`, `jsonRequest()`, `createMap()`, `createStop()`, `grantShare()`
 
 ### Cloudflare bindings (`worker/wrangler.toml`)
 
 | Binding | Type | Purpose |
 |--|--|--|
 | `DB` | D1 | Main relational DB (`roadtrip-db`) |
-| `API_CACHE` | KV | Geocoding (7d TTL) + routing (24h TTL) cache |
-| `ROADTRIP_PRINTS` | R2 | Print-ready images |
-| `RATE_LIMITER_PUBLIC` | Rate limit | 60/min per IP (public map GET) |
+| `API_CACHE` | KV | Geocoding + routing cache (7d TTL) |
+| `ROADTRIP_PRINTS` | R2 | Print-ready images (`roadtrip-prints`) |
+| `RATE_LIMITER_PUBLIC` | Rate limit | 60/min per key: public map GET per IP, invite claim per user, invite creation per user |
 | `RATE_LIMITER_PROXY` | Rate limit | 30/min per user (geocode + route) |
 | `RATE_LIMITER_AUTH` | Rate limit | 10/min per IP (auth routes) |
 
-Secrets set via `wrangler secret put`: `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GOOGLE_CLIENT_ID/SECRET`, `FACEBOOK_CLIENT_ID/SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PRODIGI_API_KEY`, `ORS_API_KEY`, `ADMIN_SECRET`.
+Secrets set via `wrangler secret put`: `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GOOGLE_CLIENT_ID/SECRET`, `FACEBOOK_CLIENT_ID/SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PRODIGI_API_KEY`, `PRODIGI_SANDBOX` (`"true"` selects the sandbox API), `PRODIGI_WEBHOOK_SECRET` (checked against the `X-Prodigi-Webhook-Secret` header), `ORS_API_KEY`, `ADMIN_SECRET` (Bearer token for `/api/admin/*`), `DISCORD_WEBHOOK_URL` (optional).
 
 ### Data model
 
-Two stop types stored in the `stops` table:
-- **`point`** — standalone map marker (name, lat/lng, icon, label)
-- **`route`** — A→B segment (start lat/lng/name + `dest_*` fields + `dest_icon` + `travel_mode` + `route_geometry` for cached GeoJSON)
+Two item types stored in the `stops` table:
+- **`point`** — standalone map marker (name, lat/lng, icon, label). `travel_mode` is always NULL; the API rejects one.
+- **`route`** — A→B segment (start lat/lng/name/icon + `dest_*` fields + `dest_icon` + `travel_mode` + `route_geometry` for cached GeoJSON)
 
 Each endpoint (point or route start/dest) has an icon from the curated Jelly set. The special icon value `'none'` hides the marker and label on the map entirely. When an icon changes, it propagates to all other items sharing the exact same coordinates.
 
-`travel_mode` is stored on the destination stop (NULL on the first stop). Five modes: `drive`, `walk`, `bike`, `plane`, `boat`. Plane = great-circle arc (client-computed, no ORS call). Boat = straight line.
+Five travel modes: `drive`, `walk`, `bike`, `plane`, `boat`. New routes default to `drive`. Plane = great-circle arc (client-computed, no ORS call). Boat = straight line. Enum-style columns (`travel_mode`, `type`, `visibility`, `role`, `status`, `units`) carry CHECK constraints in the schema.
 
-`export_settings` (JSON TEXT on `maps` table) persists export preferences and map viewport per map: `{ format, paperSize, orientation, center, zoom, bearing, pitch }`. Saved with 1s debounce on the preview/export page; restored on next visit (viewport via `jumpTo()` after `drawItems` auto-fit). Only saved for authenticated owners/editors. Per-user preferences (distance units) live separately under `/api/user/preferences`.
+`export_settings` (JSON TEXT on `maps` table) persists export preferences and map viewport per map: `{ format, paperSize, orientation, center, zoom, bearing, pitch }`. The preview page saves it with a 1s debounce, only for owners/editors, and restores the viewport after the `drawItems` auto-fit. Per-user preferences (distance units) live on the `user` row under `/api/user/preferences`.
 
 ### FK enforcement policy
 
@@ -126,7 +147,7 @@ All non-GET state-changing API requests (except `/api/webhooks/*`) are validated
 
 ### UI components
 
-Web Awesome Pro (`@web.awesome.me/webawesome-pro`) v3.x web components. Font Awesome Pro Jelly icons via kit `@awesome.me/kit-781a3c6be3`. Use `<wa-*>` components and `<wa-icon name="...">` throughout. `useDefineForClassFields: false` is required in tsconfig for Lit decorators.
+Web Awesome Pro (`@web.awesome.me/webawesome-pro`) v3.x web components. Font Awesome Pro Jelly icons load from the Font Awesome CDN using the kit id passed to `setKitCode` in `src/index.ts`. Use `<wa-*>` components and `<wa-icon name="...">` throughout. Every `wa-*` component used must be imported in `src/index.ts`, because the autoloader cannot see into shadow DOM. `useDefineForClassFields: false` is required in tsconfig for Lit decorators.
 
 #### Web Awesome event conventions
 
@@ -135,7 +156,7 @@ Web Awesome Pro (`@web.awesome.me/webawesome-pro`) v3.x web components. Font Awe
 
 **Popup/panel lifecycle** (wa-combobox, wa-select, wa-dialog, wa-details, wa-dropdown, wa-tooltip): `wa-show` (cancelable) → `wa-after-show` → `wa-hide` (cancelable) → `wa-after-hide`. `wa-dialog` and `wa-dropdown` include `event.detail.source` on hide.
 
-**Form inputs** (wa-input, wa-combobox, wa-select, wa-switch, wa-radio-group): emit `input` + `change` on value commit, `wa-clear` on clear button, `wa-invalid` on validation failure, `focus`/`blur` on focus changes.
+**Form inputs** (wa-input, wa-combobox, wa-select, wa-switch, wa-radio-group): emit `input` + `change` on value commit, `wa-clear` on clear button, `wa-invalid` on validation failure, `focus`/`blur` on focus changes. Read values with `fieldValue(e)` / `fieldChecked(e)` from `src/utils/form.ts`.
 
 **wa-combobox `input` caveat:** The component may `stopPropagation()` on native typing events. To listen for typing, use a capture-phase listener: `addEventListener('input', ..., true)`.
 

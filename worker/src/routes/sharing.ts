@@ -10,19 +10,11 @@ import type { Context } from 'hono';
 import type { AppEnv } from '../types.js';
 import type { MapData, Stop, StopRow, ShareRow } from '../../../shared/types.js';
 import { rowToStop } from '../../../shared/types.js';
-import { getMapWithRole } from './maps.js';
+import { rateLimit } from '../middleware/rate-limit.js';
+import { readJsonBody } from '../lib/json-body.js';
+import { getMapWithRole, insertStopStmt, requireMapRole } from './maps.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-async function getOwnedMap(
-  db: D1Database,
-  mapId: string,
-  userId: string,
-): Promise<MapData | null> {
-  const result = await getMapWithRole(db, mapId, userId);
-  if (!result || result.role !== 'owner') return null;
-  return result.map;
-}
 
 const VALID_ROLES = new Set(['viewer', 'editor']);
 
@@ -38,9 +30,8 @@ const sharing = new Hono<AppEnv>();
 
 // GET /:id/shares — list shares for a map (owner only)
 sharing.get('/:id/shares', async (c) => {
-  const userId = c.get('user')!.id;
-  const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
-  if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
+  const map = (await requireMapRole(c, 'owner', { hideForbidden: true }))?.map;
+  if (!map) return c.res;
 
   const rows = await c.env.DB.prepare(
     `SELECT ms.id, ms.user_id, ms.role, ms.claim_token, ms.claim_token_expires_at, ms.created_at,
@@ -49,11 +40,7 @@ sharing.get('/:id/shares', async (c) => {
      LEFT JOIN "user" u ON ms.user_id = u.id
      WHERE ms.map_id = ?
      ORDER BY ms.created_at`,
-  ).bind(map.id).all<ShareRow & {
-    claim_token_expires_at: string | null;
-    user_name: string | null;
-    user_email: string | null;
-  }>();
+  ).bind(map.id).all<ShareRow & { user_name: string | null; user_email: string | null }>();
 
   const shares = rows.results.map((r) => ({
     id: r.id,
@@ -61,9 +48,9 @@ sharing.get('/:id/shares', async (c) => {
     user_name: r.user_name,
     user_email: r.user_email,
     role: r.role,
-    // Omit claim_token for already-claimed shares (security: token is single-use)
-    claim_token: r.user_id !== null ? undefined : r.claim_token,
-    claim_token_expires_at: r.user_id !== null ? undefined : r.claim_token_expires_at,
+    // Hide the single-use claim token once a share is claimed.
+    claim_token: r.user_id !== null ? null : r.claim_token,
+    claim_token_expires_at: r.user_id !== null ? null : r.claim_token_expires_at,
     claimed: r.user_id !== null,
     created_at: r.created_at,
   }));
@@ -72,24 +59,12 @@ sharing.get('/:id/shares', async (c) => {
 });
 
 // POST /:id/shares — create invite link (owner only)
-sharing.post('/:id/shares', async (c) => {
-  const userId = c.get('user')!.id;
+sharing.post('/:id/shares', rateLimit('RATE_LIMITER_PUBLIC', (c) => `shares:${c.get('user')!.id}`), async (c) => {
+  const map = (await requireMapRole(c, 'owner', { hideForbidden: true }))?.map;
+  if (!map) return c.res;
 
-  // Rate limit: max 60 share creations per minute per user
-  const { success } = await c.env.RATE_LIMITER_PUBLIC.limit({ key: `shares:${userId}` });
-  if (!success) {
-    return c.json({ error: 'Too many requests' }, 429);
-  }
-
-  const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
-  if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
-
-  let body: { role?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ role?: string }>(c);
+  if (!body) return c.res;
   if (!body.role || !VALID_ROLES.has(body.role)) {
     return c.json({ error: 'role must be "viewer" or "editor"' }, 400);
   }
@@ -113,17 +88,12 @@ sharing.post('/:id/shares', async (c) => {
 
 // PUT /:id/shares/:shareId — update share role (owner only)
 sharing.put('/:id/shares/:shareId', async (c) => {
-  const userId = c.get('user')!.id;
-  const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
-  if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
+  const map = (await requireMapRole(c, 'owner', { hideForbidden: true }))?.map;
+  if (!map) return c.res;
 
   const shareId = c.req.param('shareId');
-  let body: { role?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ role?: string }>(c);
+  if (!body) return c.res;
   if (!body.role || !VALID_ROLES.has(body.role)) {
     return c.json({ error: 'role must be "viewer" or "editor"' }, 400);
   }
@@ -141,9 +111,8 @@ sharing.put('/:id/shares/:shareId', async (c) => {
 
 // DELETE /:id/shares/:shareId — remove a collaborator/invite (owner only)
 sharing.delete('/:id/shares/:shareId', async (c) => {
-  const userId = c.get('user')!.id;
-  const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
-  if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
+  const map = (await requireMapRole(c, 'owner', { hideForbidden: true }))?.map;
+  if (!map) return c.res;
 
   const shareId = c.req.param('shareId');
   const result = await c.env.DB.prepare(
@@ -159,16 +128,11 @@ sharing.delete('/:id/shares/:shareId', async (c) => {
 
 // PUT /:id/visibility — update map visibility (owner only)
 sharing.put('/:id/visibility', async (c) => {
-  const userId = c.get('user')!.id;
-  const map = await getOwnedMap(c.env.DB, c.req.param('id'), userId);
-  if (!map) return c.json({ error: 'Not found or forbidden' }, 404);
+  const map = (await requireMapRole(c, 'owner', { hideForbidden: true }))?.map;
+  if (!map) return c.res;
 
-  let body: { visibility?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ visibility?: string }>(c);
+  if (!body) return c.res;
   if (!body.visibility || !['public', 'private'].includes(body.visibility)) {
     return c.json({ error: 'visibility must be "public" or "private"' }, 400);
   }
@@ -209,16 +173,9 @@ sharing.post('/:id/duplicate', async (c) => {
   const newStops: Stop[] = [];
   if (stops.results.length > 0) {
     const stmts = stops.results.map((row) => {
-      const newId = crypto.randomUUID();
-      newStops.push(rowToStop({ ...row, id: newId, map_id: newMapId, created_at: now }));
-      return c.env.DB.prepare(
-        'INSERT INTO stops (id, map_id, position, type, name, label, latitude, longitude, icon, travel_mode, dest_name, dest_latitude, dest_longitude, dest_icon, route_geometry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).bind(
-        newId, newMapId, row.position, row.type, row.name,
-        row.label, row.latitude, row.longitude, row.icon, row.travel_mode,
-        row.dest_name, row.dest_latitude, row.dest_longitude,
-        row.dest_icon, row.route_geometry, now,
-      );
+      const copy: StopRow = { ...row, id: crypto.randomUUID(), map_id: newMapId, created_at: now };
+      newStops.push(rowToStop(copy));
+      return insertStopStmt(c.env.DB, copy);
     });
     await c.env.DB.batch(stmts);
   }
@@ -234,15 +191,9 @@ sharing.post('/:id/duplicate', async (c) => {
 
 // ── Claim share handler (mounted separately at /api/shares/claim/:token) ──
 
+/** Claim an invite token for the signed-in user. index.ts applies auth and the per-user rate limit. */
 export async function claimShareHandler(c: Context<AppEnv>) {
   const userId = c.get('user')!.id;
-
-  // Rate limit: 20 claim attempts per minute per user
-  const { success: claimAllowed } = await c.env.RATE_LIMITER_PUBLIC.limit({ key: `claim:${userId}` });
-  if (!claimAllowed) {
-    return c.json({ error: 'Too many requests' }, 429);
-  }
-
   const token = c.req.param('token');
 
   const share = await c.env.DB.prepare(
@@ -267,9 +218,7 @@ export async function claimShareHandler(c: Context<AppEnv>) {
     return c.json({ map_id: share.map_id });
   }
 
-  // Expiry check for unclaimed invites. NULL = legacy row with no expiry,
-  // treated as non-expiring for backwards compatibility with shares created
-  // before migration 0011.
+  // Expiry check for unclaimed invites. A NULL expiry never expires.
   if (share.claim_token_expires_at) {
     const expiresAt = Date.parse(share.claim_token_expires_at);
     if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {

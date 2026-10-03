@@ -4,6 +4,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types.js';
 import { VALID_UNITS } from '../../../shared/units.js';
+import { readJsonBody } from '../lib/json-body.js';
 
 const prefs = new Hono<AppEnv>();
 
@@ -21,12 +22,8 @@ prefs.get('/preferences', async (c) => {
 prefs.put('/preferences', async (c) => {
   const user = c.get('user')!;
 
-  let body: { units?: string };
-  try {
-    body = await c.req.json<{ units?: string }>();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ units?: string }>(c);
+  if (!body) return c.res;
 
   if (body.units !== undefined) {
     if (!VALID_UNITS.has(body.units)) {

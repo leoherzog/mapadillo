@@ -2,7 +2,7 @@
  * Single source of truth for travel mode definitions.
  *
  * Used by both the frontend (for styling, icons, ORS profile derivation) and
- * the worker (for server-side validation via VALID_TRAVEL_MODES).
+ * the worker (for server-side validation via isTravelMode).
  *
  * Hex colors match the resolved CSS custom property values from the rudimentary
  * palette + theme.css overrides. The CSS custom property names are only
@@ -33,7 +33,11 @@ export const TRAVEL_MODES: readonly TravelModeConfig[] = [
   { mode: 'walk',  icon: 'compass',        cssColor: 'var(--wa-color-green-50)',  hexColor: '#0f881d', orsProfile: 'foot-walking' },
 ];
 
-/** Set of valid travel mode names — derived from TRAVEL_MODES to avoid drift. */
-export const VALID_TRAVEL_MODES: ReadonlySet<string> = new Set<string>(
+const VALID_TRAVEL_MODES: ReadonlySet<unknown> = new Set<unknown>(
   TRAVEL_MODES.map((m) => m.mode),
 );
+
+/** @returns whether `value` is one of the `TravelMode` identifiers. */
+export function isTravelMode(value: unknown): value is TravelMode {
+  return VALID_TRAVEL_MODES.has(value);
+}

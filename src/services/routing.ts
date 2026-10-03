@@ -6,18 +6,11 @@
  * - Boat: straight line computed client-side (no API call)
  *
  * Returns GeoJSON LineString coordinates + distance in meters.
- *
- * For callers that need to surface "rate limited" or "session expired"
- * feedback (instead of silently falling back to a straight line),
- * {@link getSegmentRouteResult} returns a tagged union. The legacy
- * {@link getSegmentRoute} entry point preserves the existing "always returns
- * geometry" contract by falling back to a straight line on error.
  */
 
-import { apiPost, ApiError } from './api-client.js';
+import { apiPost } from './api-client.js';
 import { haversineDistance } from '../utils/geo.js';
 import { TRAVEL_MODES } from '../config/travel-modes.js';
-import type { ServiceResult } from './geocoding.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,8 +21,6 @@ export interface SegmentGeometry {
   distance: number;
 }
 
-export type { ServiceResult, ServiceFailureReason } from './geocoding.js';
-
 /** ORS travel mode -> ORS profile mapping (derived from shared config) */
 const MODE_TO_PROFILE: Record<string, string> = Object.fromEntries(
   TRAVEL_MODES.filter((m) => m.orsProfile).map((m) => [m.mode, m.orsProfile!]),
@@ -39,7 +30,8 @@ const MODE_TO_PROFILE: Record<string, string> = Object.fromEntries(
 
 /**
  * Get route geometry for a single segment, falling back to a straight line on
- * any API failure. Existing behavior used widely by the map controller.
+ * any failure except abort.
+ * @throws AbortError when the request is cancelled
  */
 export async function getSegmentRoute(
   mode: string,
@@ -53,28 +45,7 @@ export async function getSegmentRoute(
   const profile = MODE_TO_PROFILE[mode];
   if (!profile) return straightLine(start, end);
 
-  const result = await fetchORSRouteResult(profile, start, end, signal);
-  return result.ok ? result.data : straightLine(start, end);
-}
-
-/**
- * Get route geometry with tagged failure reasons so UI code can distinguish
- * rate-limit / auth / network errors from a successful result. Plane and boat
- * modes always succeed (computed client-side).
- */
-export async function getSegmentRouteResult(
-  mode: string,
-  start: [number, number],
-  end: [number, number],
-  signal?: AbortSignal,
-): Promise<ServiceResult<SegmentGeometry>> {
-  if (mode === 'plane') return { ok: true, data: greatCircleArc(start, end) };
-  if (mode === 'boat') return { ok: true, data: straightLine(start, end) };
-
-  const profile = MODE_TO_PROFILE[mode];
-  if (!profile) return { ok: true, data: straightLine(start, end) };
-
-  return fetchORSRouteResult(profile, start, end, signal);
+  return (await fetchORSRoute(profile, start, end, signal)) ?? straightLine(start, end);
 }
 
 // ── ORS proxy call ───────────────────────────────────────────────────────────
@@ -95,41 +66,27 @@ interface ORSResponse {
   }>;
 }
 
-async function fetchORSRouteResult(
+/** Fetch an ORS route; resolves to null on any failure except abort. */
+async function fetchORSRoute(
   profile: string,
   start: [number, number],
   end: [number, number],
   signal?: AbortSignal,
-): Promise<ServiceResult<SegmentGeometry>> {
+): Promise<SegmentGeometry | null> {
   let data: ORSResponse;
   try {
     data = await apiPost<ORSResponse>('/api/route', { profile, start, end }, signal);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    if (error instanceof ApiError) {
-      if (error.status === 429) return { ok: false, reason: 'rate-limit', status: 429 };
-      if (error.status === 401 || error.status === 403) {
-        return { ok: false, reason: 'unauthorized', status: error.status };
-      }
-      return { ok: false, reason: 'upstream-error', status: error.status };
-    }
-    return { ok: false, reason: 'network' };
+    return null;
   }
 
   const feature = data.features?.[0];
-  if (!feature?.geometry?.coordinates || !feature.properties?.summary) {
-    // Upstream returned a malformed/empty response — treat as upstream error so
-    // callers using the tagged variant can surface it; the legacy variant
-    // converts this to a straight-line fallback.
-    return { ok: false, reason: 'upstream-error' };
-  }
+  if (!feature?.geometry?.coordinates || !feature.properties?.summary) return null;
 
   return {
-    ok: true,
-    data: {
-      coordinates: feature.geometry.coordinates,
-      distance: feature.properties.summary.distance,
-    },
+    coordinates: feature.geometry.coordinates,
+    distance: feature.properties.summary.distance,
   };
 }
 

@@ -73,13 +73,5 @@ describe('requireAuth', () => {
         '/sign-in?returnTo=' + encodeURIComponent('/map/a b?q=hello world')
       );
     });
-
-    it('allows route if user becomes authenticated after init', async () => {
-      mockIsAuthenticated.mockReturnValue(true);
-
-      const result = await requireAuth({});
-
-      expect(result).toBeUndefined();
-    });
   });
 });

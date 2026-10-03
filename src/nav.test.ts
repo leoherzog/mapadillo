@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { navigateTo, navClick } from './nav.js';
+import { navigateTo } from './nav.js';
 
 beforeEach(() => {
   // PopStateEvent isn't available in Node — stub it.
@@ -47,41 +47,5 @@ describe('navigateTo', () => {
         expect.objectContaining({ type: 'popstate' }),
       );
     });
-  });
-});
-
-describe('navClick', () => {
-  it('returns a function', () => {
-    expect(typeof navClick('/home')).toBe('function');
-  });
-
-  it('prevents default event behavior', () => {
-    const handler = navClick('/home');
-    const event = { preventDefault: vi.fn() } as unknown as Event;
-
-    handler(event);
-
-    expect(event.preventDefault).toHaveBeenCalled();
-  });
-
-  it('navigates to the given path', () => {
-    const mockNavigate = vi.fn();
-    vi.stubGlobal('window', {
-      history: { pushState: vi.fn() },
-      dispatchEvent: vi.fn(),
-      navigation: { navigate: mockNavigate },
-    });
-
-    const handler = navClick('/trip/123');
-    handler({ preventDefault: vi.fn() } as unknown as Event);
-
-    expect(mockNavigate).toHaveBeenCalledWith('/trip/123', undefined);
-  });
-
-  it('uses history fallback when Navigation API is absent', () => {
-    const handler = navClick('/about');
-    handler({ preventDefault: vi.fn() } as unknown as Event);
-
-    expect(window.history.pushState).toHaveBeenCalledWith(null, '', '/about');
   });
 });

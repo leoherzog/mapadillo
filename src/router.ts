@@ -15,33 +15,6 @@ import { type ReactiveController, type ReactiveControllerHost } from 'lit';
 import { html, type TemplateResult } from 'lit';
 import { navigateTo } from './nav.js';
 
-// ── Navigation API + URLPattern type shims ────────────────────────────────
-// These APIs are Baseline cross-browser but not yet in all TS DOM lib versions.
-
-declare class URLPattern {
-  constructor(init?: { pathname?: string } | string, baseURL?: string);
-  exec(input: string | URL): URLPatternResult | null;
-}
-
-interface URLPatternResult {
-  pathname: { groups: Record<string, string | undefined> };
-}
-
-interface NavigationInterface extends EventTarget {
-  navigate(url: string, options?: { history?: 'push' | 'replace' | 'auto'; state?: unknown }): void;
-}
-
-interface NavigateEvent extends Event {
-  readonly destination: { readonly url: string };
-  readonly canIntercept: boolean;
-  readonly downloadRequest: string | null;
-  intercept(options?: {
-    handler?: () => Promise<void>;
-    scroll?: 'after-transition' | 'manual';
-    focusReset?: 'after-transition' | 'manual';
-  }): void;
-}
-
 // ── Public API ─────────────────────────────────────────────────────────────
 
 export interface RouteParams {
@@ -58,6 +31,8 @@ export interface RouteDefinition {
    * Return a redirect path string to redirect, or void/undefined to allow.
    */
   enter?: (params: RouteParams) => Promise<string | void> | string | void;
+  /** The page fills the viewport and the shell hides its footer. */
+  fullHeight?: boolean;
 }
 
 interface CompiledRoute {
@@ -69,11 +44,23 @@ export class Router implements ReactiveController {
   private host: ReactiveControllerHost & EventTarget;
   private routes: CompiledRoute[] = [];
   private _currentTemplate: TemplateResult = html``;
+  private _current: RouteDefinition | null = null;
+  private _target: RouteDefinition | null = null;
   private _popstateHandler: (() => void) | null = null;
   private _redirectDepth = 0;
 
   get outlet(): TemplateResult {
     return this._currentTemplate;
+  }
+
+  /** The route whose template is in `outlet`, or null for the not-found and error templates. */
+  get current(): RouteDefinition | null {
+    return this._current;
+  }
+
+  /** The route the latest navigation matched, set before its `enter` guard runs; null when nothing matched or entry threw. */
+  get target(): RouteDefinition | null {
+    return this._target;
   }
 
   constructor(
@@ -88,8 +75,8 @@ export class Router implements ReactiveController {
     }));
   }
 
-  private get _nav(): NavigationInterface | undefined {
-    return (window as unknown as { navigation?: NavigationInterface }).navigation;
+  private get _nav(): Navigation | undefined {
+    return window.navigation;
   }
 
   hostConnected(): void {
@@ -102,7 +89,7 @@ export class Router implements ReactiveController {
       return;
     }
 
-    nav.addEventListener('navigate', this._onNavigate as EventListener);
+    nav.addEventListener('navigate', this._onNavigate);
 
     void this._renderForUrl(window.location.href);
   }
@@ -112,12 +99,10 @@ export class Router implements ReactiveController {
       window.removeEventListener('popstate', this._popstateHandler);
       this._popstateHandler = null;
     }
-    this._nav?.removeEventListener('navigate', this._onNavigate as EventListener);
+    this._nav?.removeEventListener('navigate', this._onNavigate);
   }
 
-  private _onNavigate = (rawEvent: Event): void => {
-    const event = rawEvent as NavigateEvent;
-
+  private _onNavigate = (event: NavigateEvent): void => {
     if (!event.canIntercept) return;
     if (event.downloadRequest !== null) return;
 
@@ -140,6 +125,10 @@ export class Router implements ReactiveController {
     params: RouteParams,
   ): Promise<void> {
     const MAX_REDIRECTS = 5;
+    if (this._target !== definition) {
+      this._target = definition;
+      this.host.requestUpdate();
+    }
     try {
       if (definition.enter) {
         const redirect = await definition.enter(params);
@@ -155,15 +144,18 @@ export class Router implements ReactiveController {
         }
       }
       this._currentTemplate = definition.render(params);
+      this._current = definition;
       this._redirectDepth = 0;
     } catch (err) {
       console.error('[Router] Route error:', err);
+      this._current = null;
+      this._target = null;
       this._currentTemplate = html`
-        <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; }</style>
+        <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; } .router-callout wa-button { margin-top: var(--wa-space-xs); }</style>
         <wa-callout class="router-callout" variant="danger">
           <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
           <strong>Something went wrong</strong><br />
-          <wa-button href="/" size="small" variant="brand" appearance="outlined" style="margin-top: var(--wa-space-xs)">Go home</wa-button>
+          <wa-button href="/" size="small" variant="brand" appearance="outlined">Go home</wa-button>
         </wa-callout>
       `;
     }
@@ -173,6 +165,8 @@ export class Router implements ReactiveController {
   private async _renderForUrl(href: string): Promise<void> {
     const matched = this._matchRoute(href);
     if (!matched) {
+      this._current = null;
+      this._target = null;
       this._currentTemplate = this._notFoundTemplate();
       this.host.requestUpdate();
       return;
@@ -197,11 +191,11 @@ export class Router implements ReactiveController {
 
   private _notFoundTemplate(): TemplateResult {
     return html`
-      <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; }</style>
+      <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; } .router-callout wa-button { margin-top: var(--wa-space-xs); }</style>
       <wa-callout class="router-callout" variant="warning">
         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
         <strong>404 — Page not found</strong><br />
-        <wa-button href="/" size="small" variant="brand" appearance="outlined" style="margin-top: var(--wa-space-xs)">Go home</wa-button>
+        <wa-button href="/" size="small" variant="brand" appearance="outlined">Go home</wa-button>
       </wa-callout>
     `;
   }

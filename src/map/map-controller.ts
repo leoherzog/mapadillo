@@ -8,9 +8,9 @@ import * as maplibregl from 'maplibre-gl';
 import type { RouteStop, Stop } from '../services/maps.js';
 import { getSegmentRoute, type SegmentGeometry } from '../services/routing.js';
 import { isDraftCoord } from '../utils/geo.js';
-
+import { DEFAULT_ICON } from '../../shared/icons.js';
 import { TRAVEL_MODES } from '../config/travel-modes.js';
-import type { MapControllerOptions } from '../config/map-themes.js';
+import { LABEL_BROWN, LABEL_HALO } from './styles/kid-drawn.js';
 
 // ── Active map center (singleton for location bias) ─────────────────────────
 
@@ -23,21 +23,31 @@ export function getActiveMapCenter(): { lat: number; lon: number } | null {
   return { lat: c.lat, lon: c.lng };
 }
 
+/**
+ * Resolve once the map fires 'idle' or after `ms`, whichever comes first.
+ * 'idle' never fires when the map is already idle, so the timeout bounds the wait.
+ */
+export function settle(map: maplibregl.Map, ms: number): Promise<void> {
+  return Promise.race([
+    map.once('idle').then(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  ]);
+}
+
 // ── Mode-specific line styles ────────────────────────────────────────────────
 
 interface LineStyle {
   color: string;
   width: number;
   dasharray?: number[];
-  lineCap?: CanvasLineCap;
 }
 
 const LINE_STYLE_OVERRIDES: Record<string, Omit<LineStyle, 'color'>> = {
-  drive: { width: 5, lineCap: 'round' },
-  walk:  { width: 4, dasharray: [0, 2], lineCap: 'round' },
-  bike:  { width: 4, dasharray: [3, 2], lineCap: 'round' },
-  plane: { width: 3, dasharray: [1, 2], lineCap: 'round' },
-  boat:  { width: 3, dasharray: [5, 3], lineCap: 'round' },
+  drive: { width: 5 },
+  walk:  { width: 4, dasharray: [0, 2] },
+  bike:  { width: 4, dasharray: [3, 2] },
+  plane: { width: 3, dasharray: [1, 2] },
+  boat:  { width: 3, dasharray: [5, 3] },
 };
 
 const LINE_STYLES: Record<string, LineStyle> = Object.fromEntries(
@@ -164,8 +174,6 @@ function _drawFallbackDot(ctx: CanvasRenderingContext2D, cx: number, cy: number,
 interface DrawItemsResult {
   /** Per-route distances keyed by item id */
   distances: Map<string, number>;
-  /** Sum of all route distances in meters */
-  totalDistance: number;
   /** Per-route geometries keyed by item id (for caching to D1) */
   geometries: Map<string, SegmentGeometry>;
 }
@@ -181,9 +189,6 @@ export class MapController {
   /** Original (true lat/lng) features before any overlap offset. */
   private _originalFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
   private _zoomHandler?: () => void;
-  private _labelFont: string[];
-  private _labelColor: string;
-  private _labelHaloColor: string;
   private _onItemClick?: (itemId: string) => void;
   private _clickHandler?: (e: maplibregl.MapMouseEvent) => void;
   private _pointerEnterHandler?: () => void;
@@ -194,12 +199,13 @@ export class MapController {
     return this._markerFeatures;
   }
 
-  constructor(map: maplibregl.Map, options?: MapControllerOptions) {
+  /**
+   * @param map - the MapLibre map to draw on
+   * @param onItemClick - called with an item id when its marker or route line is clicked
+   */
+  constructor(map: maplibregl.Map, onItemClick?: (itemId: string) => void) {
     this._map = map;
-    this._labelFont = options?.labelFont ?? ['Noto Sans Bold'];
-    this._labelColor = options?.labelColor ?? '#333333';
-    this._labelHaloColor = options?.labelHaloColor ?? 'rgba(255, 255, 255, 0.85)';
-    this._onItemClick = options?.onItemClick;
+    this._onItemClick = onItemClick;
     _activeMap = map;
   }
 
@@ -216,7 +222,7 @@ export class MapController {
 
     const distances = new Map<string, number>();
     const geometries = new Map<string, SegmentGeometry>();
-    if (items.length === 0) return { distances, totalDistance: 0, geometries };
+    if (items.length === 0) return { distances, geometries };
 
     // Identify renderable routes and fetch geometries in parallel
     const routeGeometries = new Map<string, { mode: string; geometry: SegmentGeometry }>();
@@ -254,13 +260,12 @@ export class MapController {
         }
       }),
     );
-    if (signal.aborted) return { distances, totalDistance: 0, geometries };
+    if (signal.aborted) return { distances, geometries };
 
     // Render items in list order so later items layer on top.
     // Route line layers are added first (all of them), then markers,
     // because MapLibre markers (DOM) always sit above tile layers.
     // Within each group the list order is preserved.
-    let totalDistance = 0;
     for (const item of items) {
       if (item.type === 'route') {
         const result = routeGeometries.get(item.id);
@@ -268,7 +273,6 @@ export class MapController {
         this._renderSegmentLayer(item.id, result.mode, result.geometry);
         distances.set(item.id, result.geometry.distance);
         geometries.set(item.id, result.geometry);
-        totalDistance += result.geometry.distance;
       }
     }
 
@@ -318,7 +322,7 @@ export class MapController {
 
     for (const item of items) {
       if (item.type === 'point' && !isDraftCoord(item.latitude, item.longitude)) {
-        const icon = item.icon ?? 'location-dot';
+        const icon = item.icon ?? DEFAULT_ICON;
         if (icon !== 'none') addFeature(icon, item.name, [item.longitude, item.latitude], 0, item.id);
       }
     }
@@ -326,8 +330,8 @@ export class MapController {
     for (const item of items) {
       if (item.type === 'route') {
         if (!routeGeometries.has(item.id)) continue;
-        const startIcon = item.icon ?? 'location-dot';
-        const endIcon = item.dest_icon ?? item.icon ?? 'location-dot';
+        const startIcon = item.icon ?? DEFAULT_ICON;
+        const endIcon = item.dest_icon ?? item.icon ?? DEFAULT_ICON;
         if (startIcon !== 'none') addFeature(startIcon, item.name, [item.longitude, item.latitude], 1, item.id);
         if (endIcon !== 'none') addFeature(endIcon, item.dest_name ?? item.name, [item.dest_longitude!, item.dest_latitude!], 1, item.id);
       }
@@ -375,7 +379,7 @@ export class MapController {
     // Fit bounds to all visible coordinates (reuse pre-computed bounds)
     this._fitBounds(items, bounds);
 
-    return { distances, totalDistance, geometries };
+    return { distances, geometries };
   }
 
   /** Remove all layers and sources. */
@@ -430,7 +434,7 @@ export class MapController {
 
     const layout: Record<string, unknown> = {
       'line-join': 'round',
-      'line-cap': style.lineCap ?? 'round',
+      'line-cap': 'round',
     };
 
     this._map.addLayer({
@@ -483,7 +487,7 @@ export class MapController {
         'icon-allow-overlap': true,
         'icon-padding': 2,
         'text-field': ['get', 'name'],
-        'text-font': this._labelFont,
+        'text-font': ['Noto Sans Bold'],
         'text-size': 11,
         'text-variable-anchor': [
           'top', 'bottom', 'left', 'right',
@@ -496,8 +500,8 @@ export class MapController {
         'text-padding': 4,
       },
       paint: {
-        'text-color': this._labelColor,
-        'text-halo-color': this._labelHaloColor,
+        'text-color': LABEL_BROWN,
+        'text-halo-color': LABEL_HALO,
         'text-halo-width': 2,
       },
     });

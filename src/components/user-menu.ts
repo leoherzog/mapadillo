@@ -7,9 +7,10 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { signOut, type User } from '../auth/auth-state.js';
-import { navigateTo, navClick } from '../nav.js';
-import { isDark, toggleDarkMode } from '../dark-mode.js';
-import { getUnits, toggleUnits } from '../units.js';
+import { navigateTo } from '../nav.js';
+import { isDark, onDarkModeChange, toggleDarkMode } from '../dark-mode.js';
+import { getUnits, onUnitsChange, toggleUnits } from '../units.js';
+import { StoreController } from '../utils/store-controller.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 
 @customElement('user-menu')
@@ -17,11 +18,8 @@ export class UserMenu extends LitElement {
   @property({ type: Object }) user: User | null = null;
 
   @state() private _signingOut = false;
-  @state() private _dark = isDark();
-  @state() private _units = getUnits();
-
-  private _onDarkModeChange = () => { this._dark = isDark(); };
-  private _onUnitsChange = () => { this._units = getUnits(); };
+  private _dark = new StoreController(this, isDark, onDarkModeChange);
+  private _units = new StoreController(this, getUnits, onUnitsChange);
 
   static styles = [waUtilities, css`
     :host {
@@ -44,18 +42,6 @@ export class UserMenu extends LitElement {
     }
   `];
 
-  connectedCallback() {
-    super.connectedCallback();
-    document.addEventListener('dark-mode-change', this._onDarkModeChange);
-    document.addEventListener('units-change', this._onUnitsChange);
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    document.removeEventListener('dark-mode-change', this._onDarkModeChange);
-    document.removeEventListener('units-change', this._onUnitsChange);
-  }
-
   render() {
     if (!this.user) return nothing;
 
@@ -70,19 +56,19 @@ export class UserMenu extends LitElement {
           <span class="trigger-label wa-text-truncate">${this.user.name}</span>
         </wa-button>
 
-        <wa-dropdown-item @click=${navClick('/dashboard')}>
+        <wa-dropdown-item @click=${() => navigateTo('/dashboard')}>
           <wa-icon slot="icon" name="compass"></wa-icon>
           My Trips
         </wa-dropdown-item>
 
         <wa-dropdown-item @click=${this._handleToggleDark}>
-          <wa-icon slot="icon" name=${this._dark ? 'sun' : 'moon'}></wa-icon>
-          ${this._dark ? 'Light Mode' : 'Dark Mode'}
+          <wa-icon slot="icon" name=${this._dark.value ? 'sun' : 'moon'}></wa-icon>
+          ${this._dark.value ? 'Light Mode' : 'Dark Mode'}
         </wa-dropdown-item>
 
         <wa-dropdown-item @click=${this._handleToggleUnits}>
           <wa-icon slot="icon" name="globe"></wa-icon>
-          ${this._units === 'km' ? 'Switch to Miles' : 'Switch to Kilometers'}
+          ${this._units.value === 'km' ? 'Switch to Miles' : 'Switch to Kilometers'}
         </wa-dropdown-item>
 
         <wa-divider></wa-divider>

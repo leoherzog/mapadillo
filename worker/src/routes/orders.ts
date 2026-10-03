@@ -13,27 +13,25 @@
  * - PATCH /api/admin/orders/:id   — admin actions (submit to Prodigi)
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { AppEnv } from '../types.js';
-import { getMapWithRole } from './maps.js';
+import { getMapWithRole, requireMapRole } from './maps.js';
+import { readJsonBody } from '../lib/json-body.js';
 import { getStripe } from '../lib/stripe.js';
-import { getShippingQuote, createOrder as createProdigiOrder, isSandbox } from '../lib/prodigi.js';
+import { getShippingQuote, isSandbox } from '../lib/prodigi.js';
+import { secretsEqual } from '../lib/hash.js';
+import { submitOrderToProdigi } from '../lib/orders.js';
 import { getProductSize, buildFullSku } from '../../../shared/products.js';
-import { parseShippingAddress, type ShippingAddress } from '../../../shared/types.js';
+import { canEditRole, parseShippingAddress, type CheckoutBody, type PrintQuoteBody } from '../../../shared/types.js';
 
 const orders = new Hono<AppEnv>();
 
 // ── Image upload ──────────────────────────────────────────────────────────────
 
 orders.post('/images/:mapId', async (c) => {
-  const userId = c.get('user')!.id;
-  const mapId = c.req.param('mapId');
-
-  const result = await getMapWithRole(c.env.DB, mapId, userId);
-  if (!result) return c.json({ error: 'Map not found' }, 404);
-  if (result.role !== 'owner' && result.role !== 'editor') {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
+  const result = await requireMapRole(c, 'editor', { param: 'mapId' });
+  if (!result) return c.res;
+  const mapId = result.map.id;
 
   const formData = await c.req.parseBody();
   const file = formData['image'];
@@ -80,19 +78,8 @@ orders.get('/images/*', async (c) => {
 orders.post('/checkout', async (c) => {
   const userId = c.get('user')!.id;
 
-  let body: {
-    map_id: string;
-    product_sku: string;
-    size: string;
-    shipping_address: ShippingAddress;
-    image_key: string;
-    shipping_cost_cents?: number;
-  };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<CheckoutBody>(c);
+  if (!body) return c.res;
 
   if (!body.map_id || !body.product_sku || !body.size || !body.shipping_address) {
     return c.json({ error: 'Missing required fields' }, 400);
@@ -110,9 +97,7 @@ orders.post('/checkout', async (c) => {
   // Validate map access
   const mapResult = await getMapWithRole(c.env.DB, body.map_id, userId);
   if (!mapResult) return c.json({ error: 'Map not found' }, 404);
-  if (mapResult.role !== 'owner' && mapResult.role !== 'editor') {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
+  if (!canEditRole(mapResult.role)) return c.json({ error: 'Forbidden' }, 403);
 
   // Look up product + size
   const product = getProductSize(body.product_sku, body.size);
@@ -171,12 +156,8 @@ orders.post('/checkout', async (c) => {
 // ── Print quote ───────────────────────────────────────────────────────────────
 
 orders.post('/print-quote', async (c) => {
-  let body: { product_sku: string; size: string; country: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<PrintQuoteBody>(c);
+  if (!body) return c.res;
 
   if (!body.product_sku || !body.size || !body.country) {
     return c.json({ error: 'Missing required fields' }, 400);
@@ -236,18 +217,12 @@ orders.get('/orders/:id', async (c) => {
 
 // ── Admin orders ──────────────────────────────────────────────────────────────
 
-async function requireAdmin(c: { req: { header: (name: string) => string | undefined }; env: { ADMIN_SECRET: string }; json: (data: unknown, status: number) => Response }): Promise<Response | null> {
+/** Returns a 401 response unless the request carries `Bearer <ADMIN_SECRET>`, else null. */
+async function requireAdmin(c: Context<AppEnv>): Promise<Response | null> {
   const auth = c.req.header('authorization');
-  if (!auth) return c.json({ error: 'Unauthorized' }, 401);
-
-  const expected = `Bearer ${c.env.ADMIN_SECRET}`;
-  const encoder = new TextEncoder();
-  const a = encoder.encode(auth);
-  const b = encoder.encode(expected);
-  if (a.byteLength !== b.byteLength) return c.json({ error: 'Unauthorized' }, 401);
-
-  const isEqual = await crypto.subtle.timingSafeEqual(a, b);
-  if (!isEqual) return c.json({ error: 'Unauthorized' }, 401);
+  if (!auth || !(await secretsEqual(auth, `Bearer ${c.env.ADMIN_SECRET}`))) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   return null;
 }
 
@@ -256,29 +231,16 @@ orders.get('/admin/orders', async (c) => {
   if (denied) return denied;
 
   const status = c.req.query('status');
-  let query: string;
-  const binds: string[] = [];
+  const binds = status ? [status] : [];
 
-  if (status) {
-    query = `SELECT o.*, m.name as map_name, u.email as user_email
-             FROM orders o
-             JOIN maps m ON o.map_id = m.id
-             JOIN "user" u ON o.user_id = u.id
-             WHERE o.status = ?
-             ORDER BY o.created_at DESC LIMIT 200`;
-    binds.push(status);
-  } else {
-    query = `SELECT o.*, m.name as map_name, u.email as user_email
-             FROM orders o
-             JOIN maps m ON o.map_id = m.id
-             JOIN "user" u ON o.user_id = u.id
-             ORDER BY o.created_at DESC LIMIT 200`;
-  }
-
-  const stmt = binds.length
-    ? c.env.DB.prepare(query).bind(...binds)
-    : c.env.DB.prepare(query);
-  const result = await stmt.all();
+  const result = await c.env.DB.prepare(
+    `SELECT o.*, m.name as map_name, u.email as user_email
+     FROM orders o
+     JOIN maps m ON o.map_id = m.id
+     JOIN "user" u ON o.user_id = u.id
+     ${status ? 'WHERE o.status = ?' : ''}
+     ORDER BY o.created_at DESC LIMIT 200`,
+  ).bind(...binds).all();
   return c.json(result.results);
 });
 
@@ -304,12 +266,8 @@ orders.patch('/admin/orders/:id', async (c) => {
   if (denied) return denied;
 
   const orderId = c.req.param('id');
-  let body: { image_url?: string; action?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  const body = await readJsonBody<{ image_url?: string; action?: string }>(c);
+  if (!body) return c.res;
 
   const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?')
     .bind(orderId).first<{
@@ -341,24 +299,15 @@ orders.patch('/admin/orders/:id', async (c) => {
       return c.json({ error: 'Order has no (or malformed) shipping address' }, 400);
     }
 
-    const baseUrl = c.env.BETTER_AUTH_URL;
-    const imageUrl = order.image_url.startsWith('/')
-      ? `${baseUrl}${order.image_url}`
-      : order.image_url;
-
     try {
-      const prodigiResult = await createProdigiOrder(c.env.PRODIGI_API_KEY, {
-        orderId: order.id,
-        sku: order.product_sku,
-        imageUrl,
+      const prodigiOrderId = await submitOrderToProdigi(c.env, {
+        id: order.id,
+        product_sku: order.product_sku,
+        image_url: order.image_url,
         shippingAddress: address,
-      }, isSandbox(c.env.PRODIGI_SANDBOX));
+      }, now);
 
-      await c.env.DB.prepare(
-        'UPDATE orders SET prodigi_order_id = ?, status = ?, updated_at = ? WHERE id = ?',
-      ).bind(prodigiResult.prodigiOrderId, 'submitted', now, orderId).run();
-
-      return c.json({ success: true, prodigi_order_id: prodigiResult.prodigiOrderId });
+      return c.json({ success: true, prodigi_order_id: prodigiOrderId });
     } catch (err) {
       console.error('Admin Prodigi submission failed:', err);
       return c.json({ error: `Prodigi submission failed: ${err instanceof Error ? err.message : 'Unknown error'}` }, 502);

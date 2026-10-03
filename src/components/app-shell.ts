@@ -4,13 +4,12 @@
  *
  * Header shows "Sign In" when unauthenticated, user-menu when authenticated.
  */
-import { LitElement, html, css, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
 import { Router } from '../router.js';
 import { requireAuth } from '../auth/auth-guard.js';
-import { getUser, onAuthChange, type User } from '../auth/auth-state.js';
+import { AuthController } from '../auth/auth-controller.js';
 import { waUtilities } from '../styles/wa-utilities.js';
-import { navClick } from '../nav.js';
 
 // Page imports
 import '../pages/landing-page.js';
@@ -27,8 +26,8 @@ import './user-menu.js';
 
 @customElement('app-shell')
 export class AppShell extends LitElement {
-  @state() private _user: User | null = null;
-  private _unsubAuth?: () => void;
+  @property({ type: Boolean, reflect: true, attribute: 'no-footer' }) noFooter = false;
+  private _auth = new AuthController(this);
 
   // Router is a reactive controller — it calls requestUpdate() when the route changes
   private router = new Router(this, [
@@ -48,14 +47,17 @@ export class AppShell extends LitElement {
     {
       path: '/map/new',
       enter: requireAuth,
+      fullHeight: true,
       render: () => html`<trip-builder-page .mapId=${''}></trip-builder-page>`,
     },
     {
       path: '/map/:id',
+      fullHeight: true,
       render: ({ id }) => html`<trip-builder-page .mapId=${id ?? ''}></trip-builder-page>`,
     },
     {
       path: '/preview/:id',
+      fullHeight: true,
       render: ({ id }) => html`<map-preview-page .mapId=${id ?? ''}></map-preview-page>`,
     },
     {
@@ -124,8 +126,7 @@ export class AppShell extends LitElement {
      * wa-page has no built-in attribute for this — its footer always pushes
      * content below the viewport by design. These ::part() overrides constrain
      * the internal grid chain so trip-builder-page fills exactly 100dvh.
-     * Toggled via [no-footer] host attribute set in render().
-     * See PLAN.md M8 Implementation Notes for rationale.
+     * Toggled via the [no-footer] host attribute, reflected from the route's fullHeight flag.
      */
 
     /* Cap the outermost grid at viewport height (internal: min-height: 100dvh) */
@@ -175,46 +176,30 @@ export class AppShell extends LitElement {
     }
   `];
 
-  connectedCallback() {
-    super.connectedCallback();
-    this._user = getUser();
-    this._unsubAuth = onAuthChange(() => {
-      this._user = getUser();
-    });
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsubAuth?.();
-  }
-
-  private get _isFullHeight() {
-    const p = location.pathname;
-    return p.startsWith('/map/') || p === '/map/new' || p.startsWith('/preview/');
+  willUpdate(changed: PropertyValues<this>) {
+    super.willUpdate(changed);
+    // From the target route so the layout is set while an enter guard such as requireAuth is pending.
+    this.noFooter = this.router.target?.fullHeight ?? false;
   }
 
   render() {
-    const fullHeight = this._isFullHeight;
-    this.toggleAttribute('no-footer', fullHeight);
-
     return html`
       <wa-page disable-sticky="header">
         <div slot="header" class="header-inner wa-split wa-align-items-center wa-gap-m">
-          <a class="logo wa-cluster wa-align-items-center wa-gap-xs" href="/" @click=${navClick('/')}>
+          <a class="logo wa-cluster wa-align-items-center wa-gap-xs" href="/">
             <wa-icon name="map"></wa-icon>
             Mapadillo
           </a>
 
           <nav class="wa-cluster wa-align-items-center wa-gap-s" aria-label="Site navigation">
-            ${this._user
-              ? html`<user-menu .user=${this._user}></user-menu>`
+            ${this._auth.user
+              ? html`<user-menu .user=${this._auth.user}></user-menu>`
               : html`
                   <wa-button
                     size="small"
                     variant="brand"
                     appearance="outlined"
                     href="/sign-in"
-                    @click=${navClick('/sign-in')}
                   >
                     Sign In
                   </wa-button>
@@ -224,7 +209,7 @@ export class AppShell extends LitElement {
 
         ${this.router.outlet}
 
-        ${fullHeight ? nothing : html`
+        ${this.noFooter ? nothing : html`
           <div slot="footer" class="footer-inner">
             &copy; ${new Date().getFullYear()} Mapadillo
           </div>

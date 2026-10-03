@@ -19,7 +19,7 @@ vi.mock('./auth/auth-state.js', () => ({
   onAuthChange: mockOnAuthChange,
 }));
 
-import { getUnits, setUnits, toggleUnits, initUnits } from './units.js';
+import { getUnits, setUnits, toggleUnits, initUnits, onUnitsChange } from './units.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,31 +47,9 @@ function stubLocale(region: string | undefined) {
   } as unknown as typeof Intl);
 }
 
-/** Minimal EventTarget-based document stub for Node. */
-function createDocumentStub() {
-  const target = new EventTarget();
-  return {
-    addEventListener: target.addEventListener.bind(target),
-    removeEventListener: target.removeEventListener.bind(target),
-    dispatchEvent: target.dispatchEvent.bind(target),
-  };
-}
-
-// Provide CustomEvent in Node (not available natively before Node 19+)
-if (typeof globalThis.CustomEvent === 'undefined') {
-  (globalThis as any).CustomEvent = class CustomEvent extends Event {
-    detail: any;
-    constructor(type: string, init?: { detail?: any }) {
-      super(type);
-      this.detail = init?.detail;
-    }
-  };
-}
-
 beforeEach(() => {
-  // Provide localStorage, document, and navigator.language for Node environment
+  // Provide localStorage and navigator.language for Node environment
   (globalThis as any).localStorage = createLocalStorage();
-  (globalThis as any).document = createDocumentStub();
   Object.defineProperty(globalThis, 'navigator', {
     value: { language: 'en-US' },
     writable: true,
@@ -82,7 +60,6 @@ beforeEach(() => {
   mockApiPut.mockReset();
   mockIsAuthenticated.mockReturnValue(false);
   mockOnAuthChange.mockReset();
-  vi.restoreAllMocks();
 });
 
 // ── getUnits ─────────────────────────────────────────────────────────────────
@@ -138,16 +115,25 @@ describe('setUnits', () => {
     expect(localStorage.getItem('mapadillo-units')).toBe('mi');
   });
 
-  it('dispatches "units-change" event with detail', () => {
-    const handler = vi.fn();
-    document.addEventListener('units-change', handler);
+  it('notifies subscribers', () => {
+    const handler = vi.fn(() => getUnits());
+    const unsubscribe = onUnitsChange(handler);
 
     setUnits('km');
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect((handler.mock.calls[0][0] as CustomEvent).detail).toEqual({ units: 'km' });
+    expect(handler).toHaveReturnedWith('km');
 
-    document.removeEventListener('units-change', handler);
+    unsubscribe();
+  });
+
+  it('stops notifying after unsubscribe', () => {
+    const handler = vi.fn();
+    onUnitsChange(handler)();
+
+    setUnits('mi');
+
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('calls apiPut when authenticated', () => {
@@ -194,17 +180,17 @@ describe('toggleUnits', () => {
     expect(localStorage.getItem('mapadillo-units')).toBe('km');
   });
 
-  it('dispatches event on toggle', () => {
+  it('notifies subscribers on toggle', () => {
     localStorage.setItem('mapadillo-units', 'km');
-    const handler = vi.fn();
-    document.addEventListener('units-change', handler);
+    const handler = vi.fn(() => getUnits());
+    const unsubscribe = onUnitsChange(handler);
 
     toggleUnits();
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect((handler.mock.calls[0][0] as CustomEvent).detail).toEqual({ units: 'mi' });
+    expect(handler).toHaveReturnedWith('mi');
 
-    document.removeEventListener('units-change', handler);
+    unsubscribe();
   });
 });
 
@@ -277,11 +263,11 @@ describe('initUnits', () => {
     expect(localStorage.getItem('mapadillo-units')).toBe('mi');
   });
 
-  it('dispatches event when syncing valid units from server', async () => {
+  it('notifies subscribers without a PUT when syncing valid units from server', async () => {
     mockIsAuthenticated.mockReturnValue(true);
     mockApiGet.mockResolvedValue({ units: 'km' });
-    const handler = vi.fn();
-    document.addEventListener('units-change', handler);
+    const handler = vi.fn(() => getUnits());
+    const unsubscribe = onUnitsChange(handler);
 
     initUnits();
 
@@ -291,8 +277,9 @@ describe('initUnits', () => {
     await vi.waitFor(() => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
-    expect((handler.mock.calls[0][0] as CustomEvent).detail).toEqual({ units: 'km' });
+    expect(handler).toHaveReturnedWith('km');
+    expect(mockApiPut).not.toHaveBeenCalled();
 
-    document.removeEventListener('units-change', handler);
+    unsubscribe();
   });
 });

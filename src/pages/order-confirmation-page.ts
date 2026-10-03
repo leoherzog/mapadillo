@@ -6,9 +6,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 import { contentPageStyles } from '../styles/content-page.js';
-import { navClick } from '../nav.js';
 import { getOrder, type Order } from '../services/orders.js';
-import { STATUS_VARIANTS } from '../../shared/products.js';
+import { errorCallout, orderStatusBadge } from '../components/ui.js';
 
 @customElement('order-confirmation-page')
 export class OrderConfirmationPage extends LitElement {
@@ -21,6 +20,10 @@ export class OrderConfirmationPage extends LitElement {
     .success-icon {
       font-size: 3rem;
       color: var(--wa-color-success-50);
+    }
+
+    wa-callout wa-button {
+      margin-top: var(--wa-space-s);
     }
 
     .order-ref {
@@ -62,40 +65,34 @@ export class OrderConfirmationPage extends LitElement {
     }
 
     if (this._error) {
-      return html`
-        <wa-callout variant="danger">
-          <wa-icon slot="icon" name="circle-xmark"></wa-icon>
-          ${this._error}
-        </wa-callout>
-      `;
+      return errorCallout(this._error);
     }
 
+    const order = this._order;
+    if (!order) return nothing;
+
     return html`
-      <div class="wa-stack wa-gap-l wa-align-items-center" style="text-align: center;">
+      <div class="wa-stack wa-gap-l wa-align-items-center wa-text-center">
         <wa-icon class="success-icon" name="circle-check"></wa-icon>
         <h1>Thank You!</h1>
         <p>We're preparing your map for print! You'll receive a shipping notification within 1\u20132 business days.</p>
 
-        ${this._order ? html`
-          <p class="order-ref">Order reference: ${this._order.id.slice(0, 8).toUpperCase()}</p>
-          <p>Status: <wa-badge variant=${STATUS_VARIANTS[this._order.status] ?? 'neutral'}>${this._order.status.replace(/_/g, ' ')}</wa-badge></p>
+        <p class="order-ref">Order reference: ${order.id.slice(0, 8).toUpperCase()}</p>
+        <p>Status: ${orderStatusBadge(order.status)}</p>
 
-          ${this._order.tracking_url ? html`
-            <wa-callout variant="success">
-              <wa-icon slot="icon" name="truck"></wa-icon>
-              Your order has shipped!
-              <br />
-              <wa-button variant="brand" size="small" href=${this._order.tracking_url} target="_blank" style="margin-top: var(--wa-space-s)">
-                <wa-icon slot="start" name="arrow-up-right-from-square"></wa-icon>
-                Track Package
-              </wa-button>
-            </wa-callout>
-          ` : nothing}
-        ` : html`
-          <p class="order-ref">Order reference: ${this.orderId.slice(0, 8).toUpperCase()}</p>
-        `}
+        ${order.tracking_url ? html`
+          <wa-callout variant="success">
+            <wa-icon slot="icon" name="truck"></wa-icon>
+            Your order has shipped!
+            <br />
+            <wa-button variant="brand" size="small" href=${order.tracking_url} target="_blank">
+              <wa-icon slot="start" name="arrow-up-right-from-square"></wa-icon>
+              Track Package
+            </wa-button>
+          </wa-callout>
+        ` : nothing}
 
-        <wa-button variant="brand" href="/dashboard" @click=${navClick('/dashboard')}>
+        <wa-button variant="brand" href="/dashboard">
           <wa-icon slot="start" name="map"></wa-icon>
           Back to Dashboard
         </wa-button>
