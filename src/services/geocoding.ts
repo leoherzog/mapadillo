@@ -24,8 +24,7 @@ export interface GeocodingResult {
 
 /**
  * Search for places by name. Returns up to `limit` results, or `[]` on any
- * failure except abort. Debouncing is the caller's responsibility.
- * @throws AbortError when the request is cancelled
+ * failure. Debouncing is the caller's responsibility.
  */
 export async function searchPlaces(
   query: string,
@@ -46,22 +45,30 @@ export async function searchPlaces(
   let data: PhotonResponse;
   try {
     data = await apiGet<PhotonResponse>(`/api/geocode?${params}`);
-  } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') throw e;
+  } catch {
     return [];
   }
   if (!data.features) return [];
 
-  return data.features
-    .filter((f) => f.properties?.name && f.geometry?.coordinates?.length >= 2)
-    .map((f) => ({
-      name: f.properties.name,
+  return data.features.flatMap((f) => {
+    const name = placeLabel(f.properties);
+    if (!name || !(f.geometry?.coordinates?.length >= 2)) return [];
+    return [{
+      name,
       city: f.properties.city,
       state: f.properties.state,
       country: f.properties.country,
       latitude: f.geometry.coordinates[1],
       longitude: f.geometry.coordinates[0],
-    }));
+    }];
+  });
+}
+
+/** Display label: the place name, or "<housenumber> <street>" for unnamed address points. */
+function placeLabel(p: PhotonFeature['properties'] | undefined): string | undefined {
+  if (!p) return undefined;
+  if (p.name) return p.name;
+  return p.street ? [p.housenumber, p.street].filter(Boolean).join(' ') : undefined;
 }
 
 /** Photon GeoJSON response shape (subset we care about). */
@@ -73,7 +80,9 @@ interface PhotonResponse {
 interface PhotonFeature {
   type: 'Feature';
   properties: {
-    name: string;
+    name?: string;
+    street?: string;
+    housenumber?: string;
     city?: string;
     state?: string;
     country?: string;

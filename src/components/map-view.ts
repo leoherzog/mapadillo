@@ -3,17 +3,18 @@
  *
  * Uses OpenFreeMap Bright style with kid-drawn transform (free OSM vector tiles, no API key).
  * Renders inside shadow DOM with MapLibre's CSS adopted into the shadow root.
+ * Fires 'map-ready' once the map loads, or 'map-error' if the style or WebGL fails.
  */
 import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import * as maplibregl from 'maplibre-gl';
+import '../map/maplibre-worker.js';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
 import { resolveMapStyle } from '../config/map.js';
 
 @customElement('map-view')
 export class MapView extends LitElement {
   private _map?: maplibregl.Map;
-  private _resizeObserver?: ResizeObserver;
 
   @state() private _styleError = false;
 
@@ -54,42 +55,46 @@ export class MapView extends LitElement {
     try {
       style = await resolveMapStyle();
     } catch (err) {
-      console.error('Map style failed to load:', err);
-      this._styleError = true;
+      this._fail('Map style failed to load:', err);
       return;
     }
     // The element may have been removed while the style was loading.
     if (!this.isConnected) return;
 
-    this._map = new maplibregl.Map({
-      container,
-      style,
-      center: [0, 20],
-      zoom: 2,
-      attributionControl: false,
-    });
-
-    this._map.addControl(new maplibregl.AttributionControl({ compact: true }));
+    try {
+      this._map = new maplibregl.Map({
+        container,
+        style,
+        center: [0, 20],
+        zoom: 2,
+        attributionControl: { compact: true },
+      });
+    } catch (err) {
+      this._fail('Map failed to initialize:', err);
+      return;
+    }
 
     this._map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
     this._map.on('load', () => {
       this.dispatchEvent(new CustomEvent('map-ready', { bubbles: true, composed: true }));
     });
+  }
 
-    // Resize map when container dimensions change
-    this._resizeObserver = new ResizeObserver(() => this._map?.resize());
-    this._resizeObserver.observe(container);
+  /** Show the error callout and fire 'map-error'; the map stays undefined. */
+  private _fail(message: string, err: unknown): void {
+    console.error(message, err);
+    this._styleError = true;
+    this.dispatchEvent(new CustomEvent('map-error', { bubbles: true, composed: true }));
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._resizeObserver?.disconnect();
     this._map?.remove();
     this._map = undefined;
   }
 
-  /** The underlying MapLibre map; undefined until the 'map-ready' event fires. */
+  /** The underlying MapLibre map, created once the style resolves; wait for 'map-ready' before drawing. */
   get map(): maplibregl.Map | undefined {
     return this._map;
   }

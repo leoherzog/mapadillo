@@ -9,11 +9,12 @@ export interface ProductSize {
   label: string;
   size: PaperSize;
   priceCents: number;
-  shippingPlaceholderCents: number;
 }
 
 export interface Product {
   sku: string;
+  /** Stored as orders.product_type. */
+  type: 'poster' | 'canvas';
   name: string;
   description: string;
   sizes: readonly ProductSize[];
@@ -22,28 +23,27 @@ export interface Product {
 export const PRODUCTS = [
   {
     sku: 'GLOBAL-BLP',
+    type: 'poster',
     name: 'Budget Poster',
-    description: 'Affordable matte poster print, perfect for framing.',
+    description: 'Affordable silk-finish poster print, perfect for framing.',
     sizes: [
-      { label: '18" × 24"', size: '18x24', priceCents: 2999, shippingPlaceholderCents: 999 },
-      { label: '24" × 36"', size: '24x36', priceCents: 3999, shippingPlaceholderCents: 999 },
-      { label: '40" × 60"', size: '40x60', priceCents: 4999, shippingPlaceholderCents: 999 },
+      { label: '18" × 24"', size: '18x24', priceCents: 2999 },
+      { label: '24" × 36"', size: '24x36', priceCents: 3999 },
+      { label: '40" × 60"', size: '40x60', priceCents: 4999 },
     ],
   },
   {
     sku: 'ECO-ROL',
+    type: 'canvas',
     name: 'Eco Rolled Canvas',
     description: 'Museum-quality canvas print, rolled and shipped in a tube.',
     sizes: [
-      { label: '18" × 24"', size: '18x24', priceCents: 3999, shippingPlaceholderCents: 999 },
-      { label: '24" × 36"', size: '24x36', priceCents: 4999, shippingPlaceholderCents: 999 },
-      { label: '40" × 60"', size: '40x60', priceCents: 5999, shippingPlaceholderCents: 999 },
+      { label: '18" × 24"', size: '18x24', priceCents: 3999 },
+      { label: '24" × 36"', size: '24x36', priceCents: 4999 },
+      { label: '40" × 60"', size: '40x60', priceCents: 5999 },
     ],
   },
 ] as const satisfies readonly Product[];
-
-/** Paper sizes offered by at least one product. */
-export type PrintablePaperSize = (typeof PRODUCTS)[number]['sizes'][number]['size'];
 
 export const PRINTABLE_SIZES: ReadonlySet<string> = new Set<string>(
   PRODUCTS.flatMap((p) => p.sizes.map((s) => s.size)),
@@ -61,15 +61,6 @@ export function buildFullSku(productSku: string, size: string): string {
   return `${productSku}-${size.toUpperCase()}`;
 }
 
-/**
- * Narrow a product size string to the PaperSize used by the export pipeline.
- * @throws when no product offers the size.
- */
-export function skuToPaperSize(size: string): PrintablePaperSize {
-  if (PRINTABLE_SIZES.has(size)) return size as PrintablePaperSize;
-  throw new Error(`Unknown printable size: ${size}`);
-}
-
 /** Maps order status strings to wa-badge variant names. */
 export const STATUS_VARIANTS: Record<OrderStatus, string> = {
   pending_payment: 'warning',
@@ -85,3 +76,13 @@ export const STATUS_VARIANTS: Record<OrderStatus, string> = {
 
 /** Every order status, in lifecycle order. */
 export const ORDER_STATUSES = Object.keys(STATUS_VARIANTS) as OrderStatus[];
+
+/** Title-case label for an order status, e.g. 'in_production' -> 'In Production'. */
+export function statusLabel(status: OrderStatus): string {
+  return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Short customer-facing order reference. */
+export function orderRef(id: string): string {
+  return id.slice(0, 8).toUpperCase();
+}

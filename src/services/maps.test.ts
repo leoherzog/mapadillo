@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 const { mockApiGet, mockApiPost, mockApiPut, mockApiDelete } = vi.hoisted(() => ({
   mockApiGet: vi.fn(),
@@ -20,13 +20,6 @@ import {
   getMapShares, generateShareLink, updateShare, deleteShare,
   updateVisibility, claimShareToken, duplicateMap,
 } from './maps.js';
-
-beforeEach(() => {
-  mockApiGet.mockReset();
-  mockApiPost.mockReset();
-  mockApiPut.mockReset();
-  mockApiDelete.mockReset();
-});
 
 // ── Map operations ───────────────────────────────────────────────────────────
 
@@ -77,7 +70,7 @@ describe('updateMap', () => {
 
     const result = await updateMap('1', { name: 'Updated' });
 
-    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { name: 'Updated' });
+    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { name: 'Updated' }, undefined);
     expect(result.name).toBe('Updated');
   });
 
@@ -86,7 +79,15 @@ describe('updateMap', () => {
 
     await updateMap('1', { family_name: 'Smith' });
 
-    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { family_name: 'Smith' });
+    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { family_name: 'Smith' }, undefined);
+  });
+
+  it('forwards keepalive', async () => {
+    mockApiPut.mockResolvedValue({ id: '1' });
+
+    await updateMap('1', { name: 'Updated' }, true);
+
+    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/1', { name: 'Updated' }, true);
   });
 });
 
@@ -135,8 +136,16 @@ describe('updateStop', () => {
 
     const result = await updateStop('m1', 's1', { name: 'Updated' });
 
-    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/m1/stops/s1', { name: 'Updated' });
+    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/m1/stops/s1', { name: 'Updated' }, undefined);
     expect(result.name).toBe('Updated');
+  });
+
+  it('forwards keepalive', async () => {
+    mockApiPut.mockResolvedValue({ id: 's1' });
+
+    await updateStop('m1', 's1', { name: 'Updated' }, true);
+
+    expect(mockApiPut).toHaveBeenCalledWith('/api/maps/m1/stops/s1', { name: 'Updated' }, true);
   });
 });
 
@@ -177,7 +186,7 @@ describe('getMapShares', () => {
 
 describe('generateShareLink', () => {
   it('POSTs to /api/maps/:mapId/shares with role', async () => {
-    mockApiPost.mockResolvedValue({ claim_token: 'tok', url: '/claim/tok' });
+    mockApiPost.mockResolvedValue({ claim_token: 'tok' });
 
     const result = await generateShareLink('m1', 'viewer');
 

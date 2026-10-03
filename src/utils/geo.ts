@@ -1,18 +1,24 @@
 /** Shared geo/map utilities. */
 
+import type { Stop } from '../../shared/types.js';
+import type { Units } from '../../shared/units.js';
+
 /** Check if coordinates are draft/placeholder (0,0). */
 export function isDraftCoord(lat: number, lng: number): boolean {
   return lat === 0 && lng === 0;
 }
 
-/** Format a distance in meters to a human-readable string with units. */
-export function formatDistance(meters: number, units: string): string {
-  if (units === 'mi') {
-    const miles = meters / 1609.344;
-    return miles < 1 ? `${miles.toFixed(1)} mi` : `${Math.round(miles).toLocaleString()} mi`;
-  }
-  const km = meters / 1000;
-  return km < 1 ? `${km.toFixed(1)} km` : `${Math.round(km).toLocaleString()} km`;
+/** A route's destination as [lng, lat], or null for points and unplaced destinations. */
+export function placedDest(item: Stop): [number, number] | null {
+  if (item.type !== 'route' || item.dest_latitude == null || item.dest_longitude == null) return null;
+  return isDraftCoord(item.dest_latitude, item.dest_longitude) ? null : [item.dest_longitude, item.dest_latitude];
+}
+
+/** Format meters in the viewer's locale: one decimal below 1 unit, whole numbers otherwise. */
+export function formatDistance(meters: number, units: Units): string {
+  const value = units === 'mi' ? meters / 1609.344 : meters / 1000;
+  const digits = value < 1 ? 1 : 0;
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${units}`;
 }
 
 /** Convert degrees to radians. */

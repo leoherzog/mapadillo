@@ -50,20 +50,23 @@ export async function routeHandler(c: Context<AppEnv>) {
 
   return proxyWithCache(c, {
     cacheKey,
-    fetchUpstream: () => fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
+    fetchUpstream: (signal) => fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${c.env.ORS_API_KEY}`,
       },
-      body: JSON.stringify({ coordinates: [start, end] }),
+      body: JSON.stringify({ coordinates: [start, end], instructions: false, geometry_simplify: true }),
+      signal,
     }),
     unavailableError: 'Routing service unavailable',
     invalidResponseError: 'Routing service returned invalid response',
-    // Forward ORS rate limiting so the client can back off.
-    mapUpstreamError: (ctx, upstream) => upstream.status === 429
-      ? ctx.json({ error: 'Routing service rate limit exceeded' }, 429)
-      : ctx.json({ error: 'Routing service error' }, 502),
+    // 429 is forwarded so the client can back off; 422 tells it ORS found no route (ORS 404), a stable answer.
+    mapUpstreamError: (ctx, upstream) => {
+      if (upstream.status === 429) return ctx.json({ error: 'Routing service rate limit exceeded' }, 429);
+      if (upstream.status === 404) return ctx.json({ error: 'No route found between these points' }, 422);
+      return ctx.json({ error: 'Routing service error' }, 502);
+    },
   });
 }
 

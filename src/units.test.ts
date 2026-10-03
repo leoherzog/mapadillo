@@ -36,30 +36,9 @@ function createLocalStorage() {
   } as Storage;
 }
 
-/** Stub Intl.Locale to return a given region. */
-function stubLocale(region: string | undefined) {
-  vi.spyOn(globalThis, 'Intl', 'get').mockReturnValue({
-    ...Intl,
-    Locale: class {
-      region = region;
-      constructor() {}
-    },
-  } as unknown as typeof Intl);
-}
-
 beforeEach(() => {
-  // Provide localStorage and navigator.language for Node environment
-  (globalThis as any).localStorage = createLocalStorage();
-  Object.defineProperty(globalThis, 'navigator', {
-    value: { language: 'en-US' },
-    writable: true,
-    configurable: true,
-  });
-
-  mockApiGet.mockReset();
-  mockApiPut.mockReset();
-  mockIsAuthenticated.mockReturnValue(false);
-  mockOnAuthChange.mockReset();
+  vi.stubGlobal('localStorage', createLocalStorage());
+  vi.stubGlobal('navigator', { language: 'en-US' });
 });
 
 // ── getUnits ─────────────────────────────────────────────────────────────────
@@ -77,32 +56,32 @@ describe('getUnits', () => {
 
   it('ignores invalid stored values and falls back to locale', () => {
     localStorage.setItem('mapadillo-units', 'meters');
-    stubLocale('DE');
+    vi.stubGlobal('navigator', { language: 'de-DE' });
     expect(getUnits()).toBe('km');
   });
 
   it('defaults to "mi" for US locale', () => {
-    stubLocale('US');
+    vi.stubGlobal('navigator', { language: 'en-US' });
     expect(getUnits()).toBe('mi');
   });
 
   it('defaults to "mi" for GB locale', () => {
-    stubLocale('GB');
+    vi.stubGlobal('navigator', { language: 'en-GB' });
     expect(getUnits()).toBe('mi');
   });
 
   it('defaults to "km" for DE locale', () => {
-    stubLocale('DE');
+    vi.stubGlobal('navigator', { language: 'de-DE' });
     expect(getUnits()).toBe('km');
   });
 
   it('defaults to "km" for JP locale', () => {
-    stubLocale('JP');
+    vi.stubGlobal('navigator', { language: 'ja-JP' });
     expect(getUnits()).toBe('km');
   });
 
   it('defaults to "km" when region is undefined', () => {
-    stubLocale(undefined);
+    vi.stubGlobal('navigator', { language: 'en' });
     expect(getUnits()).toBe('km');
   });
 });
@@ -153,15 +132,27 @@ describe('setUnits', () => {
     expect(mockApiPut).not.toHaveBeenCalled();
   });
 
-  it('swallows apiPut errors silently', async () => {
+  it('swallows apiPut errors silently', () => {
     mockIsAuthenticated.mockReturnValue(true);
-    mockApiPut.mockRejectedValue(new Error('network'));
+    const rejection = Promise.reject(new Error('network'));
+    const catchSpy = vi.spyOn(rejection, 'catch');
+    mockApiPut.mockReturnValue(rejection);
 
-    // Should not throw
-    setUnits('mi');
+    expect(() => setUnits('mi')).not.toThrow();
+    expect(catchSpy).toHaveBeenCalledTimes(1);
+  });
 
-    // Let the microtask queue flush so the .catch() runs
-    await vi.waitFor(() => expect(mockApiPut).toHaveBeenCalled());
+  it('keeps the value in memory when storage is blocked', async () => {
+    // A failed write pins the preference to memory, so use a fresh module to keep it out of later tests.
+    vi.resetModules();
+    const fresh = await import('./units.js');
+    Object.defineProperty(globalThis, 'localStorage', {
+      get() { throw new Error('blocked'); },
+      configurable: true,
+    });
+
+    expect(() => fresh.setUnits('mi')).not.toThrow();
+    expect(fresh.getUnits()).toBe('mi');
   });
 });
 
@@ -211,13 +202,26 @@ describe('initUnits', () => {
 
     // Invoke the registered auth-change callback
     const callback = mockOnAuthChange.mock.calls[0][0];
-    await callback();
+    callback();
 
-    // Wait for the async _syncFromServer to complete
+    await vi.waitFor(() => expect(localStorage.getItem('mapadillo-units')).toBe('mi'));
+    expect(mockApiGet).toHaveBeenCalledWith('/api/user/preferences');
+  });
+
+  it('saves the local units to an account that has none', async () => {
+    mockIsAuthenticated.mockReturnValue(true);
+    mockApiGet.mockResolvedValue({ units: null });
+    mockApiPut.mockResolvedValue(undefined);
+
+    initUnits();
+
+    const callback = mockOnAuthChange.mock.calls[0][0];
+    callback();
+
     await vi.waitFor(() => {
-      expect(mockApiGet).toHaveBeenCalledWith('/api/user/preferences');
+      expect(mockApiPut).toHaveBeenCalledWith('/api/user/preferences', { units: 'mi' });
     });
-    expect(localStorage.getItem('mapadillo-units')).toBe('mi');
+    expect(localStorage.getItem('mapadillo-units')).toBeNull();
   });
 
   it('does not sync when auth changes but user is not authenticated', () => {
@@ -239,7 +243,7 @@ describe('initUnits', () => {
     initUnits();
 
     const callback = mockOnAuthChange.mock.calls[0][0];
-    await callback();
+    callback();
 
     // Flush microtask queue
     await new Promise((r) => setTimeout(r, 0));
@@ -255,7 +259,7 @@ describe('initUnits', () => {
     initUnits();
 
     const callback = mockOnAuthChange.mock.calls[0][0];
-    await callback();
+    callback();
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -272,7 +276,7 @@ describe('initUnits', () => {
     initUnits();
 
     const callback = mockOnAuthChange.mock.calls[0][0];
-    await callback();
+    callback();
 
     await vi.waitFor(() => {
       expect(handler).toHaveBeenCalledTimes(1);

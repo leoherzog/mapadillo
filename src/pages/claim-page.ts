@@ -11,6 +11,7 @@ import { claimShareToken } from '../services/maps.js';
 import { ApiError } from '../services/api-client.js';
 import { navigateTo } from '../nav.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+import { headingStyles } from '../styles/heading-shared.js';
 import { errorCallout } from '../components/ui.js';
 
 @customElement('claim-page')
@@ -20,7 +21,7 @@ export class ClaimPage extends LitElement {
   @state() private _error = '';
   @state() private _loading = true;
 
-  static styles = [waUtilities, css`
+  static styles = [waUtilities, headingStyles, css`
     :host {
       display: block;
       max-width: 500px;
@@ -48,10 +49,11 @@ export class ClaimPage extends LitElement {
 
     try {
       const result = await claimShareToken(this.token);
-      navigateTo(`/map/${result.map_id}`);
+      // Replace so Back from the map skips the claim URL.
+      navigateTo(`/map/${result.map_id}`, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.status === 403) {
+        if (err.status === 403 || err.status === 409) {
           this._error = 'This invite has already been claimed by someone else.';
         } else if (err.status === 404) {
           this._error = 'This invite link is invalid or has been removed.';
@@ -69,6 +71,7 @@ export class ClaimPage extends LitElement {
     if (this._loading) {
       return html`
         <div class="wa-stack wa-gap-m wa-align-items-center">
+          <h1>Accepting Invite</h1>
           <wa-spinner class="spinner"></wa-spinner>
           <p>Claiming your invite...</p>
         </div>
@@ -77,9 +80,10 @@ export class ClaimPage extends LitElement {
 
     return html`
       <div class="wa-stack wa-gap-l">
+        <h1>Accepting Invite</h1>
         ${errorCallout(this._error)}
         <div>
-          <wa-button variant="brand" @click=${() => navigateTo('/dashboard')}>
+          <wa-button variant="brand" href="/dashboard">
             Go to Dashboard
           </wa-button>
         </div>

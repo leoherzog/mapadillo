@@ -6,7 +6,6 @@
  */
 
 import { createAuthClient } from 'better-auth/client';
-// @better-auth/passkey is listed as a dependency in package.json
 import { passkeyClient } from '@better-auth/passkey/client';
 
 export const authClient = createAuthClient({

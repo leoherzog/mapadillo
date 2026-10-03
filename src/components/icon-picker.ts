@@ -7,30 +7,20 @@
  *
  * The special value `'none'` hides the marker on the map entirely.
  */
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
-import type { ValidIcon } from '../../shared/icons.js';
+import { DEFAULT_ICON, ICON_CATEGORIES } from '../../shared/icons.js';
 
-/** Display icon name for a given value (maps 'none' → 'ban' for the FA icon). */
-const displayIcon = (icon: string) => icon === 'none' ? 'ban' : icon;
-
-const CATEGORIES: Record<string, ValidIcon[]> = {
-  'No Icon': ['none'],
-  Outdoors: ['tree', 'leaf', 'flower', 'compass', 'fire', 'snowflake', 'sun', 'umbrella'],
-  'Food & Drink': ['utensils', 'mug-hot', 'cake-candles', 'martini-glass', 'fish'],
-  Sightseeing: ['camera', 'landmark', 'globe', 'ticket', 'crown'],
-  Accommodation: ['house', 'bed'],
-  Fun: ['star', 'trophy', 'gift', 'shop', 'paw', 'sparkles'],
-  Transport: ['plane', 'ship', 'train', 'bus', 'car', 'suitcase'],
-  People: ['heart', 'anchor'],
-  Checklist: ['circle', 'square', 'circle-check', 'circle-plus', 'circle-info', 'circle-xmark'],
-};
+/** Font Awesome glyph for an icon value; 'none' has no glyph, so it shows eye-slash. */
+export const displayIcon = (icon: string) => (icon === 'none' ? 'eye-slash' : icon);
 
 @customElement('icon-picker')
 export class IconPicker extends LitElement {
-  @property() value = 'circle-plus';
+  @property() value: string = DEFAULT_ICON;
   @state() private _open = false;
+  /** Grid content mounts on first open so closed pickers stay light. */
+  @state() private _everOpened = false;
 
   static styles = [waUtilities, css`
     :host {
@@ -38,7 +28,7 @@ export class IconPicker extends LitElement {
     }
 
     .trigger {
-      font-size: var(--wa-font-size-l);
+      font-size: var(--wa-font-size-m);
     }
 
     .category-label {
@@ -58,12 +48,26 @@ export class IconPicker extends LitElement {
       font-size: var(--wa-font-size-l);
     }
 
+    .icon-btn::part(button) {
+      height: auto;
+      padding: var(--wa-space-2xs) var(--wa-space-3xs);
+    }
+
+    .icon-btn::part(label) {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 0;
+      max-width: 100%;
+    }
+
     .icon-btn.selected {
       outline: var(--wa-border-width-m) solid var(--wa-color-brand-50);
       outline-offset: -1px;
     }
 
     .icon-btn .label {
+      display: block;
       font-size: var(--wa-font-size-2xs);
       color: var(--wa-color-text-quiet);
       max-width: 100%;
@@ -72,40 +76,43 @@ export class IconPicker extends LitElement {
 
   render() {
     return html`
-      <wa-button class="trigger" appearance="outlined" size="small" @click=${this._openDialog}>
-        <wa-icon name=${displayIcon(this.value)} label="Pick icon"></wa-icon>
+      <wa-button class="trigger" appearance="outlined" size="s" @click=${this._openDialog}>
+        <wa-icon name=${displayIcon(this.value)} label="Change icon: ${this.value}"></wa-icon>
       </wa-button>
       <wa-dialog label="Pick an icon" ?open=${this._open} @wa-after-hide=${this._closeDialog}>
-        ${Object.entries(CATEGORIES).map(
-          ([cat, icons]) => html`
-            <div class="category-label">${cat}</div>
-            <div class="wa-grid wa-gap-3xs" style="--min-column-size: 4rem">
-              ${icons.map(
-                (icon) => html`
-                  <wa-button
-                    class="icon-btn wa-stack wa-align-items-center wa-gap-0 ${icon === this.value ? 'selected' : ''}"
-                    appearance="plain"
-                    size="small"
-                    aria-label=${icon === 'none' ? 'No icon' : icon}
-                    @click=${() => this._select(icon)}
-                  >
-                    <wa-icon name=${displayIcon(icon)}></wa-icon>
-                    <span class="label wa-text-truncate">${icon === 'none' ? 'none' : icon}</span>
-                  </wa-button>
-                `,
-              )}
-            </div>
-          `,
-        )}
+        ${this._everOpened
+          ? Object.entries(ICON_CATEGORIES).map(
+            ([cat, icons]) => html`
+              <div class="category-label">${cat}</div>
+              <div class="wa-grid wa-gap-3xs" style="--min-column-size: 4rem">
+                ${icons.map(
+                  (icon) => html`
+                    <wa-button
+                      class="icon-btn ${icon === this.value ? 'selected' : ''}"
+                      appearance="plain"
+                      size="s"
+                      @click=${() => this._select(icon)}
+                    >
+                      <wa-icon name=${displayIcon(icon)}></wa-icon>
+                      <span class="label wa-text-truncate">${icon}</span>
+                    </wa-button>
+                  `,
+                )}
+              </div>
+            `,
+          )
+          : nothing}
       </wa-dialog>
     `;
   }
 
   private _openDialog() {
+    this._everOpened = true;
     this._open = true;
   }
 
-  private _closeDialog() {
+  private _closeDialog(e: Event) {
+    if (e.target !== e.currentTarget) return;
     this._open = false;
   }
 

@@ -9,14 +9,8 @@
  */
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { TRAVEL_MODES } from '../config/travel-modes.js';
+import { TRAVEL_MODES } from '../../shared/travel-modes.js';
 import { fieldValue } from '../utils/form.js';
-
-const MODES = TRAVEL_MODES.map((m) => ({
-  icon: m.icon,
-  mode: m.mode,
-  color: m.cssColor,
-}));
 
 @customElement('travel-mode-picker')
 export class TravelModePicker extends LitElement {
@@ -39,29 +33,16 @@ export class TravelModePicker extends LitElement {
 
     wa-radio {
       position: relative;
-      border: none !important;
-      background: none !important;
-      box-shadow: none !important;
-    }
-
-    wa-radio::part(control) {
-      border: none !important;
-      background: none !important;
-      box-shadow: none !important;
+      border: none;
+      background: none;
     }
 
     wa-radio::part(label) {
-      border: none !important;
-      background: none !important;
-      box-shadow: none !important;
       padding: var(--wa-space-3xs);
     }
 
     wa-radio:state(checked)::part(label) {
       color: var(--mode-color, currentColor);
-      border: none !important;
-      background: none !important;
-      box-shadow: none !important;
     }
 
     wa-radio:state(checked)::after {
@@ -87,20 +68,20 @@ export class TravelModePicker extends LitElement {
     return html`
       <wa-radio-group
         label="Travel mode"
-        size="small"
+        size="s"
         orientation="horizontal"
         .value=${this.value}
         ?disabled=${this.disabled}
         @change=${this._onChange}
       >
-        ${MODES.map(
-          ({ icon, mode, color }) => html`
+        ${TRAVEL_MODES.map(
+          ({ icon, mode, label, cssColor }) => html`
             <wa-radio
               appearance="button"
               value=${mode}
-              style="--mode-color: ${color}"
+              style="--mode-color: ${cssColor}"
             >
-              <wa-icon name=${icon}></wa-icon>
+              <wa-icon name=${icon} label=${label}></wa-icon>
             </wa-radio>
           `,
         )}

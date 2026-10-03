@@ -4,13 +4,17 @@
 
 import type { TravelMode } from './travel-modes.js';
 import type { PaperSize, Orientation } from './paper.js';
+import { isPaperSize } from './paper.js';
+
+export type Visibility = 'public' | 'private';
+export type ShareRole = 'viewer' | 'editor';
 
 export interface MapData {
   id: string;
   owner_id: string;
   name: string;
   family_name: string | null;
-  visibility: 'public' | 'private';
+  visibility: Visibility;
   export_settings: string;
   created_at: string;
   updated_at: string;
@@ -40,7 +44,7 @@ export interface PointStop extends StopBase {
 /**
  * A→B segment. New routes default `travel_mode` to 'drive'; it is null only
  * if a client explicitly clears it. `route_geometry` caches the
- * ORS/great-circle polyline as GeoJSON.
+ * ORS or client-computed polyline as GeoJSON.
  */
 export interface RouteStop extends StopBase {
   type: 'route';
@@ -53,6 +57,9 @@ export interface RouteStop extends StopBase {
 }
 
 export type Stop = PointStop | RouteStop;
+
+/** Stop PATCH fields that invalidate a route's cached geometry. */
+export const GEOMETRY_INVALIDATING_FIELDS = ['lat', 'lng', 'dest_lat', 'dest_lng', 'travel_mode'] as const;
 
 /**
  * Raw row shape returned by D1 when selecting from `stops`. All discriminator-
@@ -112,7 +119,7 @@ export interface ShareData {
   user_id: string | null;
   user_name: string | null;
   user_email: string | null;
-  role: 'viewer' | 'editor';
+  role: ShareRole;
   claim_token: string | null;
   /** ISO timestamp, or null when the invite has no expiry. Null in API responses once claimed. */
   claim_token_expires_at: string | null;
@@ -124,13 +131,13 @@ export interface ShareRow {
   id: string;
   map_id: string;
   user_id: string | null;
-  role: 'viewer' | 'editor';
+  role: ShareRole;
   claim_token: string | null;
   claim_token_expires_at: string | null;
   created_at: string;
 }
 
-export type MapRole = 'owner' | 'editor' | 'viewer' | 'public';
+export type MapRole = 'owner' | ShareRole | 'public';
 
 /** True for roles allowed to modify a map and order prints of it. */
 export function canEditRole(role: MapRole): boolean {
@@ -150,13 +157,14 @@ export interface SessionUser {
  * partial objects from older writes are safe to parse.
  */
 export interface ExportSettings {
-  format?: 'pdf' | 'png' | 'jpeg';
   paperSize?: PaperSize;
   orientation?: Orientation;
   center?: [number, number];
   zoom?: number;
   bearing?: number;
   pitch?: number;
+  /** CSS [width, height] of the preview map container when the viewport was saved. */
+  viewSize?: [number, number];
 }
 
 export interface ShippingAddress {
@@ -172,41 +180,78 @@ export interface ShippingAddress {
 /**
  * Parse a JSON string from the `maps.export_settings` column into an
  * `ExportSettings` object. Returns `null` for null/empty/invalid input so
- * callers can fall back to defaults instead of throwing.
+ * callers can fall back to defaults; unknown or malformed fields are dropped.
  */
 export function parseExportSettings(raw: string | null | undefined): ExportSettings | null {
   if (!raw || raw === '{}') return null;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as ExportSettings;
-    }
-    return null;
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const o = parsed as Record<string, unknown>;
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const out: ExportSettings = {};
+  if (isPaperSize(o.paperSize)) out.paperSize = o.paperSize;
+  if (o.orientation === 'landscape' || o.orientation === 'portrait') out.orientation = o.orientation;
+  const c = o.center;
+  if (Array.isArray(c) && c.length === 2 && finite(c[0]) && finite(c[1]) && Math.abs(c[1]) <= 90) {
+    out.center = [c[0], c[1]];
+  }
+  if (finite(o.zoom)) out.zoom = o.zoom;
+  if (finite(o.bearing)) out.bearing = o.bearing;
+  if (finite(o.pitch)) out.pitch = o.pitch;
+  const v = o.viewSize;
+  if (Array.isArray(v) && v.length === 2 && finite(v[0]) && finite(v[1]) && v[0] > 0 && v[1] > 0) {
+    out.viewSize = [v[0], v[1]];
+  }
+  return out;
+}
+
+const MAX_ADDRESS_FIELD = 200;
+
+/**
+ * Validate an untrusted value as a `ShippingAddress` and return a trimmed copy holding only known fields.
+ * Prodigi requires line1, townOrCity, postalOrZipCode and a two-letter countryCode.
+ * @returns the clean address, or `null` when a required field is missing, blank, mistyped or over-long.
+ */
+export function toShippingAddress(value: unknown): ShippingAddress | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const o = value as Record<string, unknown>;
+  // '' for an absent field, null for a non-string or over-long one.
+  const field = (k: keyof ShippingAddress): string | null => {
+    const v = o[k];
+    if (v === undefined || v === null) return '';
+    if (typeof v !== 'string') return null;
+    const t = v.trim();
+    return t.length <= MAX_ADDRESS_FIELD ? t : null;
+  };
+  const name = field('name');
+  const line1 = field('line1');
+  const line2 = field('line2');
+  const city = field('city');
+  const state = field('state');
+  const postalCode = field('postalCode');
+  const country = field('country')?.toUpperCase() ?? null;
+  if (!name || !line1 || !city || !postalCode || line2 === null || state === null) return null;
+  if (!country || !/^[A-Z]{2}$/.test(country)) return null;
+  const address: ShippingAddress = { name, line1, city, state, postalCode, country };
+  if (line2) address.line2 = line2;
+  return address;
 }
 
 /**
  * Parse a JSON string from the `orders.shipping_address` column into a
- * `ShippingAddress`. Returns `null` for null/empty/invalid input — the webhook
+ * `ShippingAddress`. Returns `null` for null/empty/invalid input so the webhook
  * path can short-circuit instead of throwing 500s that trigger unbounded
- * Stripe retries. Validates the minimum required fields.
+ * Stripe retries. Applies the same checks as `toShippingAddress`.
  */
 export function parseShippingAddress(raw: string | null | undefined): ShippingAddress | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      && typeof (parsed as { name?: unknown }).name === 'string'
-      && typeof (parsed as { line1?: unknown }).line1 === 'string'
-      && typeof (parsed as { city?: unknown }).city === 'string'
-      && typeof (parsed as { country?: unknown }).country === 'string'
-    ) {
-      return parsed as ShippingAddress;
-    }
-    return null;
+    return toShippingAddress(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -219,7 +264,6 @@ export interface CheckoutBody {
   size: string;
   shipping_address: ShippingAddress;
   image_key: string;
-  shipping_cost_cents?: number;
 }
 
 /** Request body for POST /api/print-quote. */
@@ -247,6 +291,7 @@ export interface Order {
   shipping_cost: number | null;
   currency: string;
   tracking_url: string | null;
+  customer_email: string | null;
   discord_notified: number;
   created_at: string;
   updated_at: string;

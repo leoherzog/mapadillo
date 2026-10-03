@@ -4,5 +4,6 @@ import gapCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/gap.css
 import alignCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/align-items.css?inline';
 import justifyCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/justify-content.css?inline';
 import textCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/text.css?inline';
+import visuallyHiddenCSS from '@web.awesome.me/webawesome-pro/dist/styles/utilities/visually-hidden.css?inline';
 
-export const waUtilities = unsafeCSS(`${layoutCSS}\n${gapCSS}\n${alignCSS}\n${justifyCSS}\n${textCSS}`);
+export const waUtilities = unsafeCSS(`${layoutCSS}\n${gapCSS}\n${alignCSS}\n${justifyCSS}\n${textCSS}\n${visuallyHiddenCSS}`);

@@ -1,9 +1,5 @@
-/**
- * Country list for shipping address form.
- * Uses Intl.DisplayNames for locale-aware country names.
- * Top shipping countries first, then the rest alphabetical.
- */
-export interface Country {
+/** Shipping countries, popular destinations first, named with Intl.DisplayNames in English. */
+interface Country {
   code: string;
   name: string;
 }

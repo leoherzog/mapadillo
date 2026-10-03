@@ -5,6 +5,8 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     environment: 'node',
     restoreMocks: true,
+    mockReset: true,
+    unstubGlobals: true,
     silent: true,
     coverage: {
       provider: 'v8',

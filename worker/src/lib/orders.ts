@@ -8,6 +8,8 @@ export interface SubmittableOrder {
   product_sku: string;
   image_url: string;
   shippingAddress: ShippingAddress;
+  /** Buyer email collected by Stripe Checkout, or null when none was recorded. */
+  email: string | null;
 }
 
 /**
@@ -16,15 +18,16 @@ export interface SubmittableOrder {
  * @returns the Prodigi order id
  */
 export async function submitOrderToProdigi(env: Env, order: SubmittableOrder, now: string): Promise<string> {
-  const imageUrl = order.image_url.startsWith('/')
-    ? `${env.BETTER_AUTH_URL}${order.image_url}`
-    : order.image_url;
-
   const { prodigiOrderId } = await createOrder(env.PRODIGI_API_KEY, {
     orderId: order.id,
     sku: order.product_sku,
-    imageUrl,
+    imageUrl: new URL(order.image_url, env.BETTER_AUTH_URL).href,
     shippingAddress: order.shippingAddress,
+    email: order.email ?? undefined,
+    // Prodigi only calls back to a public https URL.
+    callbackUrl: env.BETTER_AUTH_URL.startsWith('https://')
+      ? new URL('/api/webhooks/prodigi', env.BETTER_AUTH_URL).href
+      : undefined,
   }, isSandbox(env.PRODIGI_SANDBOX));
 
   await env.DB.prepare(

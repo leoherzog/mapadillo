@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 const { mockApiPost } = vi.hoisted(() => ({
   mockApiPost: vi.fn(),
@@ -11,10 +11,6 @@ vi.mock('./api-client.js', async (importOriginal) => {
 
 import { getSegmentRoute } from './routing.js';
 import { ApiError } from './api-client.js';
-
-beforeEach(() => {
-  mockApiPost.mockReset();
-});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +52,7 @@ describe('getSegmentRoute — ORS-backed modes', () => {
     );
     expect(result.coordinates).toEqual(coords);
     expect(result.distance).toBe(585_000);
+    expect(result.fallback).toBeUndefined();
   });
 
   it('calls /api/route with foot-walking profile for "walk"', async () => {
@@ -105,6 +102,7 @@ describe('getSegmentRoute — ORS error handling', () => {
     const result = await getSegmentRoute('drive', berlin, munich);
 
     expect(result.coordinates).toEqual([berlin, munich]);
+    expect(result.fallback).toBe(true);
   });
 
   it('falls back to straight line on network error', async () => {
@@ -114,6 +112,16 @@ describe('getSegmentRoute — ORS error handling', () => {
 
     expect(result.coordinates).toEqual([berlin, munich]);
     expect(result.distance).toBeGreaterThan(0);
+    expect(result.fallback).toBe(true);
+  });
+
+  it('returns an unflagged straight line when ORS finds no route (422)', async () => {
+    mockApiPost.mockRejectedValue(new ApiError(422, 'No route'));
+
+    const result = await getSegmentRoute('drive', berlin, munich);
+
+    expect(result.coordinates).toEqual([berlin, munich]);
+    expect(result.fallback).toBeUndefined();
   });
 
   it('re-throws AbortError', async () => {
@@ -130,6 +138,7 @@ describe('getSegmentRoute — ORS error handling', () => {
 
     expect(result.coordinates).toEqual([berlin, munich]);
     expect(result.distance).toBeGreaterThan(0);
+    expect(result.fallback).toBe(true);
   });
 
   it('falls back when feature has no coordinates', async () => {
@@ -157,7 +166,7 @@ describe('getSegmentRoute — ORS error handling', () => {
   });
 });
 
-// ── Plane (great-circle arc) ─────────────────────────────────────────────────
+// ── Plane (flight arc) ───────────────────────────────────────────────────────
 
 describe('getSegmentRoute — plane mode', () => {
   it('does not call the API', async () => {
@@ -205,12 +214,24 @@ describe('getSegmentRoute — plane mode', () => {
 
   it('returns straight line with distance 0 for very close points', async () => {
     const almostSame: [number, number] = [13.405, 52.52];
-    const veryClose: [number, number] = [13.405, 52.52];
+    const veryClose: [number, number] = [13.405, 52.520005];
 
     const result = await getSegmentRoute('plane', almostSame, veryClose);
 
     expect(result.coordinates).toEqual([almostSame, veryClose]);
     expect(result.distance).toBe(0);
+  });
+
+  it('takes the short way across the antimeridian', async () => {
+    const result = await getSegmentRoute('plane', [170, 0], [-170, 0]);
+
+    const last = result.coordinates[result.coordinates.length - 1];
+    expect(last[0]).toBeCloseTo(190, 5);
+    expect(last[1]).toBeCloseTo(0, 5);
+    for (const [lon] of result.coordinates) {
+      expect(lon).toBeGreaterThanOrEqual(170);
+      expect(lon).toBeLessThanOrEqual(190);
+    }
   });
 });
 
@@ -227,6 +248,13 @@ describe('getSegmentRoute — boat mode', () => {
     const result = await getSegmentRoute('boat', berlin, munich);
 
     expect(result.coordinates).toEqual([berlin, munich]);
+    expect(result.fallback).toBeUndefined();
+  });
+
+  it('takes the short way across the antimeridian', async () => {
+    const result = await getSegmentRoute('boat', [170, 0], [-170, 0]);
+
+    expect(result.coordinates).toEqual([[170, 0], [190, 0]]);
   });
 
   it('returns haversine distance', async () => {
@@ -247,5 +275,6 @@ describe('getSegmentRoute — unknown mode', () => {
     expect(mockApiPost).not.toHaveBeenCalled();
     expect(result.coordinates).toEqual([berlin, munich]);
     expect(result.distance).toBeGreaterThan(0);
+    expect(result.fallback).toBe(true);
   });
 });

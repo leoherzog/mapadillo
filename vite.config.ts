@@ -15,6 +15,8 @@ export default defineConfig({
       },
     },
   },
+  // MapLibre creates its worker with { type: 'module' }.
+  worker: { format: 'es' },
   // Vite serves index.html at root; all non-API routes fall back to it
   // (SPA mode — worker handles the true fallback in production)
   server: {
@@ -22,9 +24,5 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8787',
     },
-  },
-  // Ensure maplibre-gl and other CJS deps are pre-bundled
-  optimizeDeps: {
-    include: ['maplibre-gl'],
   },
 });

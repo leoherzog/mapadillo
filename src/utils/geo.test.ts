@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
+import type { Stop } from '../../shared/types.js';
 import {
   isDraftCoord,
+  placedDest,
   formatDistance,
   haversineDistance,
   sanitizeFilename,
@@ -32,6 +34,35 @@ describe('isDraftCoord', () => {
 
   it('returns true for -0, -0 (negative zero equals zero)', () => {
     expect(isDraftCoord(-0, -0)).toBe(true);
+  });
+});
+
+// ── placedDest ──────────────────────────────────────────────────────────────
+
+describe('placedDest', () => {
+  const base = {
+    id: 's1', map_id: 'm1', position: 0, name: 'A', label: null,
+    latitude: 52.52, longitude: 13.405, icon: null, created_at: '',
+  };
+  const route = (dest_latitude: number | null, dest_longitude: number | null): Stop => ({
+    ...base, type: 'route', travel_mode: 'drive', dest_name: 'B',
+    dest_latitude, dest_longitude, dest_icon: null, route_geometry: null,
+  });
+
+  it('returns null for a point', () => {
+    expect(placedDest({ ...base, type: 'point' })).toBeNull();
+  });
+
+  it('returns null for a route without a destination', () => {
+    expect(placedDest(route(null, null))).toBeNull();
+  });
+
+  it('returns null for a draft (0, 0) destination', () => {
+    expect(placedDest(route(0, 0))).toBeNull();
+  });
+
+  it('returns [lng, lat] for a placed destination', () => {
+    expect(placedDest(route(48.85, 2.35))).toEqual([2.35, 48.85]);
   });
 });
 
@@ -94,10 +125,14 @@ describe('formatDistance', () => {
     });
   });
 
-  describe('defaults to km for unrecognized units', () => {
-    it('falls through to km branch for unknown unit string', () => {
-      expect(formatDistance(5000, 'furlongs')).toBe('5 km');
+  it('localizes the decimal separator', () => {
+    const toLocaleString = Number.prototype.toLocaleString;
+    vi.spyOn(Number.prototype, 'toLocaleString').mockImplementation(function (this: number, _locales, options) {
+      return toLocaleString.call(this, 'de-DE', options);
     });
+
+    expect(formatDistance(500, 'km')).toBe('0,5 km');
+    expect(formatDistance(1_234_000, 'km')).toBe('1.234 km');
   });
 });
 

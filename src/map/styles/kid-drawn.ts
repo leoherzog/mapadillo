@@ -1,6 +1,6 @@
 /**
  * Kid-Drawn style transformer — takes the OpenFreeMap Bright style JSON
- * and rewrites colors, line widths, dash arrays, and fonts to create
+ * and rewrites colors, line widths, dash arrays and label sizes to create
  * a crayon-like, hand-drawn map aesthetic.
  *
  * Reuses the same vector tile sources and sprites from Bright.
@@ -32,15 +32,12 @@ function idStartsWith(id: string, ...prefixes: string[]): boolean {
   return prefixes.some((p) => id.startsWith(p));
 }
 
-/** Multiply a numeric value or the numeric stops of an interpolation/step expression. */
+/** Multiply a number, or the outputs of an interpolate or step expression, by `factor`. Zoom stops are left alone. */
 function widenWidth<T>(value: T, factor: number): T {
   if (typeof value === 'number') return (value * factor) as T;
-  if (Array.isArray(value)) {
-    return value.map((v, i) => {
-      // Scale numeric stop outputs (every other value after the first few expression args)
-      if (typeof v === 'number' && i > 1) return v * factor;
-      return v;
-    }) as T;
+  // Outputs sit at even indices from 2 and zoom stops at odd indices; index 2 of interpolate is the ['zoom'] input.
+  if (Array.isArray(value) && (value[0] === 'interpolate' || value[0] === 'step')) {
+    return value.map((v, i) => (typeof v === 'number' && i >= 2 && i % 2 === 0 ? v * factor : v)) as T;
   }
   return value;
 }
@@ -49,9 +46,6 @@ function widenWidth<T>(value: T, factor: number): T {
 
 export function transformToKidDrawn(bright: StyleSpecification): StyleSpecification {
   const style = structuredClone(bright);
-
-  // Keep the original glyphs URL from Bright (OpenFreeMap's glyph server).
-  // Caveat PBFs can be added later; for now the kid-drawn look comes from colors/widths.
 
   for (const layer of style.layers) {
     transformLayer(layer);
@@ -168,15 +162,8 @@ function transformLayer(layer: LayerSpecification): void {
       return;
     }
 
-    // Railway
-    if (idStartsWith(id, 'railway', 'tunnel-railway', 'bridge-railway')) {
-      paint['line-color'] = '#9E9E9E';
-      layer.paint = paint;
-      return;
-    }
-
-    // Cablecar
-    if (idStartsWith(id, 'cablecar')) {
+    // Railway and cablecar
+    if (idStartsWith(id, 'railway', 'tunnel-railway', 'bridge-railway', 'cablecar')) {
       paint['line-color'] = '#9E9E9E';
       layer.paint = paint;
       return;
@@ -210,8 +197,21 @@ function transformLayer(layer: LayerSpecification): void {
       layout['line-join'] = 'round';
     }
 
+    // Bridge and tunnel layers that hold both trunk and primary
+    else if (idStartsWith(id, 'tunnel-trunk-primary', 'bridge-trunk-primary')) {
+      if (isCasing) {
+        paint['line-color'] = ['match', ['get', 'class'], 'trunk', '#E55A3A', '#F5C342'];
+        paint['line-width'] = widenWidth(paint['line-width'], 1.1);
+      } else {
+        paint['line-color'] = ['match', ['get', 'class'], 'trunk', ROAD_MOTORWAY, ROAD_PRIMARY];
+        paint['line-width'] = widenWidth(paint['line-width'], 1.2);
+      }
+      layout['line-cap'] = 'round';
+      layout['line-join'] = 'round';
+    }
+
     // Trunk
-    else if (idStartsWith(id, 'highway-trunk', 'tunnel-trunk', 'bridge-trunk')) {
+    else if (idStartsWith(id, 'highway-trunk')) {
       if (isCasing) {
         paint['line-color'] = '#E55A3A';
         paint['line-width'] = widenWidth(paint['line-width'], 1.1);
@@ -224,7 +224,7 @@ function transformLayer(layer: LayerSpecification): void {
     }
 
     // Primary
-    else if (idStartsWith(id, 'highway-primary', 'tunnel-trunk-primary', 'bridge-trunk-primary')) {
+    else if (idStartsWith(id, 'highway-primary')) {
       if (isCasing) {
         paint['line-color'] = '#F5C342';
       } else {
@@ -249,8 +249,7 @@ function transformLayer(layer: LayerSpecification): void {
 
     // Minor roads / service / track
     else if (idStartsWith(id, 'highway-minor', 'highway-link', 'tunnel-minor', 'tunnel-link',
-      'tunnel-service', 'bridge-minor', 'bridge-link', 'road_pier', 'road_area_pier',
-      'highway-area')) {
+      'tunnel-service', 'bridge-minor', 'bridge-link', 'road_pier')) {
       if (isCasing) {
         paint['line-color'] = '#FFAB91';
       } else {
@@ -287,8 +286,7 @@ function transformLayer(layer: LayerSpecification): void {
     const layout = { ...layer.layout };
     const paint = { ...layer.paint };
 
-    // Keep existing Noto Sans fonts (Caveat PBFs not yet available).
-    // Bump text size slightly for a looser, more playful feel.
+    // Bump text size slightly for a looser feel.
     if (layout['text-size'] != null) {
       layout['text-size'] = widenWidth(layout['text-size'], 1.15);
     }

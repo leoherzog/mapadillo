@@ -30,12 +30,6 @@ export async function geocodeHandler(c: Context<AppEnv>) {
     10,
   );
 
-  const ALLOWED_LAYERS = ['house', 'street', 'locality', 'district', 'city', 'county', 'state', 'country', 'other'] as const;
-  const rawLayer = c.req.query('layer') || '';
-  const layer = rawLayer
-    ? rawLayer.split(',').filter((l) => ALLOWED_LAYERS.includes(l.trim() as (typeof ALLOWED_LAYERS)[number])).join(',')
-    : '';
-
   // Location bias (optional)
   const rawLat = c.req.query('lat');
   const rawLon = c.req.query('lon');
@@ -46,7 +40,7 @@ export async function geocodeHandler(c: Context<AppEnv>) {
 
   // Bias is rounded to ~11 km in the cache key to limit cache cardinality.
   const biasKey = hasBias ? `:${biasLat.toFixed(1)}:${biasLon.toFixed(1)}` : '';
-  const cacheKey = `geocode:${await sha256Hex(`${q.toLowerCase()}:${lang}:${limit}:${layer}${biasKey}`)}`;
+  const cacheKey = `geocode:${await sha256Hex(`${q.toLowerCase()}:${lang}:${limit}${biasKey}`)}`;
 
   const url = new URL('https://photon.komoot.io/api');
   url.searchParams.set('q', q);
@@ -56,15 +50,10 @@ export async function geocodeHandler(c: Context<AppEnv>) {
     url.searchParams.set('lat', String(biasLat));
     url.searchParams.set('lon', String(biasLon));
   }
-  if (layer) {
-    for (const l of layer.split(',')) {
-      url.searchParams.append('layer', l);
-    }
-  }
 
   return proxyWithCache(c, {
     cacheKey,
-    fetchUpstream: () => fetch(url.toString()),
+    fetchUpstream: (signal) => fetch(url, { signal }),
     unavailableError: 'Geocoding service unavailable',
     invalidResponseError: 'Geocoding service returned invalid response',
   });

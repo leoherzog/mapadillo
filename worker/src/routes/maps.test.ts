@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
-  applyTestSchema, request, createTestSession, jsonRequest, createMap, createStop, grantShare,
+  applyTestSchema, request, createTestSession, jsonRequest, createMap, createStop, grantShare, insertOrder,
 } from '../test-helpers.js';
 
 beforeAll(applyTestSchema);
@@ -76,6 +76,14 @@ describe('POST /api/maps — validation edge cases', () => {
     expect(body.error).toContain('family_name');
   });
 
+  it('returns 400 when family_name is not a string', async () => {
+    const { cookie } = await createTestSession();
+    const res = await jsonRequest('/api/maps', 'POST', { name: 'Trip', family_name: 42 }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('family_name must be a string or null');
+  });
+
   it('sets family_name to null when not provided', async () => {
     const { cookie } = await createTestSession();
     const res = await jsonRequest('/api/maps', 'POST', { name: 'Solo Trip' }, cookie);
@@ -122,6 +130,15 @@ describe('PUT /api/maps/:id — validation edge cases', () => {
     expect(body.error).toContain('family_name');
   });
 
+  it('returns 400 when family_name is not a string on update', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { family_name: 42 }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('family_name must be a string or null');
+  });
+
   it('returns 400 when export_settings string is too large', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
@@ -160,17 +177,16 @@ describe('PUT /api/maps/:id — validation edge cases', () => {
     expect(body.visibility).toBe('private');
   });
 
-  it('returns updated map with stops array', async () => {
+  it('returns the updated map without stops', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
     await createStop(cookie, mapId, { name: 'Berlin', lat: 52.52, lng: 13.405 });
 
     const res = await jsonRequest(`/api/maps/${mapId}`, 'PUT', { name: 'Renamed' }, cookie);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { name: string; stops: unknown[] };
+    const body = (await res.json()) as { name: string; stops?: unknown[] };
     expect(body.name).toBe('Renamed');
-    expect(Array.isArray(body.stops)).toBe(true);
-    expect(body.stops.length).toBe(1);
+    expect(body.stops).toBeUndefined();
   });
 });
 
@@ -227,13 +243,7 @@ describe('DELETE /api/maps/:id — role-based access', () => {
     const { cookie: ownerCookie, userId } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    // Seed a fake order. Status literal must satisfy the CHECK constraint.
-    await env.DB.prepare(
-      `INSERT INTO orders (id, map_id, user_id, product_type, product_sku, poster_size, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      crypto.randomUUID(), mapId, userId, 'poster', 'sku-1', '18x24', 'paid',
-    ).run();
+    await insertOrder({ mapId, userId, status: 'paid' });
 
     const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: ownerCookie } });
     expect(res.status).toBe(409);
@@ -244,6 +254,38 @@ describe('DELETE /api/maps/:id — role-based access', () => {
     const stillThere = await env.DB.prepare('SELECT id FROM maps WHERE id = ?')
       .bind(mapId).first<{ id: string }>();
     expect(stillThere?.id).toBe(mapId);
+  });
+
+  it('refuses with a retry message when the only order is an open checkout', async () => {
+    const { cookie: ownerCookie, userId } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+    await createStop(ownerCookie, mapId, { name: 'Stop A', lat: 10, lng: 20 });
+
+    await insertOrder({ mapId, userId, status: 'pending_payment' });
+
+    const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie: ownerCookie } });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('still open');
+
+    // The guarded batch left every row in place.
+    const stops = await env.DB.prepare('SELECT COUNT(*) AS c FROM stops WHERE map_id = ?')
+      .bind(mapId).first<{ c: number }>();
+    expect(stops?.c).toBe(1);
+  });
+
+  it('deletes the map\'s print images from R2 and keeps other maps\' images', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const otherMapId = await createMap(cookie, 'Other');
+    await env.ROADTRIP_PRINTS.put(`${mapId}/x.png`, 'PNG data');
+    await env.ROADTRIP_PRINTS.put(`${otherMapId}/y.png`, 'PNG data');
+
+    const res = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie } });
+    expect(res.status).toBe(200);
+
+    expect(await env.ROADTRIP_PRINTS.get(`${mapId}/x.png`)).toBeNull();
+    expect(await env.ROADTRIP_PRINTS.get(`${otherMapId}/y.png`)).not.toBeNull();
   });
 });
 
@@ -290,6 +332,17 @@ describe('POST /:id/stops — validation edge cases', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('label');
+  });
+
+  it('returns 400 when label is not a string', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
+      name: 'Labeled', lat: 50, lng: 10, label: 42,
+    }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('label must be a string or null');
   });
 
   it('returns 400 when dest_name exceeds 200 characters', async () => {
@@ -379,17 +432,6 @@ describe('POST /:id/stops — validation edge cases', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 400 when lat is Infinity (via non-finite check)', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-    // JSON doesn't support Infinity, so we can't send it directly.
-    // But we can test the boundary: a number just outside range.
-    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
-      name: 'Inf', lat: 90.0001, lng: 10,
-    }, cookie);
-    expect(res.status).toBe(400);
-  });
-
   it('returns 400 when point has travel_mode', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
@@ -407,6 +449,17 @@ describe('POST /:id/stops — validation edge cases', () => {
     const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
       name: 'Bad Point', lat: 50, lng: 10, type: 'point',
       dest_lat: 51, dest_lng: 11,
+    }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('destination fields');
+  });
+
+  it('returns 400 when point has a dest_icon', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
+      name: 'Bad Point', lat: 50, lng: 10, type: 'point', dest_icon: 'star',
     }, cookie);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -494,6 +547,53 @@ describe('POST /:id/stops — validation edge cases', () => {
     const body = (await res.json()) as { name: string; label: string };
     expect(body.name).toBe('Berlin');
     expect(body.label).toBe('Capital of Germany');
+  });
+
+  it('returns 400 once the map holds 200 stops and leaves updated_at alone', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const past = '2000-01-01T00:00:00.000Z';
+    await env.DB.batch([
+      env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?').bind(past, mapId),
+      ...Array.from({ length: 200 }, (_, i) => env.DB.prepare(
+        'INSERT INTO stops (id, map_id, position, type, name, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).bind(crypto.randomUUID(), mapId, i, 'point', `S${i}`, 0, 0)),
+    ]);
+
+    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
+      name: 'One too many', lat: 50, lng: 10,
+    }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('Maximum 200 stops per map');
+
+    const map = await env.DB.prepare('SELECT updated_at FROM maps WHERE id = ?')
+      .bind(mapId).first<{ updated_at: string }>();
+    expect(map?.updated_at).toBe(past);
+  });
+
+  it('touches the map updated_at when a stop is added', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const past = '2000-01-01T00:00:00.000Z';
+    await env.DB.prepare('UPDATE maps SET updated_at = ? WHERE id = ?').bind(past, mapId).run();
+
+    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', { name: 'A', lat: 50, lng: 10 }, cookie);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { created_at: string };
+
+    const map = await env.DB.prepare('SELECT updated_at FROM maps WHERE id = ?')
+      .bind(mapId).first<{ updated_at: string }>();
+    expect(map?.updated_at).toBe(body.created_at);
+  });
+
+  it('appends after the highest position', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const first = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', { name: 'A', lat: 50, lng: 10 }, cookie);
+    expect(((await first.json()) as { position: number }).position).toBe(0);
+    const second = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', { name: 'B', lat: 51, lng: 11 }, cookie);
+    expect(((await second.json()) as { position: number }).position).toBe(1);
   });
 
   it('returns 404 when adding stop to nonexistent map', async () => {
@@ -727,6 +827,16 @@ describe('PUT /:id/stops/:stopId — validation edge cases', () => {
     const stopId = await createStop(cookie, mapId, { name: 'R', lat: 50, lng: 10, type: 'route' });
     const res = await jsonRequest(`/api/maps/${mapId}/stops/${stopId}`, 'PUT', { dest_lng: 181 }, cookie);
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when setting a destination field on a point', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const stopId = await createStop(cookie, mapId, { name: 'P', lat: 50, lng: 10 });
+    const res = await jsonRequest(`/api/maps/${mapId}/stops/${stopId}`, 'PUT', { dest_lat: 10 }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('destination fields');
   });
 
   it('returns 400 with no valid fields to update', async () => {
@@ -1058,10 +1168,26 @@ describe('PUT /:id/stops/reorder — edge cases', () => {
       order: [s1],
     }, cookie);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Array<{ id: string; position: number }>;
-    expect(body.length).toBe(1);
-    expect(body[0].id).toBe(s1);
-    expect(body[0].position).toBe(0);
+    expect(await res.json()).toEqual({ success: true });
+
+    const after = await request(`/api/maps/${mapId}`, { headers: { cookie } });
+    const map = (await after.json()) as { stops: Array<{ id: string; position: number }> };
+    expect(map.stops.map((s) => [s.id, s.position])).toEqual([[s1, 0]]);
+  });
+
+  it('reorder writes every position from the order array', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const a = await createStop(cookie, mapId, { name: 'A', lat: 50, lng: 10 });
+    const b = await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11 });
+    const c = await createStop(cookie, mapId, { name: 'C', lat: 52, lng: 12 });
+
+    const res = await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', { order: [c, a, b] }, cookie);
+    expect(res.status).toBe(200);
+
+    const after = await request(`/api/maps/${mapId}`, { headers: { cookie } });
+    const map = (await after.json()) as { stops: Array<{ id: string; position: number }> };
+    expect(map.stops.map((s) => [s.id, s.position])).toEqual([[c, 0], [a, 1], [b, 2]]);
   });
 });
 
@@ -1102,6 +1228,20 @@ describe('GET /api/maps — listing edge cases', () => {
     const map = body.find(m => m.id === mapId);
     expect(map).toBeDefined();
     expect(map!.stops.length).toBe(2);
+  });
+
+  it('groups each map\'s stops under it in position order', async () => {
+    const { cookie } = await createTestSession();
+    const mapA = await createMap(cookie, 'A');
+    const mapB = await createMap(cookie, 'B');
+    await createStop(cookie, mapA, { name: 'A0', lat: 50, lng: 10 });
+    await createStop(cookie, mapB, { name: 'B0', lat: 50, lng: 10 });
+    await createStop(cookie, mapA, { name: 'A1', lat: 51, lng: 11 });
+
+    const res = await request('/api/maps', { headers: { cookie } });
+    const body = (await res.json()) as Array<{ id: string; stops: Array<{ name: string }> }>;
+    expect(body.find((m) => m.id === mapA)!.stops.map((s) => s.name)).toEqual(['A0', 'A1']);
+    expect(body.find((m) => m.id === mapB)!.stops.map((s) => s.name)).toEqual(['B0']);
   });
 });
 

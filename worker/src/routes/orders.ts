@@ -2,11 +2,11 @@
  * Order API routes — image upload, checkout, quotes, order management.
  *
  * Mounted at /api — provides:
- * - POST /api/images/:mapId       — upload print image to R2
+ * - POST /api/images/:mapId       — stream a raw PNG body (≤100MB) to R2
  * - GET  /api/images/*            — serve R2 images (public, unguessable UUID)
- * - POST /api/checkout            — create Stripe Checkout session
+ * - POST /api/checkout            — quote shipping and create a Stripe Checkout session
  * - POST /api/print-quote         — get Prodigi shipping quote
- * - GET  /api/orders              — list current user's orders
+ * - GET  /api/orders              — list current user's orders, excluding unpaid checkouts
  * - GET  /api/orders/:id          — get single order for current user
  * - GET  /api/admin/orders        — list all orders (admin)
  * - GET  /api/admin/orders/:id    — get single order (admin)
@@ -14,17 +14,29 @@
  */
 
 import { Hono, type Context } from 'hono';
+import { createMiddleware } from 'hono/factory';
 import type { AppEnv } from '../types.js';
 import { getMapWithRole, requireMapRole } from './maps.js';
 import { readJsonBody } from '../lib/json-body.js';
 import { getStripe } from '../lib/stripe.js';
-import { getShippingQuote, isSandbox } from '../lib/prodigi.js';
+import { getShippingQuote, isSandbox, ProdigiNotAvailableError } from '../lib/prodigi.js';
 import { secretsEqual } from '../lib/hash.js';
 import { submitOrderToProdigi } from '../lib/orders.js';
-import { getProductSize, buildFullSku } from '../../../shared/products.js';
-import { canEditRole, parseShippingAddress, type CheckoutBody, type PrintQuoteBody } from '../../../shared/types.js';
+import { getProductBySku, getProductSize, buildFullSku } from '../../../shared/products.js';
+import { canEditRole, toShippingAddress, parseShippingAddress, type CheckoutBody, type PrintQuoteBody } from '../../../shared/types.js';
 
 const orders = new Hono<AppEnv>();
+
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/** 422 when Prodigi cannot ship the item to that country, otherwise 502. */
+function quoteErrorResponse(c: Context<AppEnv>, err: unknown): Response {
+  if (err instanceof ProdigiNotAvailableError) {
+    return c.json({ error: 'This print cannot ship to that country' }, 422);
+  }
+  console.error('Prodigi quote error:', err);
+  return c.json({ error: 'Unable to get shipping quote' }, 502);
+}
 
 // ── Image upload ──────────────────────────────────────────────────────────────
 
@@ -33,24 +45,21 @@ orders.post('/images/:mapId', async (c) => {
   if (!result) return c.res;
   const mapId = result.map.id;
 
-  const formData = await c.req.parseBody();
-  const file = formData['image'];
-  if (!file || !(file instanceof File)) {
-    return c.json({ error: 'image file is required' }, 400);
+  if (c.req.header('content-type') !== 'image/png') {
+    return c.json({ error: 'Body must be a PNG image' }, 415);
+  }
+  // R2 only accepts a stream of known length, so Content-Length is required.
+  const length = Number(c.req.header('content-length'));
+  const body = c.req.raw.body;
+  if (!body || !Number.isInteger(length) || length <= 0) {
+    return c.json({ error: 'image body is required' }, 400);
+  }
+  if (length > MAX_UPLOAD_BYTES) {
+    return c.json({ error: 'File too large (max 100MB)' }, 413);
   }
 
-  // Validate file type and size (max 100MB)
-  if (!file.type.startsWith('image/')) {
-    return c.json({ error: 'File must be an image' }, 400);
-  }
-  if (file.size > 100 * 1024 * 1024) {
-    return c.json({ error: 'File too large (max 100MB)' }, 400);
-  }
-
-  const uuid = crypto.randomUUID();
-  const key = `${mapId}/${uuid}.png`;
-
-  await c.env.ROADTRIP_PRINTS.put(key, file.stream(), {
+  const key = `${mapId}/${crypto.randomUUID()}.png`;
+  await c.env.ROADTRIP_PRINTS.put(key, body, {
     httpMetadata: { contentType: 'image/png' },
   });
 
@@ -69,6 +78,7 @@ orders.get('/images/*', async (c) => {
   const headers = new Headers();
   headers.set('Content-Type', object.httpMetadata?.contentType ?? 'image/png');
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  headers.set('X-Content-Type-Options', 'nosniff');
 
   return new Response(object.body, { headers });
 });
@@ -85,12 +95,9 @@ orders.post('/checkout', async (c) => {
     return c.json({ error: 'Missing required fields' }, 400);
   }
 
-  // Validate shipping address shape — parseShippingAddress requires the minimum
-  // set of fields. Round-trip through JSON so a hostile client can't smuggle in
-  // extra unserializable values or prototype pollution attempts.
-  const validatedAddress = parseShippingAddress(JSON.stringify(body.shipping_address));
+  const validatedAddress = toShippingAddress(body.shipping_address);
   if (!validatedAddress) {
-    return c.json({ error: 'Invalid shipping_address — name, line1, city, and country are required' }, 400);
+    return c.json({ error: 'Invalid shipping_address: name, line1, city, postalCode and a two-letter country code are required' }, 400);
   }
   body.shipping_address = validatedAddress;
 
@@ -100,15 +107,32 @@ orders.post('/checkout', async (c) => {
   if (!canEditRole(mapResult.role)) return c.json({ error: 'Forbidden' }, 403);
 
   // Look up product + size
-  const product = getProductSize(body.product_sku, body.size);
-  if (!product) return c.json({ error: 'Invalid product or size' }, 400);
+  const catalog = getProductBySku(body.product_sku);
+  const product = catalog?.sizes.find((s) => s.size === body.size);
+  if (!catalog || !product) return c.json({ error: 'Invalid product or size' }, 400);
+
+  // R2 keys are literal and uploads use `${mapId}/${uuid}.png`, so an existing key under this map is its upload.
+  const imageKey = body.image_key;
+  if (
+    typeof imageKey !== 'string'
+    || !imageKey.startsWith(`${mapResult.map.id}/`)
+    || !(await c.env.ROADTRIP_PRINTS.head(imageKey))
+  ) {
+    return c.json({ error: 'Invalid image_key' }, 400);
+  }
+
+  const fullSku = buildFullSku(body.product_sku, body.size);
+  let shippingCostCents: number;
+  try {
+    ({ shippingCostCents } = await getShippingQuote(c.env.PRODIGI_API_KEY, {
+      sku: fullSku,
+      destinationCountry: body.shipping_address.country,
+    }, isSandbox(c.env.PRODIGI_SANDBOX)));
+  } catch (err) {
+    return quoteErrorResponse(c, err);
+  }
 
   const orderId = crypto.randomUUID();
-  const fullSku = buildFullSku(body.product_sku, body.size);
-  // TODO: derive from product catalog if more products are added
-  const productType = body.product_sku === 'GLOBAL-BLP' ? 'poster' : 'canvas';
-  const shippingCostCents = body.shipping_cost_cents ?? product.shippingPlaceholderCents;
-  const imageUrl = body.image_key ? `/api/images/${body.image_key}` : null;
 
   // Create Stripe Checkout session FIRST — if this fails, no orphaned DB row is left behind
   const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
@@ -120,7 +144,7 @@ orders.post('/checkout', async (c) => {
       {
         price_data: {
           currency: 'usd',
-          product_data: { name: `${productType === 'poster' ? 'Poster' : 'Canvas'} Print — ${body.size}` },
+          product_data: { name: `${catalog.name} — ${product.label}` },
           unit_amount: product.priceCents,
         },
         quantity: 1,
@@ -135,20 +159,28 @@ orders.post('/checkout', async (c) => {
       },
     ],
     metadata: { order_id: orderId },
-    success_url: `${baseUrl}/order-confirmation/${orderId}`,
-    cancel_url: `${baseUrl}/order/${body.map_id}`,
+    // Stripe requires at least 30 minutes; checkout.session.expired then deletes the unpaid order.
+    expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
+    success_url: new URL(`/order-confirmation/${orderId}`, baseUrl).href,
+    cancel_url: new URL(`/order/${body.map_id}`, baseUrl).href,
   });
 
-  // Insert order row only after Stripe succeeds, with the session ID included
+  // The guarded INSERT adds nothing if the map was deleted after the access check.
   const now = new Date().toISOString();
-  await c.env.DB.prepare(
+  const inserted = await c.env.DB.prepare(
     `INSERT INTO orders (id, map_id, user_id, product_type, product_sku, poster_size, status, image_url, shipping_address, subtotal, shipping_cost, currency, stripe_session_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, 'usd', ?, ?, ?)`,
+     SELECT ?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, 'usd', ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM maps WHERE id = ?)`,
   ).bind(
-    orderId, body.map_id, userId, productType, fullSku, body.size,
-    imageUrl, JSON.stringify(body.shipping_address),
+    orderId, body.map_id, userId, catalog.type, fullSku, body.size,
+    `/api/images/${imageKey}`, JSON.stringify(body.shipping_address),
     product.priceCents, shippingCostCents, session.id, now, now,
+    body.map_id,
   ).run();
+  if (!inserted.meta.changes) {
+    await stripe.checkout.sessions.expire(session.id);
+    return c.json({ error: 'Map not found' }, 404);
+  }
 
   return c.json({ checkout_url: session.url });
 });
@@ -173,13 +205,9 @@ orders.post('/print-quote', async (c) => {
       sku: fullSku,
       destinationCountry: body.country,
     }, isSandbox(c.env.PRODIGI_SANDBOX));
-    return c.json({
-      shipping_cost_cents: quote.shippingCostCents,
-      estimated_days: quote.estimatedDays,
-    });
+    return c.json({ shipping_cost_cents: quote.shippingCostCents });
   } catch (err) {
-    console.error('Prodigi quote error:', err);
-    return c.json({ error: 'Unable to get shipping quote' }, 502);
+    return quoteErrorResponse(c, err);
   }
 });
 
@@ -192,7 +220,7 @@ orders.get('/orders', async (c) => {
     `SELECT o.*, m.name as map_name
      FROM orders o
      JOIN maps m ON o.map_id = m.id
-     WHERE o.user_id = ?
+     WHERE o.user_id = ? AND o.status != 'pending_payment'
      ORDER BY o.created_at DESC
      LIMIT 100`,
   ).bind(userId).all();
@@ -217,19 +245,17 @@ orders.get('/orders/:id', async (c) => {
 
 // ── Admin orders ──────────────────────────────────────────────────────────────
 
-/** Returns a 401 response unless the request carries `Bearer <ADMIN_SECRET>`, else null. */
-async function requireAdmin(c: Context<AppEnv>): Promise<Response | null> {
+/** Rejects /admin/* requests that lack `Bearer <ADMIN_SECRET>`, and all of them when the secret is unset. */
+orders.use('/admin/*', createMiddleware<AppEnv>(async (c, next) => {
+  const secret = c.env.ADMIN_SECRET;
   const auth = c.req.header('authorization');
-  if (!auth || !(await secretsEqual(auth, `Bearer ${c.env.ADMIN_SECRET}`))) {
+  if (!secret || !auth || !(await secretsEqual(auth, `Bearer ${secret}`))) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
-  return null;
-}
+  await next();
+}));
 
 orders.get('/admin/orders', async (c) => {
-  const denied = await requireAdmin(c);
-  if (denied) return denied;
-
   const status = c.req.query('status');
   const binds = status ? [status] : [];
 
@@ -245,9 +271,6 @@ orders.get('/admin/orders', async (c) => {
 });
 
 orders.get('/admin/orders/:id', async (c) => {
-  const denied = await requireAdmin(c);
-  if (denied) return denied;
-
   const orderId = c.req.param('id');
   const order = await c.env.DB.prepare(
     `SELECT o.*, m.name as map_name, u.email as user_email
@@ -262,9 +285,6 @@ orders.get('/admin/orders/:id', async (c) => {
 });
 
 orders.patch('/admin/orders/:id', async (c) => {
-  const denied = await requireAdmin(c);
-  if (denied) return denied;
-
   const orderId = c.req.param('id');
   const body = await readJsonBody<{ image_url?: string; action?: string }>(c);
   if (!body) return c.res;
@@ -273,6 +293,7 @@ orders.patch('/admin/orders/:id', async (c) => {
     .bind(orderId).first<{
       id: string; status: string; image_url: string | null;
       product_sku: string; poster_size: string; shipping_address: string | null;
+      customer_email: string | null;
     }>();
   if (!order) return c.json({ error: 'Order not found' }, 404);
 
@@ -305,6 +326,7 @@ orders.patch('/admin/orders/:id', async (c) => {
         product_sku: order.product_sku,
         image_url: order.image_url,
         shippingAddress: address,
+        email: order.customer_email,
       }, now);
 
       return c.json({ success: true, prodigi_order_id: prodigiOrderId });

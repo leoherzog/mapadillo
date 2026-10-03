@@ -4,7 +4,8 @@
  */
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { ShareData } from '../services/maps.js';
+import { live } from 'lit/directives/live.js';
+import type { ShareData, ShareRole, Visibility } from '../services/maps.js';
 import {
   getMapShares,
   generateShareLink,
@@ -13,28 +14,27 @@ import {
   updateVisibility,
 } from '../services/maps.js';
 import { waUtilities } from '../styles/wa-utilities.js';
-import { roleBadge } from './ui.js';
+import { errorCallout, roleBadge } from './ui.js';
 import { fieldChecked, fieldValue } from '../utils/form.js';
+
+/** Absolute invite URL for a claim token. */
+const claimUrl = (token: string) => `${location.origin}/claim/${token}`;
 
 @customElement('share-dialog')
 export class ShareDialog extends LitElement {
   @property() mapId = '';
-  @property() visibility: 'public' | 'private' = 'private';
+  @property() visibility: Visibility = 'private';
 
   @state() private _shares: ShareData[] = [];
   @state() private _loading = false;
-  @state() private _linkRole: 'viewer' | 'editor' = 'viewer';
+  @state() private _linkRole: ShareRole = 'viewer';
   @state() private _generatedUrl = '';
   @state() private _generating = false;
-  @state() private _revokingShareId: string | null = null;
+  private _revokingShareId: string | null = null;
   @state() private _dialogMode: 'share' | 'confirm-revoke' | null = null;
   @state() private _error = '';
 
   static styles = [waUtilities, css`
-    wa-dialog::part(dialog) {
-      max-width: 520px;
-    }
-
     .link-box {
       padding: var(--wa-space-s);
       background: var(--wa-color-surface-lowered);
@@ -77,11 +77,6 @@ export class ShareDialog extends LitElement {
       margin: 0;
     }
 
-    .visibility-desc {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-    }
-
     .collaborator-info {
       flex: 1;
       min-width: 0;
@@ -120,6 +115,7 @@ export class ShareDialog extends LitElement {
       this._shares = await getMapShares(this.mapId);
     } catch {
       this._shares = [];
+      this._error = 'Could not load collaborators. Please try again.';
     } finally {
       this._loading = false;
     }
@@ -142,30 +138,18 @@ export class ShareDialog extends LitElement {
             `
           : html`
               <div class="wa-stack wa-gap-l">
-                ${this._error ? html`
-                  <wa-callout variant="danger">
-                    <wa-icon slot="icon" name="circle-info" library="fa-jelly"></wa-icon>
-                    ${this._error}
-                  </wa-callout>
-                ` : nothing}
+                ${this._error ? errorCallout(this._error) : nothing}
 
                 <!-- Visibility toggle -->
                 <div class="wa-stack wa-gap-xs">
                   <p class="section-label">Visibility</p>
-                  <div class="wa-split wa-align-items-center wa-gap-m">
-                    <div>
-                      <div>${this.visibility === 'public' ? 'Public' : 'Private'}</div>
-                      <div class="visibility-desc">
-                        ${this.visibility === 'public'
-                          ? 'Anyone with the link can view this trip.'
-                          : 'Only invited collaborators can access this trip.'}
-                      </div>
-                    </div>
-                    <wa-switch
-                      .checked=${this.visibility === 'public'}
-                      @change=${this._onVisibilityToggle}
-                    ></wa-switch>
-                  </div>
+                  <wa-switch
+                    .checked=${live(this.visibility === 'public')}
+                    hint=${this.visibility === 'public'
+                      ? 'Anyone with the link can view this trip.'
+                      : 'Only invited collaborators can access this trip.'}
+                    @change=${this._onVisibilityToggle}
+                  >Public</wa-switch>
                 </div>
 
                 <wa-divider></wa-divider>
@@ -183,12 +167,13 @@ export class ShareDialog extends LitElement {
                   </wa-radio-group>
 
                   <wa-button
+                    id="generate-link"
                     variant="brand"
-                    size="small"
+                    size="s"
                     ?loading=${this._generating}
                     @click=${this._onGenerateLink}
                   >
-                    <wa-icon slot="start" name="link" library="fa-jelly"></wa-icon>
+                    <wa-icon slot="start" name="link"></wa-icon>
                     Generate Link
                   </wa-button>
 
@@ -201,7 +186,7 @@ export class ShareDialog extends LitElement {
                         success-label="Copied!"
                         feedback-duration="2000"
                       >
-                        <wa-icon slot="copy-icon" name="clone" library="fa-jelly"></wa-icon>
+                        <wa-icon slot="copy-icon" name="clone"></wa-icon>
                       </wa-copy-button>
                     </div>
                   ` : nothing}
@@ -225,7 +210,7 @@ export class ShareDialog extends LitElement {
         ${isConfirm
           ? html`
               <wa-button slot="footer" variant="danger" @click=${this._confirmRemove}>Remove</wa-button>
-              <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._cancelRevoke}>Cancel</wa-button>
+              <wa-button id="revoke-cancel" slot="footer" appearance="outlined" variant="neutral" @click=${this._cancelRevoke}>Cancel</wa-button>
             `
           : html`
               <wa-button slot="footer" appearance="outlined" variant="neutral" @click=${this._onClose}>Close</wa-button>
@@ -235,22 +220,20 @@ export class ShareDialog extends LitElement {
   }
 
   private _renderShare(share: ShareData) {
-    const claimUrl = share.claim_token
-      ? `${window.location.origin}/claim/${share.claim_token}`
-      : null;
+    const inviteUrl = share.claim_token ? claimUrl(share.claim_token) : null;
 
     if (!share.claimed) {
       return html`
         <div class="collab-row wa-cluster wa-align-items-center wa-gap-s">
-          <wa-icon name="user" library="fa-jelly" class="collab-icon-pending"></wa-icon>
+          <wa-icon name="user" class="collab-icon-pending"></wa-icon>
           <div class="collaborator-info">
             <div class="pending-label">Pending invite</div>
-            ${claimUrl ? html`<div class="collaborator-email claim-url">${claimUrl}</div>` : nothing}
+            ${inviteUrl ? html`<div class="collaborator-email claim-url">${inviteUrl}</div>` : nothing}
           </div>
           ${roleBadge(share.role)}
-          ${claimUrl ? html`
+          ${inviteUrl ? html`
             <wa-copy-button
-              value=${claimUrl}
+              value=${inviteUrl}
               copy-label="Copy invite link"
               success-label="Copied!"
               feedback-duration="2000"
@@ -258,8 +241,8 @@ export class ShareDialog extends LitElement {
               <wa-icon slot="copy-icon" name="clone"></wa-icon>
             </wa-copy-button>
           ` : nothing}
-          <wa-button id="remove-${share.id}" appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
-            <wa-icon name="trash"></wa-icon>
+          <wa-button id="remove-${share.id}" appearance="plain" size="s" @click=${() => this._onRemoveShare(share.id)}>
+            <wa-icon name="trash" label="Remove collaborator"></wa-icon>
           </wa-button>
           <wa-tooltip for="remove-${share.id}">Remove</wa-tooltip>
         </div>
@@ -268,23 +251,23 @@ export class ShareDialog extends LitElement {
 
     return html`
       <div class="collab-row wa-cluster wa-align-items-center wa-gap-s">
-        <wa-icon name="user" library="fa-jelly" class="collab-icon-claimed"></wa-icon>
+        <wa-icon name="user" class="collab-icon-claimed"></wa-icon>
         <div class="collaborator-info">
           <div class="collaborator-name">${share.user_name ?? 'Unknown'}</div>
           ${share.user_email ? html`<div class="collaborator-email">${share.user_email}</div>` : nothing}
         </div>
         <wa-select
           label="Role"
-          size="small"
-          .value=${share.role}
-          @change=${(e: Event) => this._onRoleChange(share.id, fieldValue(e) as 'viewer' | 'editor')}
+          size="s"
+          .value=${live(share.role)}
+          @change=${(e: Event) => this._onRoleChange(share, fieldValue(e) as ShareRole)}
           class="role-select"
         >
           <wa-option value="viewer">Viewer</wa-option>
           <wa-option value="editor">Editor</wa-option>
         </wa-select>
-        <wa-button id="remove-claimed-${share.id}" appearance="plain" size="small" label="Remove" @click=${() => this._onRemoveShare(share.id)}>
-          <wa-icon name="trash"></wa-icon>
+        <wa-button id="remove-claimed-${share.id}" appearance="plain" size="s" @click=${() => this._onRemoveShare(share.id)}>
+          <wa-icon name="trash" label="Remove collaborator"></wa-icon>
         </wa-button>
         <wa-tooltip for="remove-claimed-${share.id}">Remove</wa-tooltip>
       </div>
@@ -292,32 +275,34 @@ export class ShareDialog extends LitElement {
   }
 
   private async _onVisibilityToggle(e: Event) {
-    const isPublic = fieldChecked(e);
-    const newVisibility = isPublic ? 'public' : 'private';
+    const previous = this.visibility;
+    const next: Visibility = fieldChecked(e) ? 'public' : 'private';
+    this._error = '';
+    this.visibility = next;
     try {
-      await updateVisibility(this.mapId, newVisibility);
-      this.visibility = newVisibility;
+      await updateVisibility(this.mapId, next);
       this.dispatchEvent(new CustomEvent('visibility-changed', {
-        detail: { visibility: newVisibility },
+        detail: { visibility: next },
         bubbles: true,
         composed: true,
       }));
     } catch {
+      this.visibility = previous;
       this._error = 'Failed to update visibility. Please try again.';
     }
   }
 
   private _onLinkRoleChange(e: Event) {
-    this._linkRole = fieldValue(e) as 'viewer' | 'editor';
+    this._linkRole = fieldValue(e) as ShareRole;
   }
 
   private async _onGenerateLink() {
+    this._error = '';
     this._generating = true;
     try {
       const result = await generateShareLink(this.mapId, this._linkRole);
-      this._generatedUrl = result.url || `${window.location.origin}/claim/${result.claim_token}`;
-      // Refresh shares list
-      this._shares = await getMapShares(this.mapId);
+      this._generatedUrl = claimUrl(result.claim_token);
+      this._shares = await getMapShares(this.mapId).catch(() => this._shares);
     } catch {
       this._error = 'Failed to generate invite link. Please try again.';
     } finally {
@@ -325,32 +310,39 @@ export class ShareDialog extends LitElement {
     }
   }
 
-  private async _onRoleChange(shareId: string, role: 'viewer' | 'editor') {
+  private async _onRoleChange(share: ShareData, role: ShareRole) {
+    const setRole = (r: ShareRole) => {
+      this._shares = this._shares.map(s => (s.id === share.id ? { ...s, role: r } : s));
+    };
+    this._error = '';
+    setRole(role);
     try {
-      await updateShare(this.mapId, shareId, role);
-      this._shares = this._shares.map(s => s.id === shareId ? { ...s, role } : s);
+      await updateShare(this.mapId, share.id, role);
     } catch {
+      setRole(share.role);
       this._error = 'Failed to update collaborator role. Please try again.';
-      // Revert on failure
-      this._shares = await getMapShares(this.mapId);
     }
   }
 
   private _onRemoveShare(shareId: string) {
     this._revokingShareId = shareId;
     this._dialogMode = 'confirm-revoke';
+    void this._focusAfterRender('revoke-cancel');
   }
 
   private _cancelRevoke() {
     this._revokingShareId = null;
     this._dialogMode = 'share';
+    void this._focusAfterRender('generate-link');
   }
 
   private async _confirmRemove() {
     const shareId = this._revokingShareId;
     this._revokingShareId = null;
     this._dialogMode = 'share';
+    void this._focusAfterRender('generate-link');
     if (!shareId) return;
+    this._error = '';
 
     try {
       await deleteShare(this.mapId, shareId);
@@ -365,15 +357,17 @@ export class ShareDialog extends LitElement {
     this._revokingShareId = null;
   }
 
-  private _onAfterHide() {
-    // If the user dismissed the confirmation (Esc / backdrop), return to share mode.
-    // If they dismissed the main share dialog, fully close.
-    if (this._dialogMode === 'confirm-revoke') {
-      this._revokingShareId = null;
-      this._dialogMode = 'share';
-    } else {
-      this._dialogMode = null;
-    }
+  /** Syncs state when the dialog itself closes (Esc, header X); nested tooltips and selects also bubble wa-after-hide. */
+  private _onAfterHide(e: Event) {
+    if (e.target !== e.currentTarget) return;
+    this._dialogMode = null;
+    this._revokingShareId = null;
+  }
+
+  /** Focuses an element in this dialog after the pending render. */
+  private async _focusAfterRender(id: string) {
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>(`#${id}`)?.focus();
   }
 }
 

@@ -1,51 +1,86 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+// @vitest-environment happy-dom
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { navigateTo } from './nav.js';
 
+const onPopState = vi.fn();
+
 beforeEach(() => {
-  // PopStateEvent isn't available in Node — stub it.
-  vi.stubGlobal('PopStateEvent', class PopStateEvent extends Event {
-    constructor(type: string) { super(type); }
-  });
-  // navigateTo reads `location` directly (global), not `window.location`
-  vi.stubGlobal('location', {
-    origin: 'http://localhost',
-    href: 'http://localhost/',
-  });
-  vi.stubGlobal('window', {
-    history: { pushState: vi.fn() },
-    dispatchEvent: vi.fn(),
-  });
+  vi.stubGlobal('navigation', undefined);
+  window.history.pushState(null, '', '/');
+  window.addEventListener('popstate', onPopState);
+});
+
+afterEach(() => {
+  window.removeEventListener('popstate', onPopState);
 });
 
 describe('navigateTo', () => {
   describe('with Navigation API', () => {
-    it('calls navigation.navigate()', () => {
-      const mockNavigate = vi.fn();
-      vi.stubGlobal('window', {
-        history: { pushState: vi.fn() },
-        dispatchEvent: vi.fn(),
-        navigation: { navigate: mockNavigate },
-      });
+    function stubNavigation() {
+      const navigation = { navigate: vi.fn() };
+      vi.stubGlobal('navigation', navigation);
+      return navigation;
+    }
+
+    it('pushes through navigation.navigate()', () => {
+      const navigation = stubNavigation();
+      const pushSpy = vi.spyOn(window.history, 'pushState');
 
       navigateTo('/dashboard');
 
-      expect(mockNavigate).toHaveBeenCalledWith('/dashboard', undefined);
+      expect(navigation.navigate).toHaveBeenCalledWith('/dashboard', undefined);
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(onPopState).not.toHaveBeenCalled();
+    });
+
+    it('replaces through navigation.navigate()', () => {
+      const navigation = stubNavigation();
+      const replaceSpy = vi.spyOn(window.history, 'replaceState');
+
+      navigateTo('/dashboard', { replace: true });
+
+      expect(navigation.navigate).toHaveBeenCalledWith('/dashboard', { history: 'replace' });
+      expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
+    it('ignores the current URL', () => {
+      const navigation = stubNavigation();
+
+      navigateTo('/');
+
+      expect(navigation.navigate).not.toHaveBeenCalled();
     });
   });
 
-  describe('without Navigation API (fallback)', () => {
-    it('calls history.pushState', () => {
-      navigateTo('/dashboard');
+  describe('without Navigation API', () => {
+    it('pushes a history entry and dispatches popstate', () => {
+      const length = window.history.length;
 
-      expect(window.history.pushState).toHaveBeenCalledWith(null, '', '/dashboard');
-    });
-
-    it('dispatches popstate event', () => {
       navigateTo('/map/1');
 
-      expect(window.dispatchEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'popstate' }),
-      );
+      expect(window.location.pathname).toBe('/map/1');
+      expect(window.history.length).toBe(length + 1);
+      expect(onPopState).toHaveBeenCalledTimes(1);
+    });
+
+    it('replaces the current entry and dispatches popstate', () => {
+      const length = window.history.length;
+
+      navigateTo('/sign-in', { replace: true });
+
+      expect(window.location.pathname).toBe('/sign-in');
+      expect(window.history.length).toBe(length);
+      expect(onPopState).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores the current URL', () => {
+      const length = window.history.length;
+
+      navigateTo('/');
+
+      expect(window.history.length).toBe(length);
+      expect(onPopState).not.toHaveBeenCalled();
     });
   });
 });

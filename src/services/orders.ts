@@ -2,7 +2,7 @@
  * Typed API wrappers for order operations.
  */
 
-import { apiGet, apiPost, apiPostForm } from './api-client.js';
+import { apiGet, apiPost, apiPostBlob } from './api-client.js';
 import type { Order, CheckoutBody, PrintQuoteBody } from '../../shared/types.js';
 
 export type { Order } from '../../shared/types.js';
@@ -28,13 +28,10 @@ export interface CheckoutResult {
 
 export interface PrintQuoteResult {
   shipping_cost_cents: number;
-  estimated_days: number;
 }
 
 export function uploadPrintImage(mapId: string, blob: Blob): Promise<UploadResult> {
-  const form = new FormData();
-  form.append('image', blob, 'map.png');
-  return apiPostForm<UploadResult>(`/api/images/${mapId}`, form);
+  return apiPostBlob<UploadResult>(`/api/images/${mapId}`, blob);
 }
 
 export function createCheckout(data: CheckoutBody): Promise<CheckoutResult> {

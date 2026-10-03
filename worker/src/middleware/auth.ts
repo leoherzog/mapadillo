@@ -10,29 +10,11 @@ import type { AppEnv } from '../types.js';
  */
 function authMiddleware(required: boolean) {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const auth = getAuth(c.env);
-    let session;
-    try {
-      session = await auth.api.getSession({
-        headers: c.req.raw.headers,
-      });
-    } catch {
-      if (required) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-      await next();
-      return;
-    }
-
-    if (!session) {
-      if (required) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-      await next();
-      return;
-    }
-
-    c.set('user', session.user);
+    const session = await getAuth(c.env)
+      .api.getSession({ headers: c.req.raw.headers })
+      .catch(() => null);
+    if (session) c.set('user', session.user);
+    else if (required) return c.json({ error: 'Unauthorized' }, 401);
     await next();
   });
 }

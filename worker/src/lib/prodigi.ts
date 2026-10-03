@@ -12,7 +12,6 @@ interface ProdigiQuoteRequest {
 
 interface ProdigiQuoteResponse {
   shippingCostCents: number;
-  estimatedDays: number;
 }
 
 interface ProdigiCreateOrderRequest {
@@ -20,10 +19,26 @@ interface ProdigiCreateOrderRequest {
   sku: string;
   imageUrl: string;
   shippingAddress: ShippingAddress;
+  /** Recipient email for delivery updates. */
+  email?: string;
+  /** Public URL Prodigi calls when the order changes. */
+  callbackUrl?: string;
 }
 
 interface ProdigiCreateOrderResponse {
   prodigiOrderId: string;
+}
+
+/** A Prodigi order as returned by GET /orders/{id}. */
+export interface ProdigiOrder {
+  id: string;
+  status: { stage: string };
+  shipments?: Array<{ status?: string; tracking?: { url?: string; number?: string } }>;
+}
+
+/** Prodigi cannot print or ship the item to the requested destination. */
+export class ProdigiNotAvailableError extends Error {
+  override name = 'ProdigiNotAvailableError';
 }
 
 const SANDBOX_URL = 'https://api.sandbox.prodigi.com/v4.0';
@@ -33,22 +48,20 @@ function getBaseUrl(sandbox: boolean): string {
   return sandbox ? SANDBOX_URL : LIVE_URL;
 }
 
-/**
- * Parse the PRODIGI_SANDBOX env var as a boolean. Accepts the common truthy
- * spellings ("true", "1", "yes", "on"); anything else — including undefined —
- * resolves to false (live mode). Consolidating this avoids subtle drift where
- * one call site interprets the flag differently from another.
- */
-export function isSandbox(value: string | boolean | undefined | null): boolean {
-  if (typeof value === 'boolean') return value;
+/** Parse PRODIGI_SANDBOX: "true", "1", "yes" or "on" (case-insensitive, trimmed) selects the sandbox; anything else is live. */
+export function isSandbox(value: string | undefined): boolean {
   if (!value) return false;
   return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+/**
+ * Quote Budget shipping in USD for one copy of `sku`.
+ * @throws ProdigiNotAvailableError when Prodigi cannot ship the item to the destination
+ */
 export async function getShippingQuote(
   apiKey: string,
   req: ProdigiQuoteRequest,
-  sandbox = false,
+  sandbox: boolean,
 ): Promise<ProdigiQuoteResponse> {
   const baseUrl = getBaseUrl(sandbox);
   const res = await fetch(`${baseUrl}/quotes`, {
@@ -60,6 +73,7 @@ export async function getShippingQuote(
     body: JSON.stringify({
       shippingMethod: 'Budget',
       destinationCountryCode: req.destinationCountry,
+      currencyCode: 'USD',
       items: [{
         sku: req.sku,
         copies: 1,
@@ -74,26 +88,34 @@ export async function getShippingQuote(
   }
 
   const data = await res.json() as {
-    quotes: Array<{
+    outcome?: string;
+    quotes?: Array<{
       costSummary: { shipping: { amount: string; currency: string } };
-      shipments: Array<{ fulfillmentLocation: { countryCode: string }; carrier: { deliveryEstimate?: { estimatedDays?: number } } }>;
     }>;
   };
 
-  const quote = data.quotes[0];
-  if (!quote) throw new Error('No quote returned from Prodigi');
+  // A successful response without a quote means the item cannot ship there; it must block ordering.
+  const quote = data.quotes?.[0];
+  if (!quote || data.outcome?.toLowerCase() === 'notavailable') {
+    throw new ProdigiNotAvailableError(`${req.sku} cannot ship to ${req.destinationCountry}`);
+  }
 
-  const shippingAmount = parseFloat(quote.costSummary.shipping.amount);
-  const shippingCostCents = Math.round(shippingAmount * 100);
-  const estimatedDays = quote.shipments?.[0]?.carrier?.deliveryEstimate?.estimatedDays ?? 14;
+  // Checkout charges this amount as USD cents.
+  const { amount, currency } = quote.costSummary.shipping;
+  if (currency !== 'USD') throw new Error(`Unexpected Prodigi quote currency: ${currency}`);
+  // Number('') and Number(null) are 0, so a blank amount must not read as free shipping.
+  const shippingAmount = typeof amount === 'string' && amount.trim() !== '' ? Number(amount) : NaN;
+  if (!Number.isFinite(shippingAmount) || shippingAmount < 0) {
+    throw new Error(`Invalid Prodigi shipping amount: ${amount}`);
+  }
 
-  return { shippingCostCents, estimatedDays };
+  return { shippingCostCents: Math.round(shippingAmount * 100) };
 }
 
 export async function createOrder(
   apiKey: string,
   req: ProdigiCreateOrderRequest,
-  sandbox = false,
+  sandbox: boolean,
 ): Promise<ProdigiCreateOrderResponse> {
   const baseUrl = getBaseUrl(sandbox);
   const res = await fetch(`${baseUrl}/orders`, {
@@ -104,9 +126,12 @@ export async function createOrder(
     },
     body: JSON.stringify({
       idempotencyKey: req.orderId,
+      merchantReference: req.orderId,
+      callbackUrl: req.callbackUrl,
       shippingMethod: 'Budget',
       recipient: {
         name: req.shippingAddress.name,
+        email: req.email,
         address: {
           line1: req.shippingAddress.line1,
           line2: req.shippingAddress.line2 || undefined,
@@ -135,4 +160,19 @@ export async function createOrder(
 
   const data = await res.json() as { order: { id: string } };
   return { prodigiOrderId: data.order.id };
+}
+
+/** Fetch the current state of a Prodigi order. */
+export async function getOrder(apiKey: string, prodigiOrderId: string, sandbox: boolean): Promise<ProdigiOrder> {
+  const res = await fetch(`${getBaseUrl(sandbox)}/orders/${encodeURIComponent(prodigiOrderId)}`, {
+    headers: { 'X-API-Key': apiKey },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Prodigi get order failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json() as { order: ProdigiOrder };
+  return data.order;
 }

@@ -1,14 +1,9 @@
 /**
- * DIY Lit reactive controller router
- *
- * Uses the Navigation API (Baseline cross-browser early 2026) and URLPattern
- * (Baseline cross-browser Sept 2025). No polyfills needed for evergreen browsers.
- *
- * Features:
- * - URLPattern route matching with named params
- * - Optional async `enter()` guard (auth redirects, lazy loading)
- * - Built-in scroll restoration, focus management, View Transitions via Navigation API
- * - Single `navigation.addEventListener('navigate', ...)` handles all nav types
+ * Lit reactive-controller router: RegExp matching of paths such as '/map/:id' and optional
+ * async `enter()` guards that may return a redirect path. With the Navigation API, a
+ * `navigate` handler intercepts link clicks and Back/Forward and handles scroll and focus.
+ * Without it, a popstate listener routes `navigateTo` and Back/Forward, and link clicks are
+ * full page loads that the SPA fallback serves.
  */
 
 import { type ReactiveController, type ReactiveControllerHost } from 'lit';
@@ -22,7 +17,7 @@ export interface RouteParams {
 }
 
 export interface RouteDefinition {
-  /** URL pattern, e.g. '/map/:id' */
+  /** Path to match, e.g. '/map/:id'; each `:name` matches one non-empty segment. */
   path: string;
   /** Return the Lit template to render for this route */
   render: (params: RouteParams) => TemplateResult;
@@ -33,29 +28,34 @@ export interface RouteDefinition {
   enter?: (params: RouteParams) => Promise<string | void> | string | void;
   /** The page fills the viewport and the shell hides its footer. */
   fullHeight?: boolean;
+  /** Page name shown before ' · Mapadillo' in the tab title. */
+  title?: string;
 }
 
 interface CompiledRoute {
-  pattern: URLPattern;
+  pattern: RegExp;
   definition: RouteDefinition;
 }
 
+/** Compile a route path into an anchored RegExp with a named group per `:param` segment. */
+function compilePath(path: string): RegExp {
+  const source = path
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/:(\w+)/g, '(?<$1>[^/]+)');
+  return new RegExp(`^${source}$`);
+}
+
 export class Router implements ReactiveController {
-  private host: ReactiveControllerHost & EventTarget;
+  private host: ReactiveControllerHost;
   private routes: CompiledRoute[] = [];
   private _currentTemplate: TemplateResult = html``;
-  private _current: RouteDefinition | null = null;
   private _target: RouteDefinition | null = null;
-  private _popstateHandler: (() => void) | null = null;
   private _redirectDepth = 0;
+  /** Bumped on every navigation so a superseded `enter()` guard drops its result. */
+  private _navSeq = 0;
 
   get outlet(): TemplateResult {
     return this._currentTemplate;
-  }
-
-  /** The route whose template is in `outlet`, or null for the not-found and error templates. */
-  get current(): RouteDefinition | null {
-    return this._current;
   }
 
   /** The route the latest navigation matched, set before its `enter` guard runs; null when nothing matched or entry threw. */
@@ -64,13 +64,13 @@ export class Router implements ReactiveController {
   }
 
   constructor(
-    host: ReactiveControllerHost & EventTarget,
+    host: ReactiveControllerHost,
     routes: RouteDefinition[]
   ) {
     this.host = host;
     host.addController(this);
     this.routes = routes.map((def) => ({
-      pattern: new URLPattern({ pathname: def.path }),
+      pattern: compilePath(def.path),
       definition: def,
     }));
   }
@@ -81,42 +81,35 @@ export class Router implements ReactiveController {
 
   hostConnected(): void {
     const nav = this._nav;
-    if (!nav) {
-      console.warn('[Router] Navigation API not available, using popstate fallback.');
-      this._popstateHandler = () => void this._renderForUrl(window.location.href);
-      window.addEventListener('popstate', this._popstateHandler);
-      void this._renderForUrl(window.location.href);
-      return;
-    }
-
-    nav.addEventListener('navigate', this._onNavigate);
-
+    if (nav) nav.addEventListener('navigate', this._onNavigate);
+    else window.addEventListener('popstate', this._onPopState);
     void this._renderForUrl(window.location.href);
   }
 
   hostDisconnected(): void {
-    if (this._popstateHandler) {
-      window.removeEventListener('popstate', this._popstateHandler);
-      this._popstateHandler = null;
-    }
     this._nav?.removeEventListener('navigate', this._onNavigate);
+    window.removeEventListener('popstate', this._onPopState);
   }
+
+  /** Fallback listener: fires on Back/Forward and on the synthetic popstate `navigateTo` dispatches. */
+  private _onPopState = (): void => {
+    void this._renderForUrl(window.location.href);
+  };
 
   private _onNavigate = (event: NavigateEvent): void => {
     if (!event.canIntercept) return;
     if (event.downloadRequest !== null) return;
+    if (event.hashChange) return;
 
     const url = new URL(event.destination.url);
     if (url.origin !== window.location.origin) return;
 
-    const matched = this._matchRoute(url.href);
-    if (!matched) return;
+    // A same-document traversal never reloads, so an entry with no route must render not-found here.
+    if (!this._matchRoute(url.href) && event.navigationType !== 'traverse') return;
 
     event.intercept({
       scroll: 'after-transition',
-      handler: async () => {
-        await this._runRouteAsync(matched.definition, matched.params);
-      },
+      handler: () => this._renderForUrl(url.href),
     });
   };
 
@@ -124,6 +117,7 @@ export class Router implements ReactiveController {
     definition: RouteDefinition,
     params: RouteParams,
   ): Promise<void> {
+    const seq = ++this._navSeq;
     const MAX_REDIRECTS = 5;
     if (this._target !== definition) {
       this._target = definition;
@@ -132,32 +126,27 @@ export class Router implements ReactiveController {
     try {
       if (definition.enter) {
         const redirect = await definition.enter(params);
+        if (seq !== this._navSeq) return;
         if (typeof redirect === 'string') {
           if (this._redirectDepth >= MAX_REDIRECTS) {
-            console.error('[Router] Redirect loop detected — stopping navigation after', MAX_REDIRECTS, 'redirects.');
             this._redirectDepth = 0;
-            return;
+            throw new Error(`Redirect loop after ${MAX_REDIRECTS} redirects`);
           }
           this._redirectDepth++;
-          navigateTo(redirect);
+          // Replace so Back skips the guarded URL instead of re-triggering the redirect.
+          navigateTo(redirect, { replace: true });
           return;
         }
       }
       this._currentTemplate = definition.render(params);
-      this._current = definition;
+      document.title = definition.title ? `${definition.title} · Mapadillo` : 'Mapadillo';
       this._redirectDepth = 0;
     } catch (err) {
+      if (seq !== this._navSeq) return;
       console.error('[Router] Route error:', err);
-      this._current = null;
       this._target = null;
-      this._currentTemplate = html`
-        <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; } .router-callout wa-button { margin-top: var(--wa-space-xs); }</style>
-        <wa-callout class="router-callout" variant="danger">
-          <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-          <strong>Something went wrong</strong><br />
-          <wa-button href="/" size="small" variant="brand" appearance="outlined">Go home</wa-button>
-        </wa-callout>
-      `;
+      this._currentTemplate = this._callout('danger', 'circle-xmark', 'Something went wrong');
+      document.title = 'Something went wrong · Mapadillo';
     }
     this.host.requestUpdate();
   }
@@ -165,37 +154,36 @@ export class Router implements ReactiveController {
   private async _renderForUrl(href: string): Promise<void> {
     const matched = this._matchRoute(href);
     if (!matched) {
-      this._current = null;
+      this._navSeq++;
       this._target = null;
-      this._currentTemplate = this._notFoundTemplate();
+      this._currentTemplate = this._callout('warning', 'triangle-exclamation', '404 — Page not found');
+      document.title = 'Page not found · Mapadillo';
       this.host.requestUpdate();
       return;
     }
     await this._runRouteAsync(matched.definition, matched.params);
   }
 
+  /** The first route whose path matches `href`'s pathname; the query and fragment are ignored. */
   private _matchRoute(
     href: string
   ): { definition: RouteDefinition; params: RouteParams } | null {
+    const { pathname } = new URL(href, window.location.origin);
     for (const { pattern, definition } of this.routes) {
-      const result = pattern.exec(href);
-      if (result) {
-        const params: RouteParams = Object.fromEntries(
-          Object.entries(result.pathname.groups).filter(([, v]) => v !== undefined)
-        ) as RouteParams;
-        return { definition, params };
-      }
+      const match = pattern.exec(pathname);
+      if (match) return { definition, params: { ...match.groups } };
     }
     return null;
   }
 
-  private _notFoundTemplate(): TemplateResult {
+  /** The not-found and error outlet: a callout with a link home. */
+  private _callout(variant: 'danger' | 'warning', icon: string, message: string): TemplateResult {
     return html`
       <style>.router-callout { max-width: 600px; margin: var(--wa-space-2xl) auto; } .router-callout wa-button { margin-top: var(--wa-space-xs); }</style>
-      <wa-callout class="router-callout" variant="warning">
-        <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-        <strong>404 — Page not found</strong><br />
-        <wa-button href="/" size="small" variant="brand" appearance="outlined">Go home</wa-button>
+      <wa-callout class="router-callout" variant=${variant}>
+        <wa-icon slot="icon" name=${icon}></wa-icon>
+        <strong>${message}</strong><br />
+        <wa-button href="/" size="s" variant="brand" appearance="outlined">Go home</wa-button>
       </wa-callout>
     `;
   }

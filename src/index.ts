@@ -49,6 +49,8 @@ import '@web.awesome.me/webawesome-pro/dist/components/copy-button/copy-button.j
 import '@web.awesome.me/webawesome-pro/dist/components/toast/toast.js';
 import '@web.awesome.me/webawesome-pro/dist/components/toast-item/toast-item.js';
 import '@web.awesome.me/webawesome-pro/dist/components/split-panel/split-panel.js';
+import '@web.awesome.me/webawesome-pro/dist/components/animation/animation.js';
+import '@web.awesome.me/webawesome-pro/dist/components/drawer/drawer.js';
 
 // Font Awesome kit id; Web Awesome fetches kit icons from the Font Awesome CDN with it.
 setKitCode('781a3c6be3');
@@ -61,8 +63,7 @@ import { initDarkMode } from './dark-mode.js';
 initDarkMode();
 
 // ── Auth ──────────────────────────────────────────────────────────────────
-// Start session check immediately so the auth guard doesn't delay the
-// first protected navigation. Non-blocking — components await via initAuth().
+// Start the session check now so the first requireAuth guard reuses it.
 import { initAuth } from './auth/auth-state.js';
 import { initUnits } from './units.js';
 initUnits();

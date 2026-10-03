@@ -1,9 +1,6 @@
 -- Initial D1 schema: Better Auth core and passkey tables plus the application tables.
 -- Enum-style TEXT columns carry CHECK constraints so writes that bypass the Hono routes stay valid.
 
--- TODO: Implement a short-lived signed cookie cache to avoid stale D1 reads
--- after writes (eventual consistency mitigation). See PLAN.md "Session management".
-
 -- ── Better Auth core tables ───────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS "user" (
@@ -14,7 +11,7 @@ CREATE TABLE IF NOT EXISTS "user" (
   image TEXT,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
-  units TEXT NOT NULL DEFAULT 'km' CHECK (units IN ('km', 'mi'))
+  units TEXT CHECK (units IN ('km', 'mi'))
 );
 
 CREATE TABLE IF NOT EXISTS "session" (
@@ -69,6 +66,11 @@ CREATE TABLE IF NOT EXISTS "passkey" (
   aaguid TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_session_user_id ON "session"(userId);
+CREATE INDEX IF NOT EXISTS idx_account_user_id ON "account"(userId);
+CREATE INDEX IF NOT EXISTS idx_verification_identifier ON "verification"(identifier);
+CREATE INDEX IF NOT EXISTS idx_passkey_user_id ON "passkey"(userId);
+
 -- ── Application tables ────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS maps (
@@ -107,7 +109,8 @@ CREATE TABLE IF NOT EXISTS stops (
 CREATE INDEX IF NOT EXISTS idx_stops_map_id_position ON stops(map_id, position);
 
 -- SQLite treats NULLs as distinct in UNIQUE, so a map can hold many unclaimed
--- invites (user_id NULL). claim_token is nulled once an invite is claimed.
+-- invites (user_id NULL). A claimed share keeps its claim_token so its claimant
+-- can reopen the link; GET /api/maps/:id/shares hides it.
 CREATE TABLE IF NOT EXISTS map_shares (
   id TEXT PRIMARY KEY NOT NULL,
   map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
@@ -119,8 +122,8 @@ CREATE TABLE IF NOT EXISTS map_shares (
   UNIQUE(map_id, user_id)
 );
 
+-- No map_id index: UNIQUE(map_id, user_id) serves map_id lookups.
 CREATE INDEX IF NOT EXISTS idx_map_shares_user_id ON map_shares(user_id);
-CREATE INDEX IF NOT EXISTS idx_map_shares_map_id ON map_shares(map_id);
 
 -- Orders are financial records and must not be deleted when a map or user is removed.
 CREATE TABLE IF NOT EXISTS orders (
@@ -142,6 +145,7 @@ CREATE TABLE IF NOT EXISTS orders (
   shipping_cost INTEGER,
   currency TEXT NOT NULL DEFAULT 'usd',
   tracking_url TEXT,
+  customer_email TEXT,
   discord_notified INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -149,3 +153,4 @@ CREATE TABLE IF NOT EXISTS orders (
 
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_map_id ON orders(map_id);
+CREATE INDEX IF NOT EXISTS idx_orders_prodigi_order_id ON orders(prodigi_order_id);

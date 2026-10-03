@@ -1,13 +1,14 @@
 /**
  * Dashboard page — shows user's trips as map cards.
  *
- * Fetches owned maps from the API and displays them as thumbnail cards
- * with mini MapLibre previews.
+ * Lists owned and shared maps as cards with mini MapLibre previews, plus the user's print orders.
  */
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import type { MapWithRole } from '../services/maps.js';
 import { listMaps, deleteMap } from '../services/maps.js';
+import { ApiError } from '../services/api-client.js';
 import { listOrders, type OrderWithMap } from '../services/orders.js';
 import { errorCallout, orderStatusBadge } from '../components/ui.js';
 import '../components/map-card.js';
@@ -76,13 +77,14 @@ export class DashboardPage extends LitElement {
       font-weight: var(--wa-font-weight-semibold);
     }
 
-    .order-detail {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-    }
-
     .order-track {
       font-size: var(--wa-font-size-xs);
+    }
+
+    .attribution {
+      margin-top: var(--wa-space-l);
+      font-size: var(--wa-font-size-xs);
+      color: var(--wa-color-text-quiet);
     }
   `];
 
@@ -136,33 +138,40 @@ export class DashboardPage extends LitElement {
           : html`
               ${newTripButton}
               <div class="map-grid wa-grid wa-gap-l" @map-delete=${this._onMapDelete}>
-                ${this._myMaps.map(
-                  (m) => html`<map-card .map=${m}></map-card>`,
-                )}
+                ${repeat(this._myMaps, (m) => m.id, (m) => html`<map-card .map=${m}></map-card>`)}
               </div>
             `}
 
-      <h2>
-        <wa-icon name="share-nodes"></wa-icon>
-        Shared with Me
-      </h2>
+      ${this._fetchError ? nothing : html`
+        <h2>
+          <wa-icon name="share-nodes"></wa-icon>
+          Shared with Me
+        </h2>
 
-      ${this._loading
-        ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
-        : this._sharedMaps.length === 0
-          ? html`
-              <wa-callout variant="neutral">
-                <wa-icon slot="icon" name="share-nodes"></wa-icon>
-                <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
-              </wa-callout>
-            `
-          : html`
-              <div class="map-grid wa-grid wa-gap-l">
-                ${this._sharedMaps.map(
-                  (m) => html`<map-card .map=${m} .roleBadge=${m.role}></map-card>`,
-                )}
-              </div>
-            `}
+        ${this._loading
+          ? html`<div class="loading-center wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
+          : this._sharedMaps.length === 0
+            ? html`
+                <wa-callout variant="neutral">
+                  <wa-icon slot="icon" name="share-nodes"></wa-icon>
+                  <p>No shared trips yet. When someone shares a trip with you, it will appear here.</p>
+                </wa-callout>
+              `
+            : html`
+                <div class="map-grid wa-grid wa-gap-l">
+                  ${repeat(this._sharedMaps, (m) => m.id, (m) => html`<map-card .map=${m}></map-card>`)}
+                </div>
+              `}
+      `}
+
+      ${this._maps.length > 0 ? html`
+        <p class="attribution">
+          Map previews:
+          <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>
+          © <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a>
+          Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+        </p>
+      ` : nothing}
 
       ${this._orders.length > 0 ? html`
         <h2>
@@ -173,9 +182,9 @@ export class DashboardPage extends LitElement {
           ${this._orders.map(o => html`
             <div class="wa-cluster wa-gap-m wa-align-items-center order-row">
               <span class="order-map-name">${o.map_name}</span>
-              <span class="order-detail">${o.product_type} ${o.poster_size}</span>
+              <span class="wa-caption-xs">${o.product_type} ${o.poster_size}</span>
               ${orderStatusBadge(o.status)}
-              <wa-relative-time .date=${new Date(o.created_at)} class="order-detail"></wa-relative-time>
+              <wa-relative-time .date=${new Date(o.created_at)} class="wa-caption-xs"></wa-relative-time>
               ${o.tracking_url ? html`<a href=${o.tracking_url} target="_blank" rel="noopener" class="order-track">Track</a>` : nothing}
             </div>
           `)}
@@ -208,13 +217,12 @@ export class DashboardPage extends LitElement {
     try {
       await deleteMap(mapId);
       this._maps = this._maps.filter((m) => m.id !== mapId);
-    } catch {
-      const toast = this.renderRoot.querySelector('wa-toast');
-      toast?.create('Failed to delete trip. Please try again.', {
-        variant: 'danger',
-        icon: 'circle-xmark',
-        duration: 5000,
-      });
+    } catch (err) {
+      const serverError = err instanceof ApiError && err.status === 409
+        ? (err.body as { error?: string } | null)?.error
+        : undefined;
+      const message = serverError ?? 'Failed to delete trip. Please try again.';
+      this.renderRoot.querySelector('wa-toast')?.create(message, { variant: 'danger', icon: 'circle-xmark' });
     }
   }
 }

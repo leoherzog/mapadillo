@@ -8,8 +8,7 @@
 import { apiGet, apiPut } from './services/api-client.js';
 import { isAuthenticated, onAuthChange } from './auth/auth-state.js';
 import { createPreference } from './utils/preference.js';
-import type { Units } from '../shared/units.js';
-export type { Units } from '../shared/units.js';
+import { UNIT_NAMES, VALID_UNITS, type Units } from '../shared/units.js';
 
 /** Detect sensible default from browser locale via Intl API. */
 function detectDefault(): Units {
@@ -17,7 +16,7 @@ function detectDefault(): Units {
   return region === 'US' || region === 'GB' ? 'mi' : 'km';
 }
 
-const preference = createPreference<Units>('mapadillo-units', ['km', 'mi'], detectDefault);
+const preference = createPreference<Units>('mapadillo-units', UNIT_NAMES, detectDefault);
 
 /** Read stored preference, falling back to locale-based default. */
 export const getUnits = preference.get;
@@ -41,11 +40,13 @@ export function toggleUnits(): void {
   setUnits(getUnits() === 'km' ? 'mi' : 'km');
 }
 
-/** Fetch units from the server and store them locally without echoing a PUT. */
+/** Adopt the account's units locally, or save the local units to an account that has none. */
 async function _syncFromServer(): Promise<void> {
   try {
-    const { units } = await apiGet<{ units: Units }>('/api/user/preferences');
-    if (units === 'km' || units === 'mi') {
+    const { units } = await apiGet<{ units: Units | null }>('/api/user/preferences');
+    if (units === null) {
+      await apiPut('/api/user/preferences', { units: getUnits() });
+    } else if (VALID_UNITS.has(units)) {
       preference.set(units);
     }
   } catch {

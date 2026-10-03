@@ -1,8 +1,8 @@
 /**
  * Location search — debounced autocomplete powered by the geocoding proxy.
  *
- * Uses wa-combobox (Pro) with autocomplete="none" so the server controls
- * filtering. Options are dynamically rendered from async search results.
+ * Uses wa-combobox (Pro) with a pass-through `filter`, so the geocoder and
+ * `_filterExisting` decide which options appear.
  *
  * Fires `location-selected` with a GeocodingResult when the user picks a place.
  */
@@ -14,6 +14,9 @@ import { searchPlaces, type GeocodingResult } from '../services/geocoding.js';
 import { getActiveMapCenter } from '../map/map-controller.js';
 import { fieldValue } from '../utils/form.js';
 import { waUtilities } from '../styles/wa-utilities.js';
+
+/** Accepts every option: Photon and `_filterExisting` already decide what is listed. */
+const acceptAll = (): boolean => true;
 
 export interface ExistingLocation {
   name: string;
@@ -37,8 +40,6 @@ export class LocationSearch extends LitElement {
 
   private _debounceTimer?: ReturnType<typeof setTimeout>;
   private _searchGeneration = 0;
-  /** Suppresses wa-hide during Lit re-renders that replace option DOM nodes. */
-  private _updatingOptions = false;
 
   static styles = [waUtilities, css`
     :host {
@@ -91,8 +92,8 @@ export class LocationSearch extends LitElement {
       <wa-combobox
         placeholder=${this.placeholder}
         with-clear
+        .filter=${acceptAll}
         @wa-clear=${this._onClear}
-        @wa-hide=${this._onListboxHide}
         @change=${this._onSelect}
       >
         <wa-icon slot="start" name="magnifying-glass"></wa-icon>
@@ -156,6 +157,7 @@ export class LocationSearch extends LitElement {
     clearTimeout(this._debounceTimer);
 
     if (!value || value.length < 2) {
+      this._searchGeneration++;
       this._results = [];
       this._existingMatches = [];
       this._searched = false;
@@ -165,6 +167,10 @@ export class LocationSearch extends LitElement {
 
     // Filter existing locations instantly (no debounce)
     this._filterExisting(value);
+    // Set `open` after render: show() would find no options yet and return early.
+    void this.updateComplete.then(() => {
+      if (this._existingMatches.length) this._combobox.open = true;
+    });
 
     this._debounceTimer = setTimeout(() => void this._search(value), 300);
   }
@@ -172,15 +178,9 @@ export class LocationSearch extends LitElement {
   /** Filter existing locations by partial case-insensitive name match. */
   private _filterExisting(query: string) {
     const q = query.toLowerCase();
-    const matches = this.existingLocations.filter(
+    this._existingMatches = this.existingLocations.filter(
       (loc) => loc.name.toLowerCase().includes(q),
     );
-    this._existingMatches = matches;
-
-    // Show the combobox immediately if we have existing matches
-    if (matches.length) {
-      if (!this._combobox.open) void this._combobox.show();
-    }
   }
 
   private async _search(query: string) {
@@ -198,31 +198,22 @@ export class LocationSearch extends LitElement {
           (r) => !existingKeys.has(`${r.latitude.toFixed(5)},${r.longitude.toFixed(5)}`),
         );
       }
-      this._updatingOptions = true;
       this._results = results;
       this._searched = true;
       await this.updateComplete;
-      this._updatingOptions = false;
-      if (results.length) {
-        // show() toggles closed when already open — only call when closed
-        if (!this._combobox.open) void this._combobox.show();
-      }
+      // show() checks visible options before the combobox has processed the new options, so it would return early.
+      if (results.length || this._existingMatches.length) this._combobox.open = true;
     } catch {
       if (gen !== this._searchGeneration) return;
       this._results = [];
+      if (this._existingMatches.length) this._combobox.open = true;
     } finally {
       if (gen === this._searchGeneration) this._loading = false;
     }
   }
 
-  /** Prevent the combobox from closing while we're swapping option DOM nodes. */
-  private _onListboxHide(e: Event) {
-    if (this._updatingOptions) {
-      e.preventDefault();
-    }
-  }
-
   private _onClear() {
+    this._searchGeneration++;
     clearTimeout(this._debounceTimer);
     this._results = [];
     this._existingMatches = [];

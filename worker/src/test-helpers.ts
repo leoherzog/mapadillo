@@ -2,7 +2,7 @@
  * Shared worker test helpers: schema setup, requests, sessions and D1 fixtures.
  * The schema comes from the real migrations in src/db/migrations via the TEST_MIGRATIONS binding.
  */
-import { env, applyD1Migrations } from 'cloudflare:test';
+import { env, applyD1Migrations, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import app from './index.js';
 
 // ── Schema setup ────────────────────────────────────────────────────────────
@@ -14,14 +14,24 @@ export async function applyTestSchema(): Promise<void> {
 
 // ── Request helper ──────────────────────────────────────────────────────────
 
-/** Send a request to the Hono app with CSRF Origin header auto-injected. */
-export function request(path: string, init?: RequestInit) {
-  if (init?.method && init.method !== 'GET' && init.method !== 'HEAD') {
+/**
+ * Send a request to the Hono app and wait for its waitUntil work.
+ * Injects a same-origin Origin header on non-GET requests unless `origin` is false.
+ */
+export async function request(
+  path: string,
+  init?: RequestInit,
+  { origin = true }: { origin?: boolean } = {},
+): Promise<Response> {
+  if (origin && init?.method && init.method !== 'GET' && init.method !== 'HEAD') {
     const headers = new Headers(init.headers);
     if (!headers.has('origin')) headers.set('origin', 'http://localhost');
     init = { ...init, headers };
   }
-  return app.request(path, init, env);
+  const ctx = createExecutionContext();
+  const res = await app.request(path, init, env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 // ── Session helper ──────────────────────────────────────────────────────────
@@ -46,7 +56,7 @@ export async function createTestSession(): Promise<{ cookie: string; userId: str
     ).bind(sessionId, expiresAt, rawToken, now, now, userId),
   ]);
 
-  const secret = (env as unknown as Record<string, string>).BETTER_AUTH_SECRET;
+  const secret = env.BETTER_AUTH_SECRET;
   const key = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
@@ -107,4 +117,59 @@ export async function grantShare(mapId: string, userId: string, role: 'viewer' |
     'INSERT INTO map_shares (id, map_id, user_id, role) VALUES (?, ?, ?, ?)',
   ).bind(id, mapId, userId, role).run();
   return id;
+}
+
+/** Create a share invite via the API. @returns its id and claim_token */
+export async function createShare(
+  mapId: string,
+  cookie: string,
+  role = 'viewer',
+): Promise<{ id: string; claim_token: string }> {
+  const res = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role }, cookie);
+  return (await res.json()) as { id: string; claim_token: string };
+}
+
+/** A valid shipping address for checkout bodies and order rows. */
+export const TEST_ADDRESS = {
+  name: 'Test User',
+  line1: '123 Main St',
+  city: 'Springfield',
+  state: 'IL',
+  postalCode: '62701',
+  country: 'US',
+};
+
+/** Insert a map row directly into D1. @returns the map id */
+export async function insertMapRow(userId: string, name = 'Test Trip'): Promise<string> {
+  const mapId = crypto.randomUUID();
+  await env.DB.prepare(
+    'INSERT INTO maps (id, owner_id, name, created_at, updated_at) VALUES (?, ?, ?, datetime(\'now\'), datetime(\'now\'))',
+  ).bind(mapId, userId, name).run();
+  return mapId;
+}
+
+/** Insert an 18x24 poster order directly into D1. @returns the order id */
+export async function insertOrder(opts: {
+  orderId?: string;
+  mapId: string;
+  userId: string;
+  status?: string;
+  prodigiOrderId?: string | null;
+  imageUrl?: string | null;
+  stripeSessionId?: string | null;
+  shippingAddress?: string | null;
+}): Promise<string> {
+  const orderId = opts.orderId ?? crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO orders (id, map_id, user_id, product_type, product_sku, poster_size, status, prodigi_order_id, image_url, stripe_session_id, shipping_address, subtotal, shipping_cost, created_at, updated_at)
+     VALUES (?, ?, ?, 'poster', 'GLOBAL-BLP-18X24', '18x24', ?, ?, ?, ?, ?, 2999, 999, datetime('now'), datetime('now'))`,
+  ).bind(
+    orderId, opts.mapId, opts.userId,
+    opts.status ?? 'pending_payment',
+    opts.prodigiOrderId ?? null,
+    opts.imageUrl ?? null,
+    opts.stripeSessionId ?? null,
+    'shippingAddress' in opts ? opts.shippingAddress : JSON.stringify(TEST_ADDRESS),
+  ).run();
+  return orderId;
 }

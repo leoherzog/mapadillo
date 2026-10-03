@@ -1,26 +1,26 @@
 /**
  * Point card — editable card for a standalone map marker.
  *
- * Shows icon picker, name input, and coordinates.
+ * Shows an icon picker and name input once placed, or a location search while unplaced.
  * No travel mode (points are standalone, not part of a route).
  */
-import { LitElement, html, css } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
-import type { Stop } from '../services/maps.js';
-import { DEFAULT_ICON } from '../../shared/icons.js';
+import { html, css } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
+import type { PointStop } from '../services/maps.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
 import { isDraftCoord } from '../utils/geo.js';
 import { fieldValue } from '../utils/form.js';
-import { renderEndpointEditor, type LocationSelectedEvent } from './endpoint-editor.js';
+import { ItemCardBase } from './item-card-base.js';
+import {
+  renderEndpointEditor,
+  renderEndpointDisplay,
+  locationFields,
+  type LocationSelectedEvent,
+} from './endpoint-editor.js';
 
 @customElement('point-card')
-export class PointCard extends LitElement {
-  @property({ type: Object }) item!: Stop;
-  @property({ type: Array }) allItems: Stop[] = [];
-  @property({ type: Boolean }) readonly = false;
-  @property({ type: Boolean }) highlighted = false;
-
+export class PointCard extends ItemCardBase<PointStop> {
   @state() private _editingLocation = false;
 
   private get _hasLocation(): boolean {
@@ -36,43 +36,20 @@ export class PointCard extends LitElement {
     wa-card {
       border-left: var(--wa-border-width-l) solid var(--wa-color-brand-50);
     }
-
-    .point-icon {
-      color: var(--wa-color-brand-60);
-    }
-
-    .point-name {
-      font-weight: var(--wa-font-weight-semibold);
-      font-size: var(--wa-font-size-s);
-    }
-
-    .card-header {
-      margin-bottom: var(--wa-space-3xs);
-    }
   `];
 
   render() {
     if (this.readonly) {
       return html`
         <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'}>
-          <div class="wa-cluster wa-align-items-center wa-gap-xs">
-            <wa-icon class="point-icon" name=${this.item.icon ?? DEFAULT_ICON}></wa-icon>
-            <span class="name-input point-name">${this.item.name}</span>
-          </div>
+          ${renderEndpointDisplay(this.item.icon, this.item.name)}
         </wa-card>
       `;
     }
 
     return html`
       <wa-card appearance=${this.highlighted ? 'accent' : 'outlined'}>
-        <div class="wa-cluster wa-align-items-center wa-gap-xs card-header">
-          <wa-icon class="drag-handle" name="bars"></wa-icon>
-          <span class="name-input point-name">${this._hasLocation ? this.item.name : 'New Point'}</span>
-          <wa-button id="delete-point" class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
-            <wa-icon name="xmark" label="Delete point"></wa-icon>
-          </wa-button>
-          <wa-tooltip for="delete-point">Delete point</wa-tooltip>
-        </div>
+        ${this._renderHeader(this._hasLocation ? this.item.name : 'New Point', 'Delete point')}
 
         ${renderEndpointEditor({
           placed: this._hasLocation && !this._editingLocation,
@@ -85,24 +62,16 @@ export class PointCard extends LitElement {
           onIconChange: this._onIconChange,
           onNameInput: this._onNameInput,
           onChangeRequest: () => { this._editingLocation = true; },
+          onCancel: this._hasLocation ? () => { this._editingLocation = false; } : undefined,
           onLocationSelected: this._onLocationSelected,
         })}
       </wa-card>
     `;
   }
 
-  private _fire(field: string, value: string) {
-    this.dispatchEvent(
-      new CustomEvent('item-update', {
-        detail: { itemId: this.item.id, field, value },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
   private _onNameInput(e: Event) {
-    this._fire('name', fieldValue(e));
+    const v = fieldValue(e);
+    if (v.trim()) this._fire('name', v);
   }
 
   private _onIconChange(e: CustomEvent<string>) {
@@ -111,27 +80,8 @@ export class PointCard extends LitElement {
 
   private _onLocationSelected(e: LocationSelectedEvent) {
     e.stopPropagation();
-    const { longitude, latitude, name, icon } = e.detail;
     this._editingLocation = false;
-    const fields: Record<string, unknown> = { name, lat: latitude, lng: longitude };
-    if (icon) fields.icon = icon;
-    this.dispatchEvent(
-      new CustomEvent('item-update-batch', {
-        detail: { itemId: this.item.id, fields },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
-  private _onDelete() {
-    this.dispatchEvent(
-      new CustomEvent('item-delete', {
-        detail: { itemId: this.item.id },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    this._fireBatch(locationFields(e.detail));
   }
 }
 

@@ -25,14 +25,13 @@ export default defineConfig({
           ORS_API_KEY: 'test-ors-key',
           ADMIN_SECRET: 'test-admin-secret',
           DISCORD_WEBHOOK_URL: '',
-          PRODIGI_WEBHOOK_SECRET: 'test-prodigi-webhook-secret',
         },
       },
     }),
   ],
   test: {
-    // Suppress Hono logger stdout during test runs
-    silent: true,
+    // Show handler console output only for failing tests.
+    silent: 'passed-only',
     // The Workers pool cannot run v8 coverage, which needs node:inspector.
     coverage: {
       provider: 'istanbul',

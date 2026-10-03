@@ -17,6 +17,8 @@ export interface TravelModeConfig {
   mode: TravelMode;
   /** Font Awesome icon name shown in the UI (frontend-only). */
   icon: string;
+  /** Human-readable mode name for UI labels (frontend-only). */
+  label: string;
   /** CSS custom-property-based color for use in component styles. */
   cssColor: string;
   /** Resolved hex color for canvas / MapLibre rendering. */
@@ -26,11 +28,11 @@ export interface TravelModeConfig {
 }
 
 export const TRAVEL_MODES: readonly TravelModeConfig[] = [
-  { mode: 'drive', icon: 'car',            cssColor: 'var(--wa-color-brand-50)',  hexColor: '#ff6b00', orsProfile: 'driving-car' },
-  { mode: 'plane', icon: 'plane',          cssColor: 'var(--wa-color-blue-50)',   hexColor: '#146bff' },
-  { mode: 'boat',  icon: 'ship',           cssColor: 'var(--wa-color-indigo-70)', hexColor: '#a2a7ff' },
-  { mode: 'bike',  icon: 'person-biking',  cssColor: 'var(--wa-color-cyan-50)',   hexColor: '#008098', orsProfile: 'cycling-regular' },
-  { mode: 'walk',  icon: 'compass',        cssColor: 'var(--wa-color-green-50)',  hexColor: '#0f881d', orsProfile: 'foot-walking' },
+  { mode: 'drive', label: 'Drive', icon: 'car',            cssColor: 'var(--wa-color-brand-50)',  hexColor: '#ff6b00', orsProfile: 'driving-car' },
+  { mode: 'plane', label: 'Plane', icon: 'plane',          cssColor: 'var(--wa-color-blue-50)',   hexColor: '#146bff' },
+  { mode: 'boat',  label: 'Boat',  icon: 'ship',           cssColor: 'var(--wa-color-indigo-70)', hexColor: '#a2a7ff' },
+  { mode: 'bike',  label: 'Bike',  icon: 'person-biking',  cssColor: 'var(--wa-color-cyan-50)',   hexColor: '#008098', orsProfile: 'cycling-regular' },
+  { mode: 'walk',  label: 'Walk',  icon: 'compass',        cssColor: 'var(--wa-color-green-50)',  hexColor: '#0f881d', orsProfile: 'foot-walking' },
 ];
 
 const VALID_TRAVEL_MODES: ReadonlySet<unknown> = new Set<unknown>(

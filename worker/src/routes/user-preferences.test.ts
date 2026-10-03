@@ -1,6 +1,4 @@
-import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import app from '../index.js';
 import { applyTestSchema, request, createTestSession, jsonRequest } from '../test-helpers.js';
 
 beforeAll(applyTestSchema);
@@ -13,14 +11,14 @@ describe('GET /api/user/preferences', () => {
     expect(res.status).toBe(401);
   });
 
-  it('returns default units "km" for a new user', async () => {
+  it('returns null units for a new user', async () => {
     const { cookie } = await createTestSession();
     const res = await request('/api/user/preferences', {
       headers: { cookie },
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ units: 'km' });
+    expect(body).toEqual({ units: null });
   });
 
   it('returns stored units after they have been changed', async () => {
@@ -105,7 +103,7 @@ describe('PUT /api/user/preferences', () => {
     const res = await jsonRequest('/api/user/preferences', 'PUT', {}, cookie);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ units: 'km' });
+    expect(body).toEqual({ units: null });
   });
 
   it('ignores unknown fields and still processes units', async () => {
@@ -147,12 +145,12 @@ describe('PUT /api/user/preferences', () => {
     // User 1 sets miles
     await jsonRequest('/api/user/preferences', 'PUT', { units: 'mi' }, session1.cookie);
 
-    // User 2 should still have default km
+    // User 2 has never set units
     const res = await request('/api/user/preferences', {
       headers: { cookie: session2.cookie },
     });
     const body = await res.json();
-    expect(body).toEqual({ units: 'km' });
+    expect(body).toEqual({ units: null });
   });
 });
 
@@ -161,21 +159,20 @@ describe('PUT /api/user/preferences', () => {
 describe('CSRF protection on PUT /api/user/preferences', () => {
   it('returns 403 when Origin header is missing on PUT', async () => {
     const { cookie } = await createTestSession();
-    // Manually construct request without origin header
-    const res = await app.request('/api/user/preferences', {
+    const res = await request('/api/user/preferences', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         cookie,
       },
       body: JSON.stringify({ units: 'mi' }),
-    }, env);
+    }, { origin: false });
     expect(res.status).toBe(403);
   });
 
   it('returns 403 when Origin header does not match', async () => {
     const { cookie } = await createTestSession();
-    const res = await app.request('/api/user/preferences', {
+    const res = await request('/api/user/preferences', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -183,7 +180,7 @@ describe('CSRF protection on PUT /api/user/preferences', () => {
         cookie,
       },
       body: JSON.stringify({ units: 'mi' }),
-    }, env);
+    }, { origin: false });
     expect(res.status).toBe(403);
   });
 });

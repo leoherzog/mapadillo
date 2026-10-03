@@ -11,7 +11,8 @@ import { navigateTo } from '../nav.js';
 import { errorCallout } from '../components/ui.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import { formatDistance } from '../utils/geo.js';
-import { pageMm, type PaperSize, type Orientation } from '../map/map-export.js';
+import { pageMm, paperFramePadding } from '../map/map-export.js';
+import type { PaperSize, Orientation } from '../../shared/paper.js';
 import { updateMap } from '../services/maps.js';
 import { MapPageBase } from './map-page-base.js';
 import { getUnits, onUnitsChange } from '../units.js';
@@ -36,13 +37,17 @@ const PAPER_SIZE_LABELS: Record<PaperSize, string> = {
 export class MapPreviewPage extends MapPageBase {
   @state() private _paperSize: PaperSize = 'letter';
   @state() private _orientation: Orientation = 'landscape';
+  @state() private _continuing = false;
 
   private _units = new StoreController(this, getUnits, onUnitsChange);
   private readonly _detailsOpen = !matchMedia('(max-width: 700px)').matches;
   private _settingsLoaded = false;
-  private _restoring = false;
   private _moveListenerAdded = false;
   private _saveTimer?: ReturnType<typeof setTimeout>;
+  /** Last nonzero map container size, for saves made after the container detaches. */
+  private _viewSize?: [number, number];
+  /** Tail of the export-settings PUT chain; never rejects. */
+  private _savePromise: Promise<void> = Promise.resolve();
 
   static styles = [waUtilities, familyNameStyles, css`
     :host {
@@ -80,7 +85,7 @@ export class MapPreviewPage extends MapPageBase {
       padding: var(--wa-space-l);
     }
 
-    .overlay h2 {
+    .overlay .trip-name {
       margin: 0;
       font-size: var(--wa-font-size-m);
       font-weight: var(--wa-font-weight-bold);
@@ -99,20 +104,10 @@ export class MapPreviewPage extends MapPageBase {
       padding-top: var(--wa-space-s);
     }
 
-    .overlay-summary h2 {
+    .overlay-summary .trip-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    .stat-label {
-      color: var(--wa-color-text-quiet);
-      font-size: var(--wa-font-size-xs);
-    }
-
-    .stat-value {
-      font-size: var(--wa-font-size-xs);
-      font-weight: var(--wa-font-weight-semibold);
     }
 
     .continue-btn {
@@ -172,81 +167,130 @@ export class MapPreviewPage extends MapPageBase {
     return `--pw: ${pw}; --ph: ${ph}`;
   }
 
+  /** iOS never fires beforeunload and Safari 18 link clicks are full page loads, so a pending save goes out when the page is hidden. */
+  private _onPageHide = (e: Event) => {
+    if (e.type === 'pagehide' || document.visibilityState === 'hidden') void this._flushSave(true);
+  };
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    document.addEventListener('visibilitychange', this._onPageHide);
+    window.addEventListener('pagehide', this._onPageHide);
+  }
+
   override disconnectedCallback(): void {
+    document.removeEventListener('visibilitychange', this._onPageHide);
+    window.removeEventListener('pagehide', this._onPageHide);
+    // Must run before map-view's disconnectedCallback removes its map, so the flush captures the live viewport.
+    void this._flushSave();
     super.disconnectedCallback();
-    clearTimeout(this._saveTimer);
+  }
+
+  protected override async _loadMap() {
+    await super._loadMap();
+    // The auto-fit pads to the paper frame, so the saved paper must be set before the first _syncMap.
+    const saved = parseExportSettings(this._map?.export_settings);
+    if (saved?.paperSize) this._paperSize = saved.paperSize;
+    if (saved?.orientation) this._orientation = saved.orientation;
   }
 
   protected override _onMapReady() {
-    // Attach moveend listener before sync so it catches the initial viewport
     if (!this._moveListenerAdded) {
       const map = this._mapView?.map;
       if (map) {
         this._moveListenerAdded = true;
-        map.on('moveend', () => {
-          if (this._settingsLoaded && !this._restoring) this._scheduleSave();
+        // Only user gestures carry originalEvent; fitBounds, jumpTo and resize do not.
+        map.on('moveend', (e) => {
+          if (e.originalEvent && this._settingsLoaded) this._scheduleSave();
+        });
+        // A resize changes the framed area, so the saved viewSize must follow it.
+        map.on('resize', () => {
+          if (this._settingsLoaded) this._scheduleSave();
         });
       }
     }
     super._onMapReady();
   }
 
+  protected override _fitPadding() {
+    const el = this._mapView?.map?.getContainer();
+    return el ? paperFramePadding(el.clientWidth, el.clientHeight, this._paperSize, this._orientation) : 60;
+  }
+
   protected override async _syncMap() {
-    // drawItems() runs auto-fit (fitBounds), which fires a deferred moveend.
-    // We must jumpTo() to the saved viewport AFTER drawItems resolves, then
-    // wait for the map to go idle before allowing saves — otherwise the
-    // auto-fit's late moveend fires after _restoring is cleared and clobbers
-    // the saved viewport with the fitBounds viewport.
     await super._syncMap();
+    // Restore after drawItems() so the saved viewport overrides the auto-fit.
     await this._restoreSettings();
   }
 
   private async _restoreSettings() {
     if (this._settingsLoaded || !this._map) return;
     this._settingsLoaded = true;
-
-    const settings: ExportSettings = parseExportSettings(this._map.export_settings) ?? {};
-
-    if (settings.paperSize) this._paperSize = settings.paperSize;
-    if (settings.orientation) this._orientation = settings.orientation;
-
-    // Restore saved viewport (overrides the auto-fit from drawItems).
-    // Keep _restoring true until the map settles so moveend events from
-    // both the auto-fit and our jumpTo are suppressed.
-    this._restoring = true;
-    try {
-      await this._applyRestoredViewport(settings);
-    } finally {
-      this._restoring = false;
-    }
+    await this._applyRestoredViewport(parseExportSettings(this._map.export_settings) ?? {});
   }
 
   private _scheduleSave() {
     if (!isAuthenticated() || !this._map || !canEditRole(this._map.role)) return;
+    const c = this._mapView?.map?.getContainer();
+    if (c && c.clientWidth > 0 && c.clientHeight > 0) this._viewSize = [c.clientWidth, c.clientHeight];
     clearTimeout(this._saveTimer);
-    this._saveTimer = setTimeout(() => this._saveSettings(), 1000);
+    this._saveTimer = setTimeout(() => void this._flushSave(), 1000);
   }
 
-  private async _saveSettings() {
-    if (!this._map) return;
-    const map = this._mapView?.map;
-
+  /** Settings to persist: the live viewport once restored, otherwise the saved one. */
+  private _currentSettings(): ExportSettings {
     const settings: ExportSettings = {
       paperSize: this._paperSize,
       orientation: this._orientation,
     };
 
-    if (map) {
+    const saved = parseExportSettings(this._map?.export_settings);
+    const map = this._mapView?.map;
+    if (map && this._settingsLoaded) {
       const center = map.getCenter();
       settings.center = [center.lng, center.lat];
       settings.zoom = map.getZoom();
       settings.bearing = map.getBearing();
       settings.pitch = map.getPitch();
+      const c = map.getContainer();
+      // A detached container measures 0, as during the disconnect flush.
+      const viewSize: [number, number] | undefined = c.clientWidth > 0 && c.clientHeight > 0
+        ? [c.clientWidth, c.clientHeight]
+        : this._viewSize ?? saved?.viewSize;
+      if (viewSize) settings.viewSize = viewSize;
+    } else {
+      if (saved?.center) settings.center = saved.center;
+      if (saved?.zoom != null) settings.zoom = saved.zoom;
+      if (saved?.bearing != null) settings.bearing = saved.bearing;
+      if (saved?.pitch != null) settings.pitch = saved.pitch;
+      if (saved?.viewSize) settings.viewSize = saved.viewSize;
     }
+    return settings;
+  }
 
+  private async _putSettings(mapId: string, settings: ExportSettings, keepalive: boolean) {
     try {
-      await updateMap(this.mapId, { export_settings: JSON.stringify(settings) });
+      await updateMap(mapId, { export_settings: JSON.stringify(settings) }, keepalive);
     } catch { /* user may not have edit permission */ }
+  }
+
+  /**
+   * Runs any pending debounced save now; resolves once every save started so far has settled.
+   * @param keepalive - lets the save finish after the page unloads
+   */
+  private _flushSave(keepalive = false): Promise<void> {
+    if (this._saveTimer !== undefined) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = undefined;
+      if (this._map) {
+        const mapId = this.mapId;
+        const settings = this._currentSettings();
+        const put = () => this._putSettings(mapId, settings, keepalive);
+        // Chained so an older PUT cannot land after a newer one; on unload it must start now or it never sends.
+        this._savePromise = keepalive ? put() : this._savePromise.then(put);
+      }
+    }
+    return this._savePromise;
   }
 
   render() {
@@ -270,9 +314,11 @@ export class MapPreviewPage extends MapPageBase {
           </div>
         ` : html`
           <div class="overlay">
+            <!-- wa-details renders its summary inside role="button", which hides headings from assistive tech. -->
+            <h1 class="wa-visually-hidden">${this._map?.name ?? 'Untitled Trip'}</h1>
             <wa-details appearance="plain" ?open=${this._detailsOpen}>
               <div slot="summary" class="overlay-summary">
-                <h2>${this._map?.name ?? 'Untitled Trip'}</h2>
+                <p class="trip-name">${this._map?.name ?? 'Untitled Trip'}</p>
                 ${this._map?.family_name
                   ? html`<p class="family-name">${this._map.family_name}</p>`
                   : nothing}
@@ -281,9 +327,9 @@ export class MapPreviewPage extends MapPageBase {
               <div class="wa-stack wa-gap-s">
                 ${this._items.length > 0 ? html`
                   <div class="wa-cluster wa-gap-m">
-                    <span class="stat-label">Items: <span class="stat-value">${this._items.length}</span></span>
+                    <span class="wa-caption-xs">Items: <span class="wa-font-weight-semibold">${this._items.length}</span></span>
                     ${this._totalDistance ? html`
-                      <span class="stat-label">Distance: <span class="stat-value">${formatDistance(this._totalDistance, units)}</span></span>
+                      <span class="wa-caption-xs">Distance: <span class="wa-font-weight-semibold">${formatDistance(this._totalDistance, units)}</span></span>
                     ` : nothing}
                   </div>
                 ` : nothing}
@@ -306,11 +352,11 @@ export class MapPreviewPage extends MapPageBase {
                   @change=${this._onOrientationChange}
                 >
                   <wa-radio appearance="button" value="landscape">
-                    <wa-icon slot="start" name="rectangle-wide"></wa-icon>
+                    <wa-icon name="rectangle-wide"></wa-icon>
                     Landscape
                   </wa-radio>
                   <wa-radio appearance="button" value="portrait">
-                    <wa-icon slot="start" name="rectangle-vertical"></wa-icon>
+                    <wa-icon name="rectangle-vertical"></wa-icon>
                     Portrait
                   </wa-radio>
                 </wa-radio-group>
@@ -318,6 +364,8 @@ export class MapPreviewPage extends MapPageBase {
                 <wa-button
                   variant="brand"
                   class="continue-btn"
+                  ?loading=${this._continuing}
+                  ?disabled=${this._continuing}
                   @click=${this._onContinue}
                 >
                   Continue
@@ -327,10 +375,10 @@ export class MapPreviewPage extends MapPageBase {
                 <wa-divider></wa-divider>
 
                 <wa-button
-                  size="small"
+                  size="s"
                   variant="neutral"
                   appearance="outlined"
-                  @click=${this._onBackToEditor}
+                  href="/map/${this.mapId}"
                 >
                   <wa-icon slot="start" name="arrow-left"></wa-icon>
                   Back to editor
@@ -355,12 +403,15 @@ export class MapPreviewPage extends MapPageBase {
     this._scheduleSave();
   }
 
-  private _onContinue() {
-    navigateTo(`/export/${this.mapId}`);
-  }
-
-  private _onBackToEditor() {
-    navigateTo(`/map/${this.mapId}`);
+  private async _onContinue() {
+    this._continuing = true;
+    try {
+      await this._flushSave();
+    } finally {
+      this._continuing = false;
+    }
+    // The user may have left the page while the save was in flight.
+    if (this.isConnected) navigateTo(`/export/${this.mapId}`);
   }
 }
 

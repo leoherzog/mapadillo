@@ -1,6 +1,6 @@
 /**
  * Auth guard — route `enter()` hook.
- * Returns '/sign-in' redirect string when user has no valid session.
+ * Returns `signInUrl()` when the user has no valid session.
  *
  * Awaits `initAuth()` if the session hasn't been checked yet, so the
  * first guarded navigation waits for the server round-trip.

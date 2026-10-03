@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import {
-  applyTestSchema, request, createTestSession, jsonRequest, createMap, createStop, grantShare,
+  applyTestSchema, request, createTestSession, jsonRequest, createMap, createStop, grantShare, createShare,
 } from './test-helpers.js';
 import { getClientIp } from './index.js';
 import type { Context } from 'hono';
@@ -33,26 +33,17 @@ function stubUpstreamFetch() {
 /** @returns every API_CACHE value whose key starts with `prefix` */
 async function cachedValues(prefix: string): Promise<string[]> {
   const { keys } = await env.API_CACHE.list({ prefix });
-  return Promise.all(keys.map(async (k: { name: string }) => (await env.API_CACHE.get(k.name)) ?? ''));
+  return Promise.all(keys.map(async (k) => (await env.API_CACHE.get(k.name)) ?? ''));
 }
 
 // ── Health check ──────────────────────────────────────────────────────────────
 
 describe('GET /api/health', () => {
-  it('returns 200', async () => {
+  it('returns 200 JSON { status: ok }', async () => {
     const res = await request('/api/health');
     expect(res.status).toBe(200);
-  });
-
-  it('returns JSON content type', async () => {
-    const res = await request('/api/health');
     expect(res.headers.get('content-type')).toContain('application/json');
-  });
-
-  it('returns status ok', async () => {
-    const res = await request('/api/health');
-    const body = await res.json();
-    expect(body).toEqual({ status: 'ok' });
+    expect(await res.json()).toEqual({ status: 'ok' });
   });
 });
 
@@ -64,15 +55,16 @@ describe('Auth routes - Better Auth handler', () => {
     expect(res.status).toBe(200);
   });
 
-  it('GET /api/auth/get-session returns 200 (no active session)', async () => {
+  it('GET /api/auth/get-session returns 200 with a null body when unauthenticated', async () => {
     const res = await request('/api/auth/get-session');
     expect(res.status).toBe(200);
+    expect(await res.json()).toBeNull();
   });
 
-  it('GET /api/auth/get-session returns null session when unauthenticated', async () => {
-    const res = await request('/api/auth/get-session');
-    const body = await res.json();
-    expect(body).toBeNull();
+  it('GET /api/auth/get-session is not counted by the auth rate limit', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await request('/api/auth/get-session')).status);
+    expect(statuses.every((s) => s === 200)).toBe(true);
   });
 });
 
@@ -267,7 +259,7 @@ describe('Map ownership', () => {
     expect(res.status).toBe(404);
   });
 
-  it('PUT /api/maps/:id returns 403 for editor trying to delete (owner-only)', async () => {
+  it('editor can PUT but cannot DELETE a map', async () => {
     // An editor can see the map but cannot delete it — 403.
     const { cookie: ownerCookie } = await createTestSession();
     const { cookie: editorCookie, userId: editorId } = await createTestSession();
@@ -388,17 +380,6 @@ describe('Stop CRUD', () => {
     expect(body.icon).toBe('star');
   });
 
-  it('PUT /:id/stops/:stopId returns 400 for travel_mode on first stop', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-    const stopId = await createStop(cookie, mapId, { name: 'First', lat: 52.52, lng: 13.405 });
-
-    const res = await jsonRequest(`/api/maps/${mapId}/stops/${stopId}`, 'PUT', {
-      travel_mode: 'drive',
-    }, cookie);
-    expect(res.status).toBe(400);
-  });
-
   it('PUT /:id/stops/:stopId returns 404 for nonexistent stop', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
@@ -451,30 +432,6 @@ describe('Stop CRUD', () => {
 // ── Stop reorder ─────────────────────────────────────────────────────────────
 
 describe('Stop reorder', () => {
-  it('PUT /:id/stops/reorder reorders stops', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-
-    const ids: string[] = [];
-    for (const [i, city] of ['A', 'B', 'C'].entries()) {
-      const sid = await createStop(cookie, mapId, {
-        name: city, lat: 50 + i, lng: 10 + i,
-        ...(i > 0 ? { travel_mode: 'drive', type: 'route' } : {}),
-      });
-      ids.push(sid);
-    }
-
-    const reversed = [...ids].reverse();
-    const res = await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', {
-      order: reversed,
-    }, cookie);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Array<{ id: string; position: number }>;
-    expect(body[0].id).toBe(reversed[0]);
-    expect(body[0].position).toBe(0);
-    expect(body[2].position).toBe(2);
-  });
-
   it('reorder preserves travel_mode for route at position 0', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
@@ -512,53 +469,11 @@ describe('Stop reorder', () => {
     }, cookie);
     expect(res.status).toBe(400);
   });
-
-  it('PUT /:id/stops/reorder returns 400 with incomplete order', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-    const id1 = await createStop(cookie, mapId, { name: 'A', lat: 50, lng: 10 });
-    await createStop(cookie, mapId, { name: 'B', lat: 51, lng: 11, travel_mode: 'drive', type: 'route' });
-
-    const res = await jsonRequest(`/api/maps/${mapId}/stops/reorder`, 'PUT', {
-      order: [id1],
-    }, cookie);
-    expect(res.status).toBe(400);
-  });
-});
-
-// ── Cascade delete ───────────────────────────────────────────────────────────
-
-describe('Cascade delete', () => {
-  it('deleting a map cascades to its stops', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie, 'Cascade Map');
-    await createStop(cookie, mapId, { name: 'Stop 1', lat: 50, lng: 10 });
-
-    // Delete map
-    const delRes = await request(`/api/maps/${mapId}`, { method: 'DELETE', headers: { cookie } });
-    expect(delRes.status).toBe(200);
-
-    // Verify stops are gone (direct DB check)
-    const stops = await env.DB.prepare('SELECT * FROM stops WHERE map_id = ?').bind(mapId).all();
-    expect(stops.results.length).toBe(0);
-  });
 });
 
 // ── First stop travel_mode edge cases ────────────────────────────────────────
 
 describe('Route travel_mode at position 0', () => {
-  it('preserves travel_mode on route at position 0', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-
-    const res = await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
-      name: 'First', lat: 50, lng: 10, travel_mode: 'drive', type: 'route',
-    }, cookie);
-    expect(res.status).toBe(201);
-    const stop = (await res.json()) as { travel_mode: string | null };
-    expect(stop.travel_mode).toBe('drive');
-  });
-
   it('preserves travel_mode when deleting first stop promotes route', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
@@ -720,12 +635,29 @@ describe('Routing proxy - POST /api/route', () => {
       expect(fetchSpy).toHaveBeenCalledOnce();
       expect(String(fetchSpy.mock.calls[0][0]))
         .toBe('https://api.openrouteservice.org/v2/directions/driving-car/geojson');
+      expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)))
+        .toMatchObject({ instructions: false, geometry_simplify: true });
       expect(await cachedValues('route:driving-car:')).toContain(JSON.stringify(FEATURE_COLLECTION));
 
       const cachedRes = await jsonRequest('/api/route', 'POST', payload, cookie);
       expect(cachedRes.status).toBe(200);
       expect(await cachedRes.json()).toEqual(FEATURE_COLLECTION);
       expect(fetchSpy).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      [404, 422],
+      [429, 429],
+      [500, 502],
+    ])('maps an ORS %i to %i', async (upstreamStatus, expected) => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        Response.json({ error: 'upstream' }, { status: upstreamStatus }));
+      const res = await jsonRequest('/api/route', 'POST', {
+        profile: 'driving-car',
+        start: [13.4, 52.5],
+        end: [11.6, 48 + Math.random()],
+      }, cookie);
+      expect(res.status).toBe(expected);
     });
   });
 });
@@ -758,17 +690,6 @@ describe('Sharing - GET/POST /:id/shares', () => {
     expect(res.status).toBe(404);
   });
 
-  it('POST /:id/shares creates a share invite link', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie);
-    const res = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; claim_token: string; role: string; url: string };
-    expect(body.role).toBe('viewer');
-    expect(body.claim_token).toBeTruthy();
-    expect(body.url).toContain('/claim/');
-  });
-
   it('POST /:id/shares returns 400 with invalid role', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
@@ -789,8 +710,7 @@ describe('Sharing - PUT/DELETE /:id/shares/:shareId', () => {
   it('PUT /:id/shares/:shareId updates a share role', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
-    const createRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
-    const { id: shareId } = (await createRes.json()) as { id: string };
+    const { id: shareId } = await createShare(mapId, cookie);
 
     const res = await jsonRequest(`/api/maps/${mapId}/shares/${shareId}`, 'PUT', { role: 'editor' }, cookie);
     expect(res.status).toBe(200);
@@ -799,8 +719,7 @@ describe('Sharing - PUT/DELETE /:id/shares/:shareId', () => {
   it('PUT /:id/shares/:shareId returns 400 with invalid role', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
-    const createRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
-    const { id: shareId } = (await createRes.json()) as { id: string };
+    const { id: shareId } = await createShare(mapId, cookie);
 
     const res = await jsonRequest(`/api/maps/${mapId}/shares/${shareId}`, 'PUT', { role: 'owner' }, cookie);
     expect(res.status).toBe(400);
@@ -816,8 +735,7 @@ describe('Sharing - PUT/DELETE /:id/shares/:shareId', () => {
   it('DELETE /:id/shares/:shareId removes a share', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
-    const createRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, cookie);
-    const { id: shareId } = (await createRes.json()) as { id: string };
+    const { id: shareId } = await createShare(mapId, cookie);
 
     const res = await request(`/api/maps/${mapId}/shares/${shareId}`, {
       method: 'DELETE', headers: { cookie },
@@ -855,8 +773,7 @@ describe('Sharing - POST /api/shares/claim/:token', () => {
     const mapId = await createMap(ownerCookie, 'Shared Trip');
 
     // Owner creates invite
-    const inviteRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, ownerCookie);
-    const { claim_token } = (await inviteRes.json()) as { claim_token: string };
+    const { claim_token } = await createShare(mapId, ownerCookie);
 
     // Claimee claims it
     const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, claimeeCookie);
@@ -864,35 +781,18 @@ describe('Sharing - POST /api/shares/claim/:token', () => {
     const body = (await res.json()) as { map_id: string };
     expect(body.map_id).toBe(mapId);
 
-    // Verify user_id set on share — query by map_id+user_id since claim_token is nullified after claim
+    // Verify user_id set on share
     const share = await env.DB.prepare(
       'SELECT user_id FROM map_shares WHERE map_id = ? AND user_id = ?',
     ).bind(mapId, claimeeId).first<{ user_id: string }>();
     expect(share?.user_id).toBe(claimeeId);
   });
 
-  it('returns 403 for already-claimed token', async () => {
-    const { cookie: ownerCookie } = await createTestSession();
-    const { cookie: cookie2 } = await createTestSession();
-    const { cookie: cookie3 } = await createTestSession();
-    const mapId = await createMap(ownerCookie);
-
-    const inviteRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'editor' }, ownerCookie);
-    const { claim_token } = (await inviteRes.json()) as { claim_token: string };
-
-    // First claim succeeds
-    await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, cookie2);
-    // Second claim by different user fails — token is nullified after first claim so link is invalid
-    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, cookie3);
-    expect(res.status).toBe(404);
-  });
-
   it('owner claiming their own invite returns success without error', async () => {
     const { cookie: ownerCookie } = await createTestSession();
     const mapId = await createMap(ownerCookie);
 
-    const inviteRes = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role: 'viewer' }, ownerCookie);
-    const { claim_token } = (await inviteRes.json()) as { claim_token: string };
+    const { claim_token } = await createShare(mapId, ownerCookie);
 
     // Owner claims their own invite — should succeed (idempotent)
     const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, ownerCookie);
@@ -947,21 +847,6 @@ describe('Sharing - PUT /:id/visibility', () => {
     const res = await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, otherCookie);
     expect(res.status).toBe(404);
   });
-
-  it('public map is viewable without auth', async () => {
-    const { cookie } = await createTestSession();
-    const mapId = await createMap(cookie, 'Public Map');
-
-    // Make it public
-    await jsonRequest(`/api/maps/${mapId}/visibility`, 'PUT', { visibility: 'public' }, cookie);
-
-    // Access without auth — should return 200
-    const res = await request(`/api/maps/${mapId}`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { id: string; role: string };
-    expect(body.id).toBe(mapId);
-    expect(body.role).toBe('public');
-  });
 });
 
 // ── Duplicate map ───────────────────────────────────────────────────────────
@@ -979,11 +864,14 @@ describe('Sharing - POST /:id/duplicate', () => {
 
     const res = await jsonRequest(`/api/maps/${mapId}/duplicate`, 'POST', {}, cookie);
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; name: string; owner_id: string; stops: unknown[] };
+    const body = (await res.json()) as { id: string; name: string; owner_id: string };
     expect(body.id).not.toBe(mapId);
     expect(body.name).toBe('Original Trip (copy)');
     expect(body.owner_id).toBe(userId);
-    expect(body.stops.length).toBe(1);
+
+    const copy = await request(`/api/maps/${body.id}`, { headers: { cookie } });
+    const copied = (await copy.json()) as { stops: unknown[] };
+    expect(copied.stops.length).toBe(1);
   });
 
   it('duplicates a public map as a different user', async () => {
@@ -1018,11 +906,47 @@ describe('Unknown API routes - 404', () => {
   it('GET /api/nonexistent returns 404', async () => {
     const res = await request('/api/nonexistent');
     expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Not found' });
   });
 
   it('POST /api/does-not-exist returns 404', async () => {
     const res = await request('/api/does-not-exist', { method: 'POST' });
     expect(res.status).toBe(404);
+  });
+});
+
+// ── Request body limit ────────────────────────────────────────────────────────
+
+describe('Request body limit', () => {
+  it('rejects a JSON body over 2MB with 413', async () => {
+    const res = await request('/api/maps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'x'.repeat(2 * 1024 * 1024 + 1) }),
+    });
+    expect(res.status).toBe(413);
+  });
+});
+
+// ── Prodigi webhook rate limit ────────────────────────────────────────────────
+
+describe('Prodigi webhook rate limit', () => {
+  /** POST a callback without an order id, which is acknowledged without calling Prodigi. */
+  function postCallback(ip: string) {
+    return request('/api/webhooks/prodigi', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
+      body: JSON.stringify({ specversion: '1.0' }),
+    }, { origin: false });
+  }
+
+  it('answers 429 once one IP exhausts its budget, leaving other IPs unaffected', async () => {
+    const ip = crypto.randomUUID();
+    // The limiter counts in fixed windows, so a burst that straddles a boundary can need twice the limit.
+    let status = 200;
+    for (let i = 0; i < 121 && status === 200; i++) status = (await postCallback(ip)).status;
+    expect(status).toBe(429);
+    expect((await postCallback(crypto.randomUUID())).status).toBe(200);
   });
 });
 
@@ -1034,28 +958,8 @@ describe('getClientIp', () => {
     expect(getClientIp(c)).toBe('1.2.3.4');
   });
 
-  it('uses x-forwarded-for when cf-connecting-ip is missing', () => {
-    const c = ctxWithHeaders({ 'x-forwarded-for': '1.2.3.4' });
-    expect(getClientIp(c)).toBe('1.2.3.4');
-  });
-
-  it('returns only the first entry of a comma-separated x-forwarded-for list', () => {
-    const c = ctxWithHeaders({ 'x-forwarded-for': '1.2.3.4, 10.0.0.1, 192.168.1.1' });
-    expect(getClientIp(c)).toBe('1.2.3.4');
-  });
-
-  it('trims whitespace around the first x-forwarded-for entry', () => {
-    const c = ctxWithHeaders({ 'x-forwarded-for': '  1.2.3.4  , 10.0.0.1' });
-    expect(getClientIp(c)).toBe('1.2.3.4');
-  });
-
   it('falls back to "unknown" with no headers', () => {
     const c = ctxWithHeaders({});
-    expect(getClientIp(c)).toBe('unknown');
-  });
-
-  it('falls back to "unknown" when x-forwarded-for is empty', () => {
-    const c = ctxWithHeaders({ 'x-forwarded-for': '' });
     expect(getClientIp(c)).toBe('unknown');
   });
 });

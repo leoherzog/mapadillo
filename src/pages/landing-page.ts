@@ -78,7 +78,7 @@ export class LandingPage extends LitElement {
 
       <div class="wa-cluster wa-gap-m wa-justify-content-center">
         <wa-button
-          size="large"
+          size="l"
           variant="brand"
           href=${this._auth.user ? '/dashboard' : '/sign-in'}
         >
@@ -90,7 +90,7 @@ export class LandingPage extends LitElement {
       <div class="features wa-cluster wa-gap-l wa-justify-content-center">
         ${[
           { icon: 'location-dot', label: 'Add Stops' },
-          { icon: 'compass', label: 'Draw the Route' },
+          { icon: 'location-arrow', label: 'Draw the Route' },
           { icon: 'star', label: 'Customize Icons' },
           { icon: 'print', label: 'Print or Order' },
         ].map(

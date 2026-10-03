@@ -4,13 +4,12 @@
  * Hono router serving:
  * - /api/auth/*  → Better Auth (OAuth, Passkey, sessions)
  * - /api/*       → API routes (maps, stops, sharing, proxy, print)
- * - Everything else → Static assets (Vite-built SPA) via the ASSETS binding,
- *   with SPA fallback to index.html for client-side routes.
- *   (Handled automatically by wrangler.toml: run_worker_first = ["/api/*"])
+ * - Everything else → served from ../dist by Workers Static Assets with SPA fallback;
+ *   run_worker_first = ["/api/*"] keeps those requests out of this Worker.
  */
 
 import { Hono } from 'hono';
-import { logger } from 'hono/logger';
+import { bodyLimit } from 'hono/body-limit';
 import { getAuth } from './auth.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
 import { rateLimit } from './middleware/rate-limit.js';
@@ -24,23 +23,12 @@ import webhookRoutes from './routes/webhooks.js';
 import type { AppEnv } from './types.js';
 import type { Context } from 'hono';
 
-/** Extract client IP from request headers.
- *
- * x-forwarded-for is a comma-separated list "client, proxy1, proxy2, ...".
- * Only the first entry is the original client; anything else is an intermediate
- * proxy and must not be used as the rate-limit key (attackers could inject
- * entries to bypass per-IP limits). Prefer cf-connecting-ip when Cloudflare
- * sets it — it's the ground truth. */
+/** Client IP from Cloudflare's cf-connecting-ip header; "unknown" when absent. */
 export function getClientIp(c: Context<AppEnv>): string {
-  const cf = c.req.header('cf-connecting-ip');
-  if (cf) return cf;
-  const xff = c.req.header('x-forwarded-for');
-  if (xff) {
-    const first = xff.split(',')[0]?.trim();
-    if (first) return first;
-  }
-  return 'unknown';
+  return c.req.header('cf-connecting-ip') ?? 'unknown';
 }
+
+const payloadTooLarge = (c: Context) => c.json({ error: 'Payload too large' }, 413);
 
 const app = new Hono<AppEnv>();
 
@@ -53,9 +41,7 @@ app.onError((err, c) => {
   }));
   return c.json({ error: 'Internal server error' }, 500);
 });
-
-// ── Middleware ─────────────────────────────────────────────────────────────
-app.use('*', logger());
+app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (c) => {
@@ -63,7 +49,12 @@ app.get('/api/health', (c) => {
 });
 
 // ── Rate limiter for auth routes ──────────────────────────────────────────
-app.use('/api/auth/*', rateLimit('RATE_LIMITER_AUTH', getClientIp));
+// The session probe runs on every load and refocus; only credential routes need the brute-force limit.
+const authRateLimit = rateLimit('RATE_LIMITER_AUTH', getClientIp);
+app.use('/api/auth/*', (c, next) =>
+  c.req.method === 'GET' && c.req.path === '/api/auth/get-session' ? next() : authRateLimit(c, next));
+// Registered before the handler: auth paths never reach the /api/* middleware below.
+app.use('/api/auth/*', bodyLimit({ maxSize: 64 * 1024, onError: payloadTooLarge }));
 
 // ── Auth routes (Better Auth handler) ─────────────────────────────────────
 // Use app.all so PUT/DELETE/OPTIONS (passkey plugin, sign-out) are handled.
@@ -74,10 +65,11 @@ app.all('/api/auth/*', async (c) => {
 
 // ── CSRF protection (Origin header check) ────────────────────────────────
 // Validate Origin header on state-changing requests to prevent cross-site
-// request forgery. Skips webhooks (external services — they prove identity
-// via signature / secret). Auth routes are handled before CSRF runs, so no
-// skip is needed for them. Admin routes are NOT skipped — they still get
-// called from our own origin and should carry a valid Origin header.
+// request forgery. Skips webhooks: Stripe proves identity by signature, and
+// Prodigi callbacks are unauthenticated and only trigger a re-read from the Prodigi API.
+// Auth routes are handled before CSRF runs, so no skip is needed for them.
+// Admin routes are not skipped — they still get called from our own origin
+// and should carry a valid Origin header.
 app.use('/api/*', async (c, next) => {
   const method = c.req.method;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
@@ -94,16 +86,13 @@ app.use('/api/*', async (c, next) => {
     return next();
   }
   const referer = c.req.header('referer');
-  if (referer) {
-    try {
-      if (new URL(referer).origin !== expectedOrigin) return c.json({ error: 'Forbidden' }, 403);
-      return next();
-    } catch {
-      return c.json({ error: 'Forbidden' }, 403);
-    }
-  }
+  if (referer) return URL.parse(referer)?.origin === expectedOrigin ? next() : c.json({ error: 'Forbidden' }, 403);
   return c.json({ error: 'Forbidden' }, 403);
 });
+
+// Image uploads are capped in their handler; JSON bodies stay well under 2MB (route_geometry is capped at 1MB).
+const jsonBodyLimit = bodyLimit({ maxSize: 2 * 1024 * 1024, onError: payloadTooLarge });
+app.use('/api/*', (c, next) => (c.req.path.startsWith('/api/images/') ? next() : jsonBodyLimit(c, next)));
 
 // ── User preferences ─────────────────────────────────────────────────────
 app.use('/api/user/*', requireAuth);
@@ -135,17 +124,20 @@ app.route('/api/maps', sharing);
 // Image URLs are /api/images/<mapId>/<uuid>.png, so two-segment GETs stay public
 // (unguessable keys, served from R2). The single-segment guard below covers the
 // POST upload and also rejects single-segment GETs.
-// Checkout, print-quote, and orders require auth.
+// Checkout, print-quote and orders require auth; checkout and print-quote share a 30/min per-user budget.
+// Image uploads get their own 30/min per-user budget.
 // Admin order routes use Bearer token auth internally.
-app.use('/api/images/:mapId', requireAuth);
-app.use('/api/checkout', requireAuth);
-app.use('/api/print-quote', requireAuth);
-app.use('/api/orders', requireAuth);
+const orderRateLimit = rateLimit('RATE_LIMITER_PROXY', (c) => `orders:${c.get('user')!.id}`);
+app.use('/api/images/:mapId', requireAuth, rateLimit('RATE_LIMITER_PROXY', (c) => `upload:${c.get('user')!.id}`));
+app.use('/api/checkout', requireAuth, orderRateLimit);
+app.use('/api/print-quote', requireAuth, orderRateLimit);
 app.use('/api/orders/*', requireAuth);
 app.route('/api', orderRoutes);
 
 // ── Webhook routes ──────────────────────────────────────────────────────
-// No auth middleware — webhooks verify signatures/secrets internally.
+// No auth middleware: Stripe events are signature-verified; Prodigi callbacks only trigger a re-read from the Prodigi API.
+// Prodigi callbacks are rate-limited per IP because each one costs a Prodigi API call.
+app.use('/api/webhooks/prodigi', rateLimit('RATE_LIMITER_PUBLIC', (c) => `prodigi-cb:${getClientIp(c)}`));
 app.route('/api/webhooks', webhookRoutes);
 
 // ── Geocoding proxy ─────────────────────────────────────────────────────

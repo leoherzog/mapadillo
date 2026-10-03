@@ -13,8 +13,6 @@ vi.mock('./auth-state.js', () => ({
 import { requireAuth } from './auth-guard.js';
 
 beforeEach(() => {
-  mockIsAuthenticated.mockReset();
-  mockInitAuth.mockReset().mockResolvedValue(null);
   vi.stubGlobal('window', {
     location: { pathname: '/dashboard', search: '' },
   });

@@ -15,26 +15,23 @@ import { navigateTo, signInUrl } from '../nav.js';
 import { errorCallout } from '../components/ui.js';
 import { isAuthenticated } from '../auth/auth-state.js';
 import {
-  renderToBlob,
+  renderMapCanvas,
   exportMap,
-  triggerDownload,
-  canvasToBlob,
+  paperFramePadding,
   type ExportFormat,
-  type PaperSize,
-  type Orientation,
 } from '../map/map-export.js';
+import type { PaperSize, Orientation } from '../../shared/paper.js';
 import { renderMockup } from '../map/mockup-renderer.js';
-import { PRINTABLE_SIZES } from '../../shared/products.js';
 import { MapPageBase } from './map-page-base.js';
 import { getUnits, onUnitsChange } from '../units.js';
 import { StoreController } from '../utils/store-controller.js';
 import { fieldChecked, fieldValue } from '../utils/form.js';
-import { formatDistance, sanitizeFilename } from '../utils/geo.js';
+import { formatDistance } from '../utils/geo.js';
 import { canEditRole, parseExportSettings, type ExportSettings } from '../../shared/types.js';
 import '../components/map-view.js';
 
 const FORMAT_DESCRIPTIONS: Record<ExportFormat, string> = {
-  pdf: 'Print-ready PDF with trip details',
+  pdf: 'Print-ready PDF',
   png: 'High-resolution image',
   jpeg: 'Compressed image',
 };
@@ -50,12 +47,12 @@ export class ExportPage extends MapPageBase {
   @state() private _exporting = false;
   @state() private _exportError = '';
 
-  private _previewBlob: Blob | null = null;
-  private _previewCanvas: HTMLCanvasElement | null = null;
+  /** Print render reused by every download; it must stay free of attribution and overlays. */
+  private _mapCanvas: HTMLCanvasElement | null = null;
   private _mockupCanvas: HTMLCanvasElement | null = null;
   private _units = new StoreController(this, getUnits, onUnitsChange);
 
-  static styles = [waUtilities, headingStyles, familyNameStyles, contentPageStyles('1100px'), hiddenMapStyles('1400px', '900px'), css`
+  static styles = [waUtilities, headingStyles, familyNameStyles, contentPageStyles('1100px'), hiddenMapStyles, css`
     h1 {
       margin-top: var(--wa-space-s);
       font-size: var(--wa-font-size-2xl);
@@ -78,59 +75,37 @@ export class ExportPage extends MapPageBase {
     }
 
     .rendering-status wa-spinner {
-      font-size: 2rem;
+      font-size: var(--wa-font-size-2xl);
     }
-
-    .hint {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-    }
-
-    .hint-center {
-      font-size: var(--wa-font-size-xs);
-      color: var(--wa-color-text-quiet);
-      text-align: center;
-    }
-
-    .stat-value {
-      font-size: var(--wa-font-size-xs);
-      font-weight: var(--wa-font-weight-semibold);
-    }
-
   `];
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
+  /** The map is a hidden render source, so its auto-fit jumps instead of animating. */
+  protected override _animateFit = false;
+
+  protected override _fitPadding() {
+    const el = this._mapView?.map?.getContainer();
+    return el ? paperFramePadding(el.clientWidth, el.clientHeight, this._paperSize, this._orientation) : 60;
+  }
+
   protected override async _syncMap() {
-    // drawItems() runs an auto-fit (fitBounds); that fires a late moveend.
-    // _restoreSettings() jumpTo()s to the saved viewport and awaits the map's
-    // 'idle' event, so by the time it returns the viewport is settled — no
-    // late fitBounds moveend can clobber it before we capture the render.
+    // Before the map data arrives there is nothing to render; _loadMap syncs again once it lands.
+    if (this._loading || !this._map) return;
+    // The auto-fit pads to the paper frame, so restore the saved paper before drawing.
+    const settings: ExportSettings = parseExportSettings(this._map.export_settings) ?? {};
+    if (settings.paperSize) this._paperSize = settings.paperSize;
+    if (settings.orientation) this._orientation = settings.orientation;
     await super._syncMap();
-    await this._restoreSettings();
+    // Wait for the saved viewport to settle so the render captures it, not the auto-fit view.
+    await this._applyRestoredViewport(settings);
     await this._renderPreview();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._previewBlob = null;
-    this._previewCanvas = null;
+    this._mapCanvas = null;
     this._mockupCanvas = null;
-  }
-
-  // ── Settings restore ──────────────────────────────────────────────────
-
-  private async _restoreSettings() {
-    if (!this._map) return;
-
-    const settings: ExportSettings = parseExportSettings(this._map.export_settings) ?? {};
-
-    if (settings.paperSize) this._paperSize = settings.paperSize;
-    if (settings.orientation) this._orientation = settings.orientation;
-
-    // Restore saved viewport and wait for the map to settle so the render
-    // captures the saved view, not the auto-fit view.
-    await this._applyRestoredViewport(settings);
   }
 
   // ── Render preview ────────────────────────────────────────────────────
@@ -143,44 +118,23 @@ export class ExportPage extends MapPageBase {
     this._renderError = '';
 
     try {
-      // Render map at 300 DPI
-      const blob = await renderToBlob(
+      const canvas = await renderMapCanvas(
         map,
-        this._mapController.markerFeatures,
         this._paperSize,
         this._orientation,
+        this._mapController.markerFeatures,
+        parseExportSettings(this._map?.export_settings)?.viewSize,
       );
-      this._previewBlob = blob;
 
-      // Load as image for the mockup renderer
-      const img = new Image();
-      const blobUrl = URL.createObjectURL(blob);
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Failed to load rendered image'));
-        img.src = blobUrl;
-      });
-
-      // Generate the rolled-poster mockup
       const mockupCanvas = document.createElement('canvas');
       mockupCanvas.setAttribute('role', 'img');
       mockupCanvas.setAttribute('aria-label', 'Map preview as a rolled poster');
-      // Size mockup canvas based on image aspect ratio
-      const mockupW = 1200;
-      const imgAspect = img.naturalWidth / img.naturalHeight;
+      mockupCanvas.width = 1200;
       // Small headroom for the curl above the poster
-      const mockupH = Math.round(mockupW / imgAspect * 1.08);
-      mockupCanvas.width = mockupW;
-      mockupCanvas.height = mockupH;
+      mockupCanvas.height = Math.round(1200 * canvas.height / canvas.width * 1.08);
 
-      renderMockup(img, mockupCanvas);
-      this._previewCanvas = document.createElement('canvas');
-      this._previewCanvas.width = img.naturalWidth;
-      this._previewCanvas.height = img.naturalHeight;
-      const pctx = this._previewCanvas.getContext('2d')!;
-      pctx.drawImage(img, 0, 0);
-
-      URL.revokeObjectURL(blobUrl);
+      renderMockup(canvas, mockupCanvas);
+      this._mapCanvas = canvas;
       this._mockupCanvas = mockupCanvas;
     } catch (err) {
       this._renderError = err instanceof Error ? err.message : 'Failed to render map preview';
@@ -189,24 +143,29 @@ export class ExportPage extends MapPageBase {
     }
   }
 
+  private _onMapError() {
+    this._rendering = false;
+    this._renderError = 'The map could not be loaded. Please try again.';
+  }
+
   // ── Render ────────────────────────────────────────────────────────────
 
   render() {
     return html`
       <!-- Hidden map for rendering (always mounted so initialization starts early) -->
       <div class="hidden-map">
-        <map-view @map-ready=${this._onMapReady}></map-view>
+        <map-view @map-ready=${this._onMapReady} @map-error=${this._onMapError}></map-view>
       </div>
 
       ${this._loading ? html`
-        <div class="rendering-status">
+        <div class="rendering-status wa-stack wa-align-items-center wa-gap-m">
           <wa-spinner></wa-spinner>
           <p>Loading map...</p>
         </div>
       ` : this._error ? errorCallout(this._error) : html`
-      <div class="header">
+      <div>
         <wa-button
-          size="small"
+          size="s"
           variant="neutral"
           appearance="outlined"
           href="/preview/${this.mapId}"
@@ -231,7 +190,7 @@ export class ExportPage extends MapPageBase {
       return html`
         <div class="rendering-status wa-stack wa-align-items-center wa-gap-m">
           <wa-spinner></wa-spinner>
-          <p class="hint">Rendering your map at print resolution...</p>
+          <p class="wa-caption-xs">Rendering your map at print resolution...</p>
         </div>
       `;
     }
@@ -249,9 +208,9 @@ export class ExportPage extends MapPageBase {
           <!-- Stats -->
           ${this._items.length > 0 ? html`
             <div class="wa-cluster wa-gap-m">
-              <span class="hint">Items: <span class="stat-value">${this._items.length}</span></span>
+              <span class="wa-caption-xs">Items: <span class="wa-font-weight-semibold">${this._items.length}</span></span>
               ${this._totalDistance ? html`
-                <span class="hint">Distance: <span class="stat-value">${formatDistance(this._totalDistance, this._units.value)}</span></span>
+                <span class="wa-caption-xs">Distance: <span class="wa-font-weight-semibold">${formatDistance(this._totalDistance, this._units.value)}</span></span>
               ` : nothing}
             </div>
           ` : nothing}
@@ -259,6 +218,7 @@ export class ExportPage extends MapPageBase {
           <!-- Format + Download -->
           <wa-radio-group
             label="Export format"
+            hint=${FORMAT_DESCRIPTIONS[this._format]}
             .value=${this._format}
             @change=${this._onFormatChange}
           >
@@ -266,8 +226,6 @@ export class ExportPage extends MapPageBase {
             <wa-radio appearance="button" value="png">PNG</wa-radio>
             <wa-radio appearance="button" value="jpeg">JPEG</wa-radio>
           </wa-radio-group>
-
-          <span class="hint">${FORMAT_DESCRIPTIONS[this._format]}</span>
 
           <wa-checkbox
             ?checked=${this._includeTripDetails}
@@ -280,7 +238,7 @@ export class ExportPage extends MapPageBase {
             ?disabled=${this._exporting}
             @click=${this._onDownload}
           >
-            <wa-icon slot="start" name="arrow-down-to-line" library="default"></wa-icon>
+            <wa-icon slot="start" name="arrow-down-to-line"></wa-icon>
             Download
           </wa-button>
 
@@ -289,11 +247,11 @@ export class ExportPage extends MapPageBase {
           <!-- Order a Print -->
           ${this._canOrder ? html`
             <wa-divider></wa-divider>
-            <wa-button variant="neutral" @click=${this._onOrderPrint}>
+            <wa-button variant="neutral" href="/order/${this.mapId}">
               <wa-icon slot="start" name="print"></wa-icon>
               Order a Print
             </wa-button>
-            <span class="hint-center">Printed and shipped worldwide by Prodigi</span>
+            <span class="wa-caption-xs wa-text-center">Printed and shipped worldwide by Prodigi</span>
           ` : nothing}
         </div>
 
@@ -324,31 +282,18 @@ export class ExportPage extends MapPageBase {
     this._exportError = '';
 
     try {
-      // Fast path: direct download of the already-rendered blob (no trip details, no re-render)
-      if (!this._includeTripDetails && this._format === 'png' && this._previewBlob) {
-        triggerDownload(this._previewBlob, `${sanitizeFilename(this._map?.name ?? 'map')}.png`);
-      } else if (!this._includeTripDetails && this._format === 'jpeg' && this._previewCanvas) {
-        const blob = await canvasToBlob(this._previewCanvas, 'image/jpeg', 0.92);
-        triggerDownload(blob, `${sanitizeFilename(this._map?.name ?? 'map')}.jpg`);
-      } else {
-        // Full export pipeline (handles all formats + trip details overlay)
-        const map = this._mapView?.map;
-        if (!map || !this._mapController || !this._map) {
-          throw new Error('Map not ready for export');
-        }
-        await exportMap(
-          map,
-          this._format,
-          this._map,
-          this._items,
-          this._mapController.markerFeatures,
-          this._units.value,
-          this._paperSize,
-          this._orientation,
-          this._routeDistances,
-          this._includeTripDetails,
-        );
-      }
+      if (!this._mapCanvas || !this._map) throw new Error('Map not ready for export');
+      await exportMap(
+        this._mapCanvas,
+        this._format,
+        this._map,
+        this._items,
+        this._units.value,
+        this._paperSize,
+        this._orientation,
+        this._routeDistances,
+        this._includeTripDetails,
+      );
     } catch (err) {
       this._exportError = err instanceof Error ? err.message : 'Export failed';
     } finally {
@@ -356,14 +301,9 @@ export class ExportPage extends MapPageBase {
     }
   }
 
+  /** Owners and editors can order; the order page picks a printable size. */
   private get _canOrder(): boolean {
-    if (!this._map || !isAuthenticated()) return false;
-    if (!canEditRole(this._map.role)) return false;
-    return PRINTABLE_SIZES.has(this._paperSize);
-  }
-
-  private _onOrderPrint() {
-    navigateTo(`/order/${this.mapId}`);
+    return !!this._map && isAuthenticated() && canEditRole(this._map.role);
   }
 }
 

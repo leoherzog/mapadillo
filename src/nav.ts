@@ -1,13 +1,15 @@
 /**
- * Shared navigation utility.
- *
- * Uses the Navigation API when available, with a History API fallback.
- * All programmatic navigation in child components should go through this
- * instead of reimplementing Navigation API access.
+ * Programmatic navigation for the router and pages. Uses the Navigation API when present;
+ * otherwise updates history and dispatches a synthetic popstate, which the router's
+ * fallback listener renders.
+ */
+
+/**
+ * Navigate in place to `path`. Does nothing when `path` is already the current URL.
+ * @param options.replace Replace the current history entry instead of pushing one.
  */
 export function navigateTo(path: string, options?: { replace?: boolean }): void {
-  // Avoid duplicate history entries if already at this URL
-  if (new URL(path, location.origin).href === location.href) return;
+  if (new URL(path, window.location.origin).href === window.location.href) return;
 
   const nav: Navigation | undefined = window.navigation;
   if (nav) {

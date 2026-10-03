@@ -89,43 +89,48 @@ export function initAuth(): Promise<User | null> {
 }
 
 /**
- * Re-check the session (e.g. after passkey sign-in completes).
+ * Re-check the session (e.g. after passkey sign-in completes) and resume the visibility re-check.
  * Unlike `initAuth`, always makes a fresh server call.
  */
 export async function refreshAuth(): Promise<User | null> {
+  _installVisibilityListener();
   _initPromise = _doInit();
   return _initPromise;
 }
 
-export async function signOut(): Promise<void> {
+/**
+ * End the session on the server, then clear local state even if the server call failed.
+ * @returns whether the server confirmed the sign-out
+ */
+export async function signOut(): Promise<boolean> {
+  let confirmed = false;
   try {
-    await authClient.signOut();
+    const { error } = await authClient.signOut();
+    confirmed = !error;
   } catch {
-    // Server sign-out failed — clear local state anyway
-    // so the UI doesn't show a stale session
+    // Clear local state anyway so the UI doesn't show a stale session.
   }
   _setUser(null);
   _initPromise = null;
   _removeVisibilityListener();
+  return confirmed;
 }
 
 // ── Private ───────────────────────────────────────────────────────────────
 
 async function _doInit(): Promise<User | null> {
   try {
-    const { data } = await authClient.getSession();
-    if (data?.user) {
-      _setUser({
-        id: data.user.id,
-        email: data.user.email,
-        name: data.user.name,
-        image: data.user.image ?? null,
-      });
-    } else {
-      _setUser(null);
-    }
+    const { data, error } = await authClient.getSession();
+    if (error) throw error;
+    _setUser(data?.user ? {
+      id: data.user.id,
+      email: data.user.email,
+      name: data.user.name,
+      image: data.user.image ?? null,
+    } : null);
   } catch {
-    _setUser(null);
+    // A failed check is not a sign-out: keep the last known user and let the next initAuth() retry.
+    _initPromise = null;
   }
   return _user;
 }

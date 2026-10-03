@@ -14,14 +14,13 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@better-auth/passkey": "~1.6.25",
-    "better-auth": "~1.6.25",
+    "@better-auth/passkey": "~1.7.7",
+    "better-auth": "~1.7.7",
     "hono": "^4.13.5",
     "stripe": "^22.5.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.3",
-    "@cloudflare/workers-types": "^5.20260826.1",
     "@vitest/coverage-istanbul": "^4.1.11",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",

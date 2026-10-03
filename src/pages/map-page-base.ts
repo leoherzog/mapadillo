@@ -4,6 +4,7 @@
  * export and order pages.
  */
 import { LitElement, type PropertyValues } from 'lit';
+import type { PaddingOptions } from 'maplibre-gl';
 import { property, query, state } from 'lit/decorators.js';
 import type { Stop, MapWithRole } from '../services/maps.js';
 import { getMap } from '../services/maps.js';
@@ -36,6 +37,14 @@ export class MapPageBase extends LitElement {
   /** Uncached: subclasses may render a different <map-view> per render branch. */
   @query('map-view') protected _mapView!: MapView | null;
 
+  /** Animate the auto-fit. Hidden render pages turn it off so the camera is final when drawItems resolves. */
+  protected _animateFit = true;
+
+  /** Auto-fit padding in CSS pixels; pages with a paper frame confine the fit to it. */
+  protected _fitPadding(): number | PaddingOptions {
+    return 60;
+  }
+
   /** Implement in subclasses to handle clicks on map markers and route lines. */
   protected _onMapItemClick?(itemId: string): void;
 
@@ -53,6 +62,8 @@ export class MapPageBase extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this._mapController?.destroy();
+    // Discards in-flight loads; connectedCallback reloads on reattach.
+    this._loadGeneration++;
   }
 
   protected async _loadMap() {
@@ -73,7 +84,7 @@ export class MapPageBase extends LitElement {
     } catch (err) {
       if (gen !== this._loadGeneration) return;
       if (err instanceof ApiError && err.status === 401 && !isAuthenticated()) {
-        navigateTo(signInUrl());
+        navigateTo(signInUrl(), { replace: true });
         return;
       }
       this._error = err instanceof Error ? err.message : 'Failed to load map';
@@ -99,18 +110,9 @@ export class MapPageBase extends LitElement {
   }
 
   /**
-   * Apply a saved viewport after drawItems() has finished its auto-fit.
-   * drawItems() calls fitBounds() which fires moveend asynchronously; if we
-   * jumpTo() first and then fitBounds() runs, our restored viewport is lost.
-   * And if we jumpTo() synchronously after drawItems resolves, the late
-   * moveend from the auto-fit still fires while _restoring is false,
-   * triggering a spurious save.
-   *
-   * Correct sequence:
-   *   1. await drawItems() (caller).
-   *   2. jumpTo(saved viewport) — overrides fitBounds, may fire moveend.
-   *   3. await 'idle' event — drains any pending moveend.
-   *   4. Return; caller clears _restoring.
+   * Jumps to a saved viewport and waits for the map to settle. Call after drawItems()
+   * so the saved viewport overrides its auto-fit; the wait also drains the auto-fit's late moveend.
+   * No-op without center and zoom.
    */
   protected async _applyRestoredViewport(
     settings: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number },
@@ -126,7 +128,6 @@ export class MapPageBase extends LitElement {
       pitch: settings.pitch ?? 0,
     });
 
-    // Drains the late fitBounds moveend too.
     await settle(map, 500);
   }
 
@@ -134,7 +135,10 @@ export class MapPageBase extends LitElement {
     if (!this._mapReady || !this._mapController) return;
 
     try {
-      const result = await this._mapController.drawItems(this._items);
+      const result = await this._mapController.drawItems(this._items, {
+        animate: this._animateFit,
+        fitPadding: this._fitPadding(),
+      });
       this._routeDistances = result.distances;
     } catch (err) {
       console.warn('Map drawing failed:', err);

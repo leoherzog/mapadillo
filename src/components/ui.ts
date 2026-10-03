@@ -4,13 +4,13 @@
  */
 import { html, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
-import { STATUS_VARIANTS } from '../../shared/products.js';
+import { STATUS_VARIANTS, statusLabel } from '../../shared/products.js';
 import type { OrderStatus } from '../../shared/types.js';
 
-/** Danger callout with the standard error icon. */
+/** Danger callout with the standard error icon, announced to screen readers when it appears. */
 export function errorCallout(msg: string): TemplateResult {
   return html`
-    <wa-callout variant="danger">
+    <wa-callout variant="danger" role="alert">
       <wa-icon slot="icon" name="circle-xmark"></wa-icon>
       ${msg}
     </wa-callout>
@@ -27,5 +27,5 @@ export function roleBadge(role: string, slot?: string): TemplateResult {
 
 /** Badge showing an order status with its lifecycle colour. */
 export function orderStatusBadge(status: OrderStatus): TemplateResult {
-  return html`<wa-badge variant=${STATUS_VARIANTS[status] ?? 'neutral'}>${status.replace(/_/g, ' ')}</wa-badge>`;
+  return html`<wa-badge variant=${STATUS_VARIANTS[status] ?? 'neutral'}>${statusLabel(status)}</wa-badge>`;
 }

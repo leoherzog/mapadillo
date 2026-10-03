@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ApiError, apiGet, apiPost, apiPut, apiDelete } from './api-client.js';
+import { ApiError, apiErrorMessage, apiGet, apiPost, apiPostBlob, apiPut, apiDelete } from './api-client.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,11 +23,48 @@ describe('ApiError', () => {
     expect(err.name).toBe('ApiError');
     expect(err.status).toBe(422);
     expect(err.body).toEqual({ error: 'bad input' });
-    expect(err.message).toBe('API error 422');
+    expect(err.message).toBe('bad input');
+  });
+
+  it('falls back to the status code when the body has no error text', () => {
+    expect(new ApiError(500, null).message).toBe('API error 500');
+    expect(new ApiError(400, { error: '' }).message).toBe('API error 400');
+    expect(new ApiError(400, { error: 42 }).message).toBe('API error 400');
   });
 
   it('is instanceof Error', () => {
     expect(new ApiError(500, null)).toBeInstanceOf(Error);
+  });
+});
+
+// ── apiErrorMessage ──────────────────────────────────────────────────────────
+
+describe('apiErrorMessage', () => {
+  const fallback = 'Order failed. Please try again.';
+
+  it("returns the server's error text from an { error } body", () => {
+    expect(apiErrorMessage(new ApiError(400, { error: 'Bad address' }), fallback)).toBe('Bad address');
+  });
+
+  it('returns the fallback for a string body', () => {
+    expect(apiErrorMessage(new ApiError(500, 'Internal Server Error'), fallback)).toBe(fallback);
+  });
+
+  it('returns the fallback for a null body', () => {
+    expect(apiErrorMessage(new ApiError(502, null), fallback)).toBe(fallback);
+  });
+
+  it('returns the fallback for an empty or non-string error field', () => {
+    expect(apiErrorMessage(new ApiError(400, { error: '' }), fallback)).toBe(fallback);
+    expect(apiErrorMessage(new ApiError(400, { error: 42 }), fallback)).toBe(fallback);
+  });
+
+  it("returns a plain Error's message", () => {
+    expect(apiErrorMessage(new Error('Refusing to redirect'), fallback)).toBe('Refusing to redirect');
+  });
+
+  it('returns the fallback for a non-Error value', () => {
+    expect(apiErrorMessage('boom', fallback)).toBe(fallback);
   });
 });
 
@@ -60,6 +97,7 @@ describe('apiGet', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(404);
     expect((err as ApiError).body).toEqual({ error: 'Not found' });
+    expect((err as ApiError).message).toBe('Not found');
   });
 
   it('throws ApiError with text body when JSON parse fails', async () => {
@@ -72,6 +110,7 @@ describe('apiGet', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(500);
     expect((err as ApiError).body).toBe('Server Error');
+    expect((err as ApiError).message).toBe('API error 500');
   });
 
   it('throws ApiError with null body when text() fails', async () => {
@@ -88,16 +127,17 @@ describe('apiGet', () => {
     expect((err as ApiError).body).toBeNull();
   });
 
-  it('extracts message field from JSON error body', async () => {
+  it('uses the error field of a JSON error body as the message', async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ message: 'Not allowed' }), { status: 403 }),
+      new Response(JSON.stringify({ error: 'Not allowed' }), { status: 403 }),
     );
 
     const err = await apiGet('/api/forbidden').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(403);
-    expect((err as ApiError).body).toBe('Not allowed');
+    expect((err as ApiError).body).toEqual({ error: 'Not allowed' });
+    expect((err as ApiError).message).toBe('Not allowed');
   });
 });
 
@@ -157,6 +197,36 @@ describe('apiPut', () => {
     const [, init] = vi.mocked(fetch).mock.calls[0];
     expect(init!.body).toBeUndefined();
   });
+
+  it('sets keepalive only when asked', async () => {
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(jsonResponse({})));
+
+    await apiPut('/api/maps/1', { name: 'Updated' }, true);
+    await apiPut('/api/maps/1', { name: 'Updated' });
+
+    const [[, kept], [, plain]] = vi.mocked(fetch).mock.calls;
+    expect(kept!.keepalive).toBe(true);
+    expect(plain).not.toHaveProperty('keepalive');
+  });
+});
+
+// ── apiPostBlob ──────────────────────────────────────────────────────────────
+
+describe('apiPostBlob', () => {
+  it('sends the blob as the raw body, typed by its MIME type', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ key: 'm1/abc.png' }, 201));
+    const blob = new Blob(['fake-png-bytes'], { type: 'image/png' });
+
+    await apiPostBlob('/api/images/m1', blob);
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe('/api/images/m1');
+    expect(init).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+    });
+    expect(init!.body).toBe(blob);
+  });
 });
 
 // ── apiDelete ────────────────────────────────────────────────────────────────
@@ -191,45 +261,16 @@ describe('204 No Content', () => {
   });
 });
 
-// ── 429 retry ────────────────────────────────────────────────────────────────
+// ── 429 Too Many Requests ────────────────────────────────────────────────────
 
 describe('429 Too Many Requests', () => {
-  it('retries once after Retry-After seconds on success', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response('rate limited', { status: 429, headers: { 'Retry-After': '0' } }))
-      .mockResolvedValueOnce(jsonResponse({ id: 'ok' }));
-
-    const result = await apiGet<{ id: string }>('/api/maps');
-
-    expect(result).toEqual({ id: 'ok' });
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
-  });
-
-  it('throws ApiError(429) when the retry also 429s', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response('still limited', { status: 429, headers: { 'Retry-After': '0' } }),
-    );
+  it('throws ApiError(429) without retrying', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: 'Too many requests' }, 429));
 
     const err = await apiGet('/api/maps').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(429);
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
-  });
-
-  it('caps Retry-After delay so a hostile server cannot wedge the UI', async () => {
-    vi.useFakeTimers();
-    try {
-      vi.mocked(fetch)
-        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '9999' } }))
-        .mockResolvedValueOnce(jsonResponse({ ok: true }));
-
-      const pending = apiGet('/api/maps');
-      // Our internal cap is 5s; advance past that and the retry should resolve.
-      await vi.advanceTimersByTimeAsync(5_000);
-      await expect(pending).resolves.toEqual({ ok: true });
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 });

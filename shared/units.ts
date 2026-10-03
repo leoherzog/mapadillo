@@ -2,7 +2,7 @@
  * Canonical distance-unit values used by both frontend and worker.
  */
 
-const UNIT_NAMES = ['km', 'mi'] as const;
+export const UNIT_NAMES = ['km', 'mi'] as const;
 
 export type Units = (typeof UNIT_NAMES)[number];
 

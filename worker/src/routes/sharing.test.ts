@@ -1,22 +1,10 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
-  applyTestSchema, request, createTestSession, jsonRequest, createMap, grantShare,
+  applyTestSchema, request, createTestSession, jsonRequest, createMap, createShare, createStop, grantShare,
 } from '../test-helpers.js';
 
 beforeAll(applyTestSchema);
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Create a share invite via the API and return its id + claim_token */
-async function createShare(
-  mapId: string,
-  cookie: string,
-  role = 'viewer',
-): Promise<{ id: string; claim_token: string }> {
-  const res = await jsonRequest(`/api/maps/${mapId}/shares`, 'POST', { role }, cookie);
-  return (await res.json()) as { id: string; claim_token: string };
-}
 
 // ── POST /:id/shares — invalid JSON body ─────────────────────────────────────
 
@@ -135,6 +123,23 @@ describe('Sharing - GET /:id/shares response details', () => {
     expect(claimedShare.user_name).toBe('Test User');
     expect(claimedShare.user_email).toBeTruthy();
   });
+
+  it('omits expired unclaimed invites', async () => {
+    const { cookie } = await createTestSession();
+    const mapId = await createMap(cookie);
+    const live = await createShare(mapId, cookie, 'viewer');
+
+    const expiredId = crypto.randomUUID();
+    const pastIso = new Date(Date.now() - 60_000).toISOString();
+    await env.DB.prepare(
+      'INSERT INTO map_shares (id, map_id, role, claim_token, claim_token_expires_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(expiredId, mapId, 'viewer', crypto.randomUUID(), pastIso).run();
+
+    const res = await request(`/api/maps/${mapId}/shares`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shares: Array<{ id: string }> };
+    expect(body.shares.map((s) => s.id)).toEqual([live.id]);
+  });
 });
 
 // ── PUT/DELETE /:id/shares/:shareId — non-owner access ───────────────────────
@@ -172,27 +177,39 @@ describe('Sharing - non-owner cannot modify shares', () => {
 // ── Claim flow edge cases ────────────────────────────────────────────────────
 
 describe('Sharing - claim edge cases', () => {
-  it('same user claiming the same token twice is idempotent', async () => {
+  it('same user claiming the same token twice opens the map both times', async () => {
+    const { cookie: ownerCookie } = await createTestSession();
+    const { cookie: claimeeCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
+    const { claim_token } = await createShare(mapId, ownerCookie, 'viewer');
+
+    for (let i = 0; i < 2; i++) {
+      const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, claimeeCookie);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { map_id: string };
+      expect(body.map_id).toBe(mapId);
+    }
+  });
+
+  it('claimant can reopen an expired link, and other users are told it is claimed', async () => {
     const { cookie: ownerCookie } = await createTestSession();
     const { cookie: claimeeCookie, userId: claimeeId } = await createTestSession();
-    await createMap(ownerCookie);
+    const { cookie: otherCookie } = await createTestSession();
+    const mapId = await createMap(ownerCookie);
 
-    // Create a second map so the UNIQUE(map_id, user_id) constraint is not hit
-    const mapId2 = await createMap(ownerCookie, 'Second Map');
-
-    // Manually insert a share that is already claimed by the claimee but still
-    // has a claim_token (the "already claimed by this user" code path).
-    const shareId = crypto.randomUUID();
     const token = crypto.randomUUID();
+    const pastIso = new Date(Date.now() - 60_000).toISOString();
     await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(shareId, mapId2, claimeeId, 'viewer', token).run();
+      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token, claim_token_expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), mapId, claimeeId, 'viewer', token, pastIso).run();
 
-    // Claimee hits the same token again — should be treated as success
-    const res = await jsonRequest(`/api/shares/claim/${token}`, 'POST', {}, claimeeCookie);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { map_id: string };
-    expect(body.map_id).toBe(mapId2);
+    const reopen = await jsonRequest(`/api/shares/claim/${token}`, 'POST', {}, claimeeCookie);
+    expect(reopen.status).toBe(200);
+
+    const other = await jsonRequest(`/api/shares/claim/${token}`, 'POST', {}, otherCookie);
+    expect(other.status).toBe(403);
+    const body = (await other.json()) as { error: string };
+    expect(body.error).toContain('already been claimed');
   });
 
   it('claiming upgrades role when incoming share has higher privilege', async () => {
@@ -242,37 +259,15 @@ describe('Sharing - claim edge cases', () => {
     expect(shares.results.length).toBe(1);
     expect(shares.results[0].role).toBe('editor');
 
-    // The incoming invite's claim_token should be nullified
+    // The incoming invite stays unclaimed for someone else
     const invite = await env.DB.prepare(
-      'SELECT claim_token FROM map_shares WHERE id = ?',
-    ).bind(inviteId).first<{ claim_token: string | null }>();
-    expect(invite?.claim_token).toBeNull();
+      'SELECT user_id, claim_token FROM map_shares WHERE id = ?',
+    ).bind(inviteId).first<{ user_id: string | null; claim_token: string | null }>();
+    expect(invite?.user_id).toBeNull();
+    expect(invite?.claim_token).toBe(claim_token);
   });
 
-  it('claim race condition returns 409 when token consumed between SELECT and UPDATE', async () => {
-    const { cookie: ownerCookie } = await createTestSession();
-    const { cookie: claimeeCookie } = await createTestSession();
-    const { userId: thirdUserId } = await createTestSession();
-    const mapId = await createMap(ownerCookie);
-
-    // Create a real unclaimed share
-    const { claim_token, id: shareId } = await createShare(mapId, ownerCookie, 'viewer');
-
-    // Simulate a race: between the route's SELECT and UPDATE, another request
-    // claims the token. We do this by manually setting user_id + clearing token.
-    await env.DB.prepare(
-      'UPDATE map_shares SET user_id = ?, claim_token = NULL WHERE id = ?',
-    ).bind(thirdUserId, shareId).run();
-
-    // Now claimee tries to claim the original token — SELECT finds nothing (token nullified)
-    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, claimeeCookie);
-    // Token no longer exists in the DB, so it returns 404
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('Invalid');
-  });
-
-  it('expired claim token returns 404 and nullifies the token', async () => {
+  it('expired claim token returns 404 and deletes the invite', async () => {
     const { cookie: ownerCookie } = await createTestSession();
     const { cookie: claimeeCookie } = await createTestSession();
     const mapId = await createMap(ownerCookie);
@@ -290,11 +285,10 @@ describe('Sharing - claim edge cases', () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('Invalid');
 
-    // Token should be nullified so the invite can't be retried.
     const row = await env.DB.prepare(
-      'SELECT claim_token FROM map_shares WHERE id = ?',
-    ).bind(shareId).first<{ claim_token: string | null }>();
-    expect(row?.claim_token).toBeNull();
+      'SELECT id FROM map_shares WHERE id = ?',
+    ).bind(shareId).first<{ id: string }>();
+    expect(row).toBeNull();
   });
 
   it('fresh claim token succeeds and stores expiry', async () => {
@@ -321,24 +315,21 @@ describe('Sharing - claim edge cases', () => {
       'SELECT user_id, claim_token FROM map_shares WHERE map_id = ? AND user_id = ?',
     ).bind(mapId, claimeeId).first<{ user_id: string; claim_token: string | null }>();
     expect(claimed?.user_id).toBe(claimeeId);
-    expect(claimed?.claim_token).toBeNull();
+    expect(claimed?.claim_token).toBe(claim_token);
   });
 
   it('claimed-by-another returns 403', async () => {
     const { cookie: ownerCookie } = await createTestSession();
-    const { userId: user2Id } = await createTestSession();
+    const { cookie: user2Cookie } = await createTestSession();
     const { cookie: user3Cookie } = await createTestSession();
     const mapId = await createMap(ownerCookie);
+    const { claim_token } = await createShare(mapId, ownerCookie, 'viewer');
 
-    // Create an invite and have it already claimed by user2 (but token still present)
-    const shareId = crypto.randomUUID();
-    const token = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO map_shares (id, map_id, user_id, role, claim_token) VALUES (?, ?, ?, ?, ?)',
-    ).bind(shareId, mapId, user2Id, 'viewer', token).run();
+    const first = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, user2Cookie);
+    expect(first.status).toBe(200);
 
     // User3 tries to claim the same token
-    const res = await jsonRequest(`/api/shares/claim/${token}`, 'POST', {}, user3Cookie);
+    const res = await jsonRequest(`/api/shares/claim/${claim_token}`, 'POST', {}, user3Cookie);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('already been claimed');
@@ -352,38 +343,28 @@ describe('Sharing - duplicate copies stops', () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
 
-    // Add stops to the map (API uses lat/lng, not latitude/longitude)
-    await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
-      type: 'point',
-      name: 'Stop A',
-      lat: 48.8566,
-      lng: 2.3522,
-    }, cookie);
-    await jsonRequest(`/api/maps/${mapId}/stops`, 'POST', {
-      type: 'point',
-      name: 'Stop B',
-      lat: 51.5074,
-      lng: -0.1278,
-    }, cookie);
+    await createStop(cookie, mapId, { type: 'point', name: 'Stop A', lat: 48.8566, lng: 2.3522 });
+    await createStop(cookie, mapId, { type: 'point', name: 'Stop B', lat: 51.5074, lng: -0.1278 });
 
     // Duplicate the map
     const res = await jsonRequest(`/api/maps/${mapId}/duplicate`, 'POST', {}, cookie);
     expect(res.status).toBe(201);
-    const body = (await res.json()) as {
-      id: string;
-      name: string;
-      stops: Array<{ id: string; name: string; map_id: string; latitude: number }>;
-    };
+    const body = (await res.json()) as { id: string; name: string };
 
     expect(body.name).toBe('Test Map (copy)');
     expect(body.id).not.toBe(mapId);
-    expect(body.stops.length).toBe(2);
+
+    const getRes = await request(`/api/maps/${body.id}`, { headers: { cookie } });
+    const copy = (await getRes.json()) as {
+      stops: Array<{ id: string; name: string; map_id: string; latitude: number }>;
+    };
+    expect(copy.stops.length).toBe(2);
 
     // Stops should have new IDs and belong to the new map
-    for (const stop of body.stops) {
+    for (const stop of copy.stops) {
       expect(stop.map_id).toBe(body.id);
     }
-    const stopNames = body.stops.map((s) => s.name).sort();
+    const stopNames = copy.stops.map((s) => s.name).sort();
     expect(stopNames).toEqual(['Stop A', 'Stop B']);
   });
 
@@ -414,7 +395,7 @@ describe('Sharing - duplicate copies stops', () => {
 // ── Share creation returns correct response shape ────────────────────────────
 
 describe('Sharing - POST /:id/shares response shape', () => {
-  it('returns id, claim_token, role, and url in the response', async () => {
+  it('returns id, claim_token and role in the response', async () => {
     const { cookie } = await createTestSession();
     const mapId = await createMap(cookie);
 
@@ -424,14 +405,12 @@ describe('Sharing - POST /:id/shares response shape', () => {
       id: string;
       claim_token: string;
       role: string;
-      url: string;
     };
 
     // All fields should be present
     expect(body.id).toBeTruthy();
     expect(body.claim_token).toBeTruthy();
     expect(body.role).toBe('editor');
-    expect(body.url).toBe(`/claim/${body.claim_token}`);
 
     // claim_token and id should be valid UUIDs (36 chars)
     expect(body.id.length).toBe(36);
@@ -455,7 +434,7 @@ describe('Sharing - visibility non-owner with share access', () => {
       { visibility: 'public' },
       editorCookie,
     );
-    // Owner-only routes hide the map from non-owners, so an editor gets 404
-    expect(res.status).toBe(404);
+    // The editor can see the map, so an owner-only route answers 403
+    expect(res.status).toBe(403);
   });
 });

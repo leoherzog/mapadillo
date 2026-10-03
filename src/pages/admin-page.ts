@@ -9,15 +9,10 @@ import { customElement, state } from 'lit/decorators.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { headingStyles } from '../styles/heading-shared.js';
 import { contentPageStyles } from '../styles/content-page.js';
-import { ORDER_STATUSES } from '../../shared/products.js';
+import { ORDER_STATUSES, orderRef, statusLabel } from '../../shared/products.js';
 import { errorCallout, orderStatusBadge } from '../components/ui.js';
 import type { AdminOrder } from '../services/orders.js';
 import { fieldValue } from '../utils/form.js';
-
-/** Title-case label for an order status, e.g. 'in_production' -> 'In Production'. */
-function statusLabel(status: string): string {
-  return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 @customElement('admin-page')
 export class AdminPage extends LitElement {
@@ -56,7 +51,7 @@ export class AdminPage extends LitElement {
       text-transform: uppercase;
     }
 
-    .mono { font-family: monospace; font-size: var(--wa-font-size-xs); }
+    .mono { font-family: var(--wa-font-family-code); font-size: var(--wa-font-size-xs); }
 
     .filter-bar { margin-bottom: var(--wa-space-l); }
 
@@ -132,18 +127,18 @@ export class AdminPage extends LitElement {
   render() {
     if (!this._authenticated) {
       return html`
-        <div class="auth-form wa-stack wa-gap-m">
+        <form class="auth-form wa-stack wa-gap-m" @submit=${(e: SubmitEvent) => { e.preventDefault(); void this._authenticate(); }}>
           <h1><wa-icon name="lock"></wa-icon> Admin</h1>
           <wa-input
             label="Admin Secret"
             type="password"
+            required
             .value=${this._secret}
             @input=${(e: Event) => { this._secret = fieldValue(e); }}
-            @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this._authenticate(); }}
           ></wa-input>
           ${this._error ? errorCallout(this._error) : nothing}
-          <wa-button variant="brand" ?loading=${this._loading} @click=${this._authenticate}>Sign In</wa-button>
-        </div>
+          <wa-button type="submit" variant="brand" ?loading=${this._loading}>Sign In</wa-button>
+        </form>
       `;
     }
 
@@ -157,11 +152,10 @@ export class AdminPage extends LitElement {
           with-clear
           .value=${this._statusFilter}
           @change=${(e: Event) => { this._statusFilter = fieldValue(e); this._fetchOrders(); }}
-          @wa-clear=${() => { this._statusFilter = ''; this._fetchOrders(); }}
         >
           ${ORDER_STATUSES.map((s) => html`<wa-option value=${s}>${statusLabel(s)}</wa-option>`)}
         </wa-select>
-        <wa-button size="small" variant="neutral" appearance="outlined" ?loading=${this._loading} @click=${() => this._fetchOrders()}>
+        <wa-button size="s" variant="neutral" appearance="outlined" ?loading=${this._loading} @click=${() => this._fetchOrders()}>
           <wa-icon slot="start" name="arrows-rotate"></wa-icon> Refresh
         </wa-button>
       </div>
@@ -171,7 +165,7 @@ export class AdminPage extends LitElement {
       ${this._loading && this._orders.length === 0
         ? html`<div class="wa-cluster wa-justify-content-center"><wa-spinner></wa-spinner></div>`
         : this._orders.length === 0
-          ? html`<wa-callout variant="neutral"><wa-icon slot="icon" name="box-open"></wa-icon>No orders found.</wa-callout>`
+          ? html`<wa-callout variant="neutral"><wa-icon slot="icon" name="inbox"></wa-icon>No orders found.</wa-callout>`
           : html`
               <table>
                 <thead>
@@ -181,6 +175,7 @@ export class AdminPage extends LitElement {
                     <th>Map</th>
                     <th>Product</th>
                     <th>Size</th>
+                    <th>Image</th>
                     <th>Status</th>
                     <th>Date</th>
                     <th>Actions</th>
@@ -189,19 +184,20 @@ export class AdminPage extends LitElement {
                 <tbody>
                   ${this._orders.map(o => html`
                     <tr>
-                      <td class="mono">${o.id.slice(0, 8)}</td>
+                      <td class="mono">${orderRef(o.id)}</td>
                       <td>${o.user_email}</td>
                       <td>${o.map_name}</td>
                       <td>${o.product_type}</td>
                       <td>${o.poster_size}</td>
+                      <td>${o.image_url ? html`<a href=${o.image_url} target="_blank" rel="noopener">View</a>` : html`<wa-badge variant="danger">missing</wa-badge>`}</td>
                       <td>
                         ${orderStatusBadge(o.status)}
                       </td>
                       <td><wa-relative-time .date=${new Date(o.created_at)}></wa-relative-time></td>
                       <td>
-                        ${(o.status === 'pending_render' || o.status === 'paid') ? html`
+                        ${(o.status === 'pending_render' || o.status === 'paid') && o.image_url ? html`
                           <wa-button
-                            size="small"
+                            size="s"
                             variant="brand"
                             ?loading=${this._actionLoading === o.id}
                             ?disabled=${this._actionLoading !== null}

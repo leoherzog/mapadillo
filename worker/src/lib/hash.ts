@@ -12,11 +12,12 @@ export async function sha256Hex(input: string): Promise<string> {
     .slice(0, 32);
 }
 
-/** Constant-time comparison of two strings. */
+/** Constant-time comparison of two strings; hashes both so length is not leaked. */
 export async function secretsEqual(a: string, b: string): Promise<boolean> {
   const enc = new TextEncoder();
-  const aBytes = enc.encode(a);
-  const bBytes = enc.encode(b);
-  if (aBytes.byteLength !== bBytes.byteLength) return false;
-  return crypto.subtle.timingSafeEqual(aBytes, bBytes);
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest('SHA-256', enc.encode(a)),
+    crypto.subtle.digest('SHA-256', enc.encode(b)),
+  ]);
+  return crypto.subtle.timingSafeEqual(ha, hb);
 }

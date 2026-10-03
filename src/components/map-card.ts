@@ -1,32 +1,34 @@
 /**
  * Map card — clickable card showing a mini map preview with trip metadata.
  *
- * Renders a non-interactive MapLibre map with markers for each stop,
- * fitted to bounds. Below the map: trip name, family name, stop count,
- * and relative update time. Click navigates to the map detail view.
+ * When the card nears the viewport it renders a non-interactive MapLibre map
+ * fitted to the trip, snapshots it to an image and releases the WebGL context.
+ * Below the map: trip name, family name, stop count, and relative update time.
+ * The title link is stretched over the whole card.
  */
 import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import * as maplibregl from 'maplibre-gl';
+import '../map/maplibre-worker.js';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?inline';
-import type { MapWithStops } from '../services/maps.js';
-import { navigateTo } from '../nav.js';
+import type { MapWithRole } from '../services/maps.js';
 import { roleBadge } from './ui.js';
 import { waUtilities } from '../styles/wa-utilities.js';
 import { cardSharedStyles } from '../styles/card-shared.js';
-import { isDraftCoord } from '../utils/geo.js';
+import { isDraftCoord, placedDest } from '../utils/geo.js';
 import { resolveMapStyle } from '../config/map.js';
-import { HEX_COLOR_BY_MODE } from '../config/travel-modes.js';
+import { TRAVEL_MODES } from '../../shared/travel-modes.js';
 
 @customElement('map-card')
 export class MapCard extends LitElement {
-  @property({ type: Object }) map!: MapWithStops;
-  @property() roleBadge: string | null = null;
+  @property({ type: Object }) map!: MapWithRole;
 
   private _mapInstance?: maplibregl.Map;
-  private _resizeObserver?: ResizeObserver;
+  private _io?: IntersectionObserver;
 
   @state() private _styleError = false;
+  /** Data URL of the rendered preview; the live map is removed once it is set. */
+  @state() private _thumb: string | null = null;
 
   static styles = [
     waUtilities,
@@ -35,16 +37,41 @@ export class MapCard extends LitElement {
     css`
       :host {
         display: block;
-        cursor: pointer;
       }
 
       wa-card {
-        --spacing: var(--wa-space-s);
+        position: relative;
       }
 
       /* wa-card's outer element is the host, so style the element directly. */
       wa-card:hover {
         box-shadow: var(--wa-shadow-m);
+      }
+
+      .card-link {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .card-link::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+      }
+
+      .card-link:focus-visible {
+        outline: none;
+      }
+
+      wa-card:has(.card-link:focus-visible) {
+        outline: var(--wa-focus-ring);
+        outline-offset: var(--wa-focus-ring-offset);
+      }
+
+      /* Sits above the stretched link overlay. */
+      .delete-btn {
+        position: relative;
+        z-index: 1;
       }
 
       [slot='media'] {
@@ -85,8 +112,24 @@ export class MapCard extends LitElement {
     `,
   ];
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (this.hasUpdated && !this._thumb && !this._mapInstance) this._observe();
+  }
+
   protected firstUpdated(): void {
-    void this._initMap();
+    this._observe();
+  }
+
+  /** Render the preview once the card comes within 200px of the viewport. */
+  private _observe(): void {
+    this._io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      this._io?.disconnect();
+      this._io = undefined;
+      void this._initMap();
+    }, { rootMargin: '200px' });
+    this._io.observe(this);
   }
 
   private async _initMap(): Promise<void> {
@@ -101,32 +144,36 @@ export class MapCard extends LitElement {
       this._styleError = true;
       return;
     }
-    // The element may have been removed while the style was loading.
-    if (!this.isConnected) return;
+    // The element may have been removed, or another load may have won, while the style was loading.
+    if (!this.isConnected || this._mapInstance || this._thumb) return;
 
-    this._mapInstance = new maplibregl.Map({
+    const map = new maplibregl.Map({
       container,
       style,
       center: [0, 20],
       zoom: 2,
       interactive: false,
       attributionControl: false,
+      // The canvas is read back after the frame is presented.
+      canvasContextAttributes: { preserveDrawingBuffer: true },
     });
+    this._mapInstance = map;
 
-    this._mapInstance.on('load', () => {
+    map.once('load', async () => {
       this._addMarkers();
+      await map.once('idle');
+      if (this._mapInstance !== map) return;
+      // Safari encodes no WebP and would return a PNG; the map canvas is opaque, so JPEG loses nothing.
+      this._thumb = map.getCanvas().toDataURL('image/jpeg', 0.85);
+      map.remove();
+      this._mapInstance = undefined;
     });
-
-    this._resizeObserver = new ResizeObserver(() => {
-      this._mapInstance?.resize();
-    });
-    this._resizeObserver.observe(container);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._resizeObserver?.disconnect();
-    this._resizeObserver = undefined;
+    this._io?.disconnect();
+    this._io = undefined;
     this._mapInstance?.remove();
     this._mapInstance = undefined;
   }
@@ -158,7 +205,7 @@ export class MapCard extends LitElement {
           type: 'line',
           source: sourceId,
           paint: {
-            'line-color': HEX_COLOR_BY_MODE[stop.travel_mode ?? 'drive'] ?? color,
+            'line-color': TRAVEL_MODES.find((m) => m.mode === (stop.travel_mode ?? 'drive'))?.hexColor ?? color,
             'line-width': 3,
             'line-opacity': 0.7,
           },
@@ -173,55 +220,68 @@ export class MapCard extends LitElement {
       }
     }
 
+    // Endpoints with icon 'none' get no pin but still count toward the bounds, as on the full map.
+    const points: GeoJSON.Feature<GeoJSON.Point>[] = [];
+    const pin = (lng: number, lat: number): GeoJSON.Feature<GeoJSON.Point> =>
+      ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [lng, lat] } });
+
     for (const stop of this.map.stops) {
       if (isDraftCoord(stop.latitude, stop.longitude)) continue;
 
-      new maplibregl.Marker({ color })
-        .setLngLat([stop.longitude, stop.latitude])
-        .addTo(this._mapInstance);
+      if (stop.icon !== 'none') points.push(pin(stop.longitude, stop.latitude));
       bounds.extend([stop.longitude, stop.latitude]);
 
-      // For routes, also add a marker at the destination
-      if (stop.type === 'route' && stop.dest_latitude != null && stop.dest_longitude != null
-        && !isDraftCoord(stop.dest_latitude, stop.dest_longitude)) {
-        new maplibregl.Marker({ color })
-          .setLngLat([stop.dest_longitude, stop.dest_latitude])
-          .addTo(this._mapInstance);
-        bounds.extend([stop.dest_longitude, stop.dest_latitude]);
+      const dest = placedDest(stop);
+      if (dest && stop.type === 'route') {
+        if (stop.dest_icon !== 'none') points.push(pin(...dest));
+        bounds.extend(dest);
       }
     }
 
+    this._mapInstance.addSource('card-markers', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: points },
+    });
+    this._mapInstance.addLayer({
+      id: 'card-markers',
+      type: 'circle',
+      source: 'card-markers',
+      paint: {
+        'circle-color': color,
+        'circle-radius': 5,
+        'circle-stroke-color': '#fff',
+        'circle-stroke-width': 2,
+      },
+    });
+
     if (!bounds.isEmpty()) {
-      this._mapInstance.fitBounds(bounds, { padding: 30, maxZoom: 12 });
+      this._mapInstance.fitBounds(bounds, { padding: 30, maxZoom: 12, animate: false });
     }
   }
 
   render() {
     const itemCount = this.map.stops?.length ?? 0;
+    const shared = this.map.role !== 'owner';
 
     return html`
-      <wa-card
-        tabindex="0"
-        role="button"
-        aria-label=${this.map.name}
-        @click=${this._onClick}
-        @keydown=${this._onKeyDown}
-      >
+      <wa-card>
         <div slot="media" class="wa-frame:landscape">
-          <div class="map-container"></div>
+          ${this._thumb
+            ? html`<img class="map-container" src=${this._thumb} alt="">`
+            : html`<div class="map-container"></div>`}
           ${this._styleError ? html`<div class="map-error">Map preview unavailable</div>` : nothing}
         </div>
         <div class="wa-cluster wa-align-items-center wa-gap-xs">
-          <h3>${this.map.name}</h3>
-          ${this.roleBadge ? roleBadge(this.roleBadge) : nothing}
+          <h3><a class="card-link" href="/map/${this.map.id}">${this.map.name}</a></h3>
+          ${shared ? roleBadge(this.map.role) : nothing}
         </div>
         ${this.map.family_name
           ? html`<div class="family">${this.map.family_name}</div>`
           : nothing}
         <div class="meta wa-split wa-align-items-center">
           <span>${itemCount} item${itemCount !== 1 ? 's' : ''} · Updated <wa-relative-time date=${this.map.updated_at} sync></wa-relative-time></span>
-          ${!this.roleBadge ? html`
-            <wa-button id="delete-map" class="delete-btn" appearance="plain" size="small" @click=${this._onDelete}>
+          ${!shared ? html`
+            <wa-button id="delete-map" class="delete-btn" appearance="plain" size="s" @click=${this._onDelete}>
               <wa-icon name="trash" label="Delete map"></wa-icon>
             </wa-button>
             <wa-tooltip for="delete-map">Delete map</wa-tooltip>
@@ -229,20 +289,6 @@ export class MapCard extends LitElement {
         </div>
       </wa-card>
     `;
-  }
-
-  private _onKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      this._onClick(e);
-    }
-  }
-
-  private _onClick(e: Event) {
-    // Don't navigate if the delete button was clicked
-    const target = e.target as HTMLElement;
-    if (target.closest('wa-button')) return;
-    navigateTo(`/map/${this.map.id}`);
   }
 
   private _onDelete(e: Event) {

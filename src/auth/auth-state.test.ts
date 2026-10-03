@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // ── Mock setup (vi.hoisted runs before vi.mock hoisting) ─────────────────────
 
@@ -31,8 +31,6 @@ const testUser = { id: 'u1', email: 'a@b.com', name: 'Alice', image: null };
 
 beforeEach(async () => {
   vi.resetModules();
-  mockGetSession.mockReset();
-  mockSignOut.mockReset();
   mod = await import('./auth-state.js');
 });
 
@@ -108,12 +106,23 @@ describe('auth-state', () => {
       expect(mod.getUser()).toBeNull();
     });
 
-    it('sets user to null on getSession error', async () => {
+    it('leaves the user signed out when the first check fails', async () => {
       mockGetSession.mockRejectedValue(new Error('network'));
 
       await mod.initAuth();
 
       expect(mod.getUser()).toBeNull();
+    });
+
+    it('retries on the next call after a failed check', async () => {
+      mockGetSession.mockRejectedValueOnce(new Error('network'));
+      await mod.initAuth();
+
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+
+      expect(mockGetSession).toHaveBeenCalledTimes(2);
+      expect(mod.getUser()).toEqual(testUser);
     });
   });
 
@@ -165,6 +174,26 @@ describe('auth-state', () => {
       expect(result).toEqual(newUser);
       expect(mod.getUser()).toEqual(newUser);
     });
+
+    it('keeps the user when the server answers with an error', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+
+      mockGetSession.mockResolvedValue({ data: null, error: { status: 429, statusText: 'Too Many Requests' } });
+      await mod.refreshAuth();
+
+      expect(mod.getUser()).toEqual(testUser);
+    });
+
+    it('keeps the user when the request fails', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+
+      mockGetSession.mockRejectedValue(new Error('network'));
+      await mod.refreshAuth();
+
+      expect(mod.getUser()).toEqual(testUser);
+    });
   });
 
   describe('signOut()', () => {
@@ -208,9 +237,24 @@ describe('auth-state', () => {
       await mod.initAuth();
 
       mockSignOut.mockRejectedValue(new Error('network'));
-      await mod.signOut();
+      expect(await mod.signOut()).toBe(false);
 
       expect(mod.getUser()).toBeNull();
+      expect(mod.isAuthenticated()).toBe(false);
+    });
+
+    it('returns true when the server confirms the sign-out', async () => {
+      mockSignOut.mockResolvedValue({ data: { success: true }, error: null });
+      expect(await mod.signOut()).toBe(true);
+    });
+
+    it('returns false but clears local state when the server returns an error', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+
+      mockSignOut.mockResolvedValue({ data: null, error: { status: 429, statusText: 'Too Many Requests' } });
+      expect(await mod.signOut()).toBe(false);
+
       expect(mod.isAuthenticated()).toBe(false);
     });
   });
@@ -253,11 +297,7 @@ describe('auth-state', () => {
 
     beforeEach(() => {
       fakeDocument = createFakeDocument();
-      (globalThis as unknown as { document?: FakeDoc }).document = fakeDocument;
-    });
-
-    afterEach(() => {
-      delete (globalThis as unknown as { document?: FakeDoc }).document;
+      vi.stubGlobal('document', fakeDocument);
     });
 
     it('refreshes auth when tab becomes visible after being hidden >60s', async () => {
@@ -332,6 +372,27 @@ describe('auth-state', () => {
       await Promise.resolve();
 
       expect(mockGetSession).toHaveBeenCalledTimes(callsBefore);
+    });
+
+    it('reacts again once refreshAuth runs after signOut', async () => {
+      mockGetSession.mockResolvedValue(sessionWith(testUser));
+      await mod.initAuth();
+      mockSignOut.mockResolvedValue({ data: { success: true }, error: null });
+      await mod.signOut();
+      await mod.refreshAuth();
+
+      const callsBefore = mockGetSession.mock.calls.length;
+
+      const nowSpy = vi.spyOn(Date, 'now');
+      nowSpy.mockReturnValue(0);
+      setVisibility('hidden');
+      nowSpy.mockReturnValue(120_000);
+      setVisibility('visible');
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockGetSession).toHaveBeenCalledTimes(callsBefore + 1);
     });
   });
 

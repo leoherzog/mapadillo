@@ -1,10 +1,10 @@
 /**
- * User menu — avatar + dropdown with sign-out.
+ * User menu — avatar dropdown with My Trips, dark-mode and units toggles, and sign-out.
  *
  * Shown in the header when the user is authenticated.
  */
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { signOut, type User } from '../auth/auth-state.js';
 import { navigateTo } from '../nav.js';
@@ -17,7 +17,6 @@ import { waUtilities } from '../styles/wa-utilities.js';
 export class UserMenu extends LitElement {
   @property({ type: Object }) user: User | null = null;
 
-  @state() private _signingOut = false;
   private _dark = new StoreController(this, isDark, onDarkModeChange);
   private _units = new StoreController(this, getUnits, onUnitsChange);
 
@@ -32,13 +31,11 @@ export class UserMenu extends LitElement {
     }
 
     .trigger-label {
+      display: inline-block;
+      vertical-align: middle;
       margin-left: var(--wa-space-xs);
       font-size: var(--wa-font-size-s);
       max-width: 120px;
-    }
-
-    wa-spinner {
-      font-size: 1em;
     }
   `];
 
@@ -46,41 +43,36 @@ export class UserMenu extends LitElement {
     if (!this.user) return nothing;
 
     return html`
-      <wa-dropdown placement="bottom-end">
-        <wa-button slot="trigger" variant="neutral" appearance="plain" size="small" with-caret>
+      <wa-dropdown placement="bottom-end" @wa-select=${this._onSelect}>
+        <wa-button slot="trigger" variant="neutral" appearance="plain" size="s" with-caret>
           <wa-avatar
             image=${ifDefined(this.user.image ?? undefined)}
             initials=${this._initials}
-            label=${this.user.name ?? 'User avatar'}
+            label=${this.user.name}
           ></wa-avatar>
           <span class="trigger-label wa-text-truncate">${this.user.name}</span>
         </wa-button>
 
-        <wa-dropdown-item @click=${() => navigateTo('/dashboard')}>
-          <wa-icon slot="icon" name="compass"></wa-icon>
+        <wa-dropdown-item href="/dashboard">
+          <wa-icon slot="icon" name="map"></wa-icon>
           My Trips
         </wa-dropdown-item>
 
-        <wa-dropdown-item @click=${this._handleToggleDark}>
+        <wa-dropdown-item value="dark">
           <wa-icon slot="icon" name=${this._dark.value ? 'sun' : 'moon'}></wa-icon>
           ${this._dark.value ? 'Light Mode' : 'Dark Mode'}
         </wa-dropdown-item>
 
-        <wa-dropdown-item @click=${this._handleToggleUnits}>
+        <wa-dropdown-item value="units">
           <wa-icon slot="icon" name="globe"></wa-icon>
           ${this._units.value === 'km' ? 'Switch to Miles' : 'Switch to Kilometers'}
         </wa-dropdown-item>
 
         <wa-divider></wa-divider>
 
-        <wa-dropdown-item
-          @click=${this._handleSignOut}
-          ?disabled=${this._signingOut}
-        >
-          ${this._signingOut
-            ? html`<wa-spinner slot="icon"></wa-spinner>`
-            : html`<wa-icon slot="icon" name="arrow-right-from-bracket"></wa-icon>`}
-          ${this._signingOut ? 'Signing Out\u2026' : 'Sign Out'}
+        <wa-dropdown-item value="sign-out">
+          <wa-icon slot="icon" name="arrow-right-from-bracket"></wa-icon>
+          Sign Out
         </wa-dropdown-item>
       </wa-dropdown>
     `;
@@ -98,27 +90,12 @@ export class UserMenu extends LitElement {
     );
   }
 
-  private _handleToggleDark = () => {
-    toggleDarkMode();
-  };
-
-  private _handleToggleUnits = () => {
-    toggleUnits();
-  };
-
-  private _handleSignOut = async () => {
-    if (this._signingOut) return;
-    this._signingOut = true;
-
-    try {
-      await signOut();
-      navigateTo('/');
-    } catch (err) {
-      console.error('Sign-out failed:', err);
-    } finally {
-      this._signingOut = false;
-    }
-  };
+  private _onSelect(e: CustomEvent<{ item: { value: string } }>) {
+    const { value } = e.detail.item;
+    if (value === 'dark') toggleDarkMode();
+    else if (value === 'units') toggleUnits();
+    else if (value === 'sign-out') void signOut().then(() => navigateTo('/'));
+  }
 }
 
 declare global {

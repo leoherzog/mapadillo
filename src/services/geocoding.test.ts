@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { searchPlaces } from './geocoding.js';
 import { apiGet, ApiError } from './api-client.js';
 
@@ -49,10 +49,6 @@ function photonResponse(features: unknown[] = []) {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
-
-beforeEach(() => {
-  mockApiGet.mockReset();
-});
 
 describe('searchPlaces', () => {
   describe('happy path', () => {
@@ -165,13 +161,6 @@ describe('searchPlaces', () => {
       expect(results).toEqual([]);
     });
 
-    it('rethrows AbortError so callers can cancel cleanly', async () => {
-      const abortErr = new DOMException('The operation was aborted.', 'AbortError');
-      mockApiGet.mockRejectedValue(abortErr);
-
-      await expect(searchPlaces('Berlin')).rejects.toThrow('The operation was aborted.');
-    });
-
     it('returns [] when response has no features property', async () => {
       mockApiGet.mockResolvedValue({ type: 'FeatureCollection' });
 
@@ -202,6 +191,43 @@ describe('searchPlaces', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].name).toBe('Berlin');
+    });
+
+    it('labels unnamed address points as "<housenumber> <street>"', async () => {
+      mockApiGet.mockResolvedValue(
+        photonResponse([
+          {
+            type: 'Feature',
+            properties: { housenumber: '5', street: 'Hauptstraße', city: 'Heidelberg', country: 'Germany' },
+            geometry: { type: 'Point', coordinates: [8.694, 49.41] },
+          },
+        ])
+      );
+
+      const results = await searchPlaces('5 Hauptstraße');
+
+      expect(results).toEqual([
+        {
+          name: '5 Hauptstraße',
+          city: 'Heidelberg',
+          state: undefined,
+          country: 'Germany',
+          latitude: 49.41,
+          longitude: 8.694,
+        },
+      ]);
+    });
+
+    it('labels an unnamed street without a housenumber by the street alone', async () => {
+      mockApiGet.mockResolvedValue(
+        photonResponse([
+          { type: 'Feature', properties: { street: 'Hauptstraße' }, geometry: { type: 'Point', coordinates: [8.694, 49.41] } },
+        ])
+      );
+
+      const [result] = await searchPlaces('Hauptstraße');
+
+      expect(result.name).toBe('Hauptstraße');
     });
 
     it('filters out features with fewer than 2 coordinates', async () => {

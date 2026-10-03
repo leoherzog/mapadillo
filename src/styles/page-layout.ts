@@ -36,8 +36,17 @@ export const pageLayoutStyles = css`
   .sidebar {
     height: 100%;
     padding: var(--wa-space-l);
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-m);
+    overflow-y: hidden;
     background: var(--wa-color-surface-default);
+  }
+
+  .sidebar-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .map-panel {
@@ -72,9 +81,9 @@ export const pageLayoutStyles = css`
 
   /* Responsive: collapse sidebar, keep map visible */
   @media (max-width: 700px) {
+    /* Block layout drops the split panel's inline grid template, which would put the map in a 0-width column. */
     wa-split-panel {
-      --min: 0;
-      --max: 0;
+      display: block;
     }
 
     wa-split-panel::part(start) {
@@ -86,7 +95,6 @@ export const pageLayoutStyles = css`
     }
 
     .map-panel {
-      flex: 1;
       min-height: 300px;
     }
   }

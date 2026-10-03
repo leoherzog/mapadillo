@@ -7,14 +7,11 @@
  * (farther away) is narrower, simulating a camera looking down at ~20°.
  */
 
-export interface MockupOptions {
-  /** Fraction of the image that curls (0–0.5). Default: 0.25 */
-  curlFraction?: number;
-  /** Surface background color. Default: '#f0ebe3' */
-  surfaceColor?: string;
-  /** How much the far edge shrinks relative to the near edge (0–1). Default: 0.25 */
-  perspectiveShrink?: number;
-}
+/** Fraction of the poster that curls (0 to 0.5). */
+const CURL_FRACTION = 0.25;
+const SURFACE_COLOR = '#f0ebe3';
+/** How much the far edge shrinks relative to the near edge (0 to 1). */
+const PERSPECTIVE_SHRINK = 0.25;
 
 /**
  * Render a "partially unrolled poster on a table" mockup with angled perspective.
@@ -22,12 +19,7 @@ export interface MockupOptions {
 export function renderMockup(
   source: HTMLImageElement | HTMLCanvasElement,
   target: HTMLCanvasElement,
-  options?: MockupOptions,
 ): void {
-  const curlFraction = options?.curlFraction ?? 0.25;
-  const surfaceColor = options?.surfaceColor ?? '#f0ebe3';
-  const shrink = options?.perspectiveShrink ?? 0.25;
-
   const ctx = target.getContext('2d')!;
   const tw = target.width;
   const th = target.height;
@@ -37,7 +29,7 @@ export function renderMockup(
   if (!srcW || !srcH || !tw || !th) return;
 
   // ── 1. Surface background ──────────────────────────────────────────────
-  ctx.fillStyle = surfaceColor;
+  ctx.fillStyle = SURFACE_COLOR;
   ctx.fillRect(0, 0, tw, th);
 
   // Subtle warm gradient (light from upper-left)
@@ -65,17 +57,26 @@ export function renderMockup(
     posterW = posterH * aspect;
   }
 
+  // Pre-filter to about three rows per destination row; strips must stay under one pixel tall to anti-alias and overlap.
+  const strips = document.createElement('canvas');
+  strips.width = Math.max(1, Math.round(posterW));
+  strips.height = Math.min(srcH, Math.ceil(posterH * 3));
+  const sctx = strips.getContext('2d')!;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(source, 0, 0, strips.width, strips.height);
+  const rows = strips.height;
+
   // The poster's "near edge" (bottom) center and its total height on screen.
   // Perspective compresses vertical spacing toward the top, so the effective
   // screen height is less than posterH. We compute actual screen extents so
   // we can center the result properly.
-  const flatFraction = 1 - curlFraction;
-  const flatSrcH = Math.round(srcH * flatFraction);
-  const curlSrcH = srcH - flatSrcH;
+  const flatFraction = 1 - CURL_FRACTION;
+  const flatSrcH = Math.round(rows * flatFraction);
+  const curlSrcH = rows - flatSrcH;
   const flatDestH = posterH * flatFraction;
 
   // Curl geometry
-  const curlDestH = posterH * curlFraction;
+  const curlDestH = posterH * CURL_FRACTION;
   const totalArc = Math.PI * 0.82;
   const R = curlDestH / totalArc;
 
@@ -93,8 +94,8 @@ export function renderMockup(
   // Vertical position is compressed: dy_screen = dy * (1 - t*shrink*0.5)
   // This simulates foreshortening from a viewing angle.
 
-  const widthAt = (t: number) => posterW * (1 - t * shrink);
-  const yCompress = (t: number) => 1 - t * shrink * 0.5;
+  const widthAt = (t: number) => posterW * (1 - t * PERSPECTIVE_SHRINK);
+  const yCompress = (t: number) => 1 - t * PERSPECTIVE_SHRINK * 0.5;
   // Slight shading: far strips are subtly darker (less light reaches them)
   const flatShade = (t: number) => t * 0.08;
 
@@ -125,7 +126,7 @@ export function renderMockup(
   for (let i = 0; i < flatStrips; i++) {
     // t: 0 at bottom (near), 1 at top (far)
     const t = i / flatStrips;
-    const srcY = srcH - 1 - i; // read source from bottom up
+    const srcY = rows - 1 - i; // read source from bottom up
 
     const w = widthAt(t);
     const x = centerX - w / 2;
@@ -134,7 +135,7 @@ export function renderMockup(
     const stepH = (flatDestH / flatStrips) * yCompress(t);
     curY -= stepH;
 
-    ctx.drawImage(source, 0, srcY, srcW, 1, x, curY, w, stepH + 0.5);
+    ctx.drawImage(strips, 0, srcY, strips.width, 1, x, curY, w, stepH + 0.5);
 
     // Subtle perspective shading
     const shade = flatShade(t);
@@ -185,7 +186,7 @@ export function renderMockup(
     // Add the base perspective shading
     brightness -= flatShade(flatTopT);
 
-    ctx.drawImage(source, 0, srcY, srcW, 1, stripX, stripY, stripW, stripH);
+    ctx.drawImage(strips, 0, srcY, strips.width, 1, stripX, stripY, stripW, stripH);
 
     if (brightness < 1) {
       ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, 1 - brightness)})`;

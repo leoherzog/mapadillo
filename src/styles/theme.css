@@ -6,7 +6,7 @@
  */
 
 :root {
-  /* Brand accent — vivid orange for road-trip warmth */
+  /* Brand hue comes from wa-brand-orange on <html>; 50 and 60 are pinned to the hex used for canvas and map rendering. */
   --wa-color-brand-50: #ff6b00;
   --wa-color-brand-60: #e05e00;
 
@@ -14,8 +14,7 @@
   --wa-border-radius-m: 0.625rem;
   --wa-border-radius-l: 1rem;
 
-  /* Rounded system font stack for body text, which avoids a font download.
-     Headings and code keep Playful's Fredoka and Azeret Mono from fonts.bunny.net. */
+  /* Rounded system font stack, which avoids a font download. Page headings live in shadow roots that native heading styles do not reach, so they use it too. */
   --wa-font-family-body: ui-rounded, 'Hiragino Maru Gothic ProN', Quicksand, Comfortaa, Manjari, 'Arial Rounded MT', 'Arial Rounded MT Bold', Calibri, source-sans-pro, system-ui, sans-serif;
 
   /* Body text size reduced slightly from Playful's 1.125rem default */
@@ -25,9 +24,4 @@
 /* Fix Playful theme: dark-mode surface-border matches surface-raised, making dividers invisible */
 .wa-dark {
   --wa-color-surface-border: var(--wa-color-neutral-30);
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
 }
